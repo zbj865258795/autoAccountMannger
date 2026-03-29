@@ -267,7 +267,7 @@ export function generateRandomFingerprint() {
   // ── 9. 其他随机参数 ──────────────────────────
   const webrtc = randomPick(["local", "proxy", "disabled"]);
   const gpu = randomPick(["0", "1", "2"]);
-  const doNotTrack = randomPick(["true", "false", "unspecified"]);
+  const doNotTrack = randomPick(["default", "true", "false"]);
 
   // ── 10. Canvas/WebGL/Audio 噪音种子 ──────────
   // 使用随机整数作为噪音种子，确保每次指纹不同
@@ -451,8 +451,13 @@ export async function createAdsPowerBrowser(
   }
 
   try {
+    console.log(`[AdsPower] 创建浏览器请求: POST /api/v2/browser-profile/create`);
+    console.log(`[AdsPower] 请求参数: ${JSON.stringify(body, null, 2)}`);
+
     const response = await client.post("/api/v2/browser-profile/create", body);
     const data = response.data;
+
+    console.log(`[AdsPower] 创建浏览器响应: ${JSON.stringify(data)}`);
 
     if (data.code === 0 && data.data?.id) {
       console.log(`[AdsPower] 创建浏览器成功: ${data.data.id} | ${_meta.browserType} | ${_meta.osType} | ${_meta.location} | ${_meta.resolution} | WebGL: ${_meta.webglVendor}`);
@@ -464,7 +469,7 @@ export async function createAdsPowerBrowser(
     }
   } catch (error: unknown) {
     const errMsg = error instanceof Error ? error.message : String(error);
-    console.error(`[AdsPower] 创建浏览器请求失败: ${errMsg}`);
+    console.error(`[AdsPower] 创建浏览器请求异常: ${errMsg}`);
     return { success: false, error: errMsg };
   }
 }
