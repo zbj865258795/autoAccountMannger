@@ -74,3 +74,12 @@
 - [ ] 前端：手机号管理页面（批量导入、列表、状态筛选）
 - [ ] DashboardLayout 新增「手机号管理」导航项
 - [ ] 更新测试并保存 Checkpoint
+
+## 本地化改造（2026-03-29 第五轮）
+- [ ] 移除 Manus OAuth 登录依赖，改为无需登录直接访问
+- [ ] 将所有 protectedProcedure 改为 publicProcedure（无需认证）
+- [ ] 前端移除登录逻辑，直接渲染仪表板
+- [ ] 创建 .env.example 模板文件
+- [ ] 创建 Docker Compose 配置（MySQL + 应用）
+- [ ] 编写本地部署 README
+- [ ] 推送到 GitHub

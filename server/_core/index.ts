@@ -3,7 +3,6 @@ import express from "express";
 import { createServer } from "http";
 import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
-import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -25,20 +24,21 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
       return port;
     }
   }
-  throw new Error(`No available port found starting from ${startPort}`);
+  throw new Error(`未找到可用端口（起始端口：${startPort}）`);
 }
 
 async function startServer() {
   const app = express();
   const server = createServer(app);
-  // Configure body parser with larger size limit for file uploads
+
+  // 支持大文件上传
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
-  // OAuth callback under /api/oauth/callback
-  registerOAuthRoutes(app);
-  // Chrome 插件和外部回調 REST 端點
+
+  // Chrome 插件和外部回调 REST 端点
   registerCallbackRoutes(app);
-  // tRPC API
+
+  // tRPC API（无需认证）
   app.use(
     "/api/trpc",
     createExpressMiddleware({
@@ -46,7 +46,8 @@ async function startServer() {
       createContext,
     })
   );
-  // development mode uses Vite, production mode uses static files
+
+  // 开发模式使用 Vite，生产模式使用静态文件
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);
   } else {
@@ -57,11 +58,11 @@ async function startServer() {
   const port = await findAvailablePort(preferredPort);
 
   if (port !== preferredPort) {
-    console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
+    console.log(`端口 ${preferredPort} 已被占用，改用端口 ${port}`);
   }
 
   server.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}/`);
+    console.log(`账号管理系统已启动：http://localhost:${port}/`);
   });
 }
 

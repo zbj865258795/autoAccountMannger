@@ -186,27 +186,17 @@ function DashboardLayoutContent({
           </SidebarContent>
 
           <SidebarFooter className="p-3 border-t border-border/50">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/50 transition-colors w-full text-left focus:outline-none">
-                  <Avatar className="h-7 w-7 border border-border shrink-0">
-                    <AvatarFallback className="text-xs font-medium bg-primary/20 text-primary">
-                      {user?.name?.charAt(0).toUpperCase() || "U"}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1 min-w-0 group-data-[collapsible=icon]:hidden">
-                    <p className="text-xs font-medium truncate text-foreground">{user?.name || "-"}</p>
-                    <p className="text-xs text-muted-foreground truncate mt-0.5">{user?.email || "-"}</p>
-                  </div>
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
-                <DropdownMenuItem onClick={logout} className="cursor-pointer text-destructive focus:text-destructive">
-                  <LogOut className="mr-2 h-4 w-4" />
-                  <span>登出</span>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <div className="flex items-center gap-3 rounded-lg px-2 py-2">
+              <Avatar className="h-7 w-7 border border-border shrink-0">
+                <AvatarFallback className="text-xs font-medium bg-primary/20 text-primary">
+                  L
+                </AvatarFallback>
+              </Avatar>
+              <div className="flex-1 min-w-0 group-data-[collapsible=icon]:hidden">
+                <p className="text-xs font-medium truncate text-foreground">本地管理员</p>
+                <p className="text-xs text-muted-foreground truncate mt-0.5">本地部署模式</p>
+              </div>
+            </div>
           </SidebarFooter>
         </Sidebar>
 

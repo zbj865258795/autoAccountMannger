@@ -1,8 +1,5 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { COOKIE_NAME } from "@shared/const";
-import { getSessionCookieOptions } from "./_core/cookies";
-import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import {
   bulkImportPhoneNumbers,
@@ -68,31 +65,31 @@ const AccountFilterSchema = z.object({
 // ─── Accounts Router ──────────────────────────────────────────────────────────
 
 const accountsRouter = router({
-  list: protectedProcedure.input(AccountFilterSchema).query(async ({ input }) => {
+  list: publicProcedure.input(AccountFilterSchema).query(async ({ input }) => {
     return getAccounts(input);
   }),
 
-  detail: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
+  detail: publicProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
     const account = await getAccountById(input.id);
-    if (!account) throw new TRPCError({ code: "NOT_FOUND", message: "Account not found" });
+    if (!account) throw new TRPCError({ code: "NOT_FOUND", message: "账号不存在" });
     return account;
   }),
 
-  invitationChain: protectedProcedure
+  invitationChain: publicProcedure
     .input(z.object({ id: z.number() }))
     .query(async ({ input }) => {
       return getInvitationChain(input.id);
     }),
 
-  unusedCodes: protectedProcedure.query(async () => {
+  unusedCodes: publicProcedure.query(async () => {
     return getUnusedInviteCodes();
   }),
 
-  creditDistribution: protectedProcedure.query(async () => {
+  creditDistribution: publicProcedure.query(async () => {
     return getCreditDistribution();
   }),
 
-  create: protectedProcedure.input(AccountImportSchema).mutation(async ({ input }) => {
+  create: publicProcedure.input(AccountImportSchema).mutation(async ({ input }) => {
     let invitedById: number | undefined;
     if (input.invitedByCode) {
       const inviter = await getAccountByInviteCode(input.invitedByCode);
@@ -109,7 +106,7 @@ const accountsRouter = router({
     return { success: true };
   }),
 
-  bulkImport: protectedProcedure
+  bulkImport: publicProcedure
     .input(z.object({ accounts: z.array(AccountImportSchema) }))
     .mutation(async ({ input }) => {
       let successCount = 0;
@@ -134,7 +131,7 @@ const accountsRouter = router({
           successCount++;
         } catch (err: unknown) {
           failCount++;
-          const msg = err instanceof Error ? err.message : "Unknown error";
+          const msg = err instanceof Error ? err.message : "未知错误";
           errors.push(`${accountData.email}: ${msg}`);
         }
       }
@@ -142,14 +139,14 @@ const accountsRouter = router({
       return { successCount, failCount, errors };
     }),
 
-  update: protectedProcedure
+  update: publicProcedure
     .input(z.object({ id: z.number(), data: AccountImportSchema.partial() }))
     .mutation(async ({ input }) => {
       await updateAccount(input.id, input.data as Parameters<typeof updateAccount>[1]);
       return { success: true };
     }),
 
-  updateInviteStatus: protectedProcedure
+  updateInviteStatus: publicProcedure
     .input(z.object({
       inviteCode: z.string(),
       status: z.enum(["unused", "in_progress", "used"]),
@@ -163,7 +160,7 @@ const accountsRouter = router({
 // ─── Dashboard Router ─────────────────────────────────────────────────────────
 
 const dashboardRouter = router({
-  stats: protectedProcedure.query(async () => {
+  stats: publicProcedure.query(async () => {
     return getDashboardStats();
   }),
 });
@@ -171,19 +168,19 @@ const dashboardRouter = router({
 // ─── Automation Router ────────────────────────────────────────────────────────
 
 const automationRouter = router({
-  list: protectedProcedure.query(async () => {
+  list: publicProcedure.query(async () => {
     const tasks = await getAutomationTasks();
     const runningIds = getRunningTaskIds();
     return tasks.map((t) => ({ ...t, isRunning: runningIds.includes(t.id) }));
   }),
 
-  detail: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
+  detail: publicProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
     const task = await getAutomationTaskById(input.id);
-    if (!task) throw new TRPCError({ code: "NOT_FOUND", message: "Task not found" });
+    if (!task) throw new TRPCError({ code: "NOT_FOUND", message: "任务不存在" });
     return task;
   }),
 
-  create: protectedProcedure
+  create: publicProcedure
     .input(z.object({
       name: z.string().min(1),
       scanIntervalSeconds: z.number().min(10).default(60),
@@ -197,7 +194,7 @@ const automationRouter = router({
       return { success: true };
     }),
 
-  update: protectedProcedure
+  update: publicProcedure
     .input(z.object({
       id: z.number(),
       data: z.object({
@@ -214,29 +211,28 @@ const automationRouter = router({
       return { success: true };
     }),
 
-  start: protectedProcedure
+  start: publicProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       await startScheduler(input.id);
       return { success: true };
     }),
 
-  pause: protectedProcedure
+  pause: publicProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       await pauseScheduler(input.id);
       return { success: true };
     }),
 
-  stop: protectedProcedure
+  stop: publicProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       await stopScheduler(input.id);
       return { success: true };
     }),
 
-  // 检查 AdsPower 连通性（自动使用配置文件中的 API Key）
-  checkAdspower: protectedProcedure
+  checkAdspower: publicProcedure
     .input(z.object({ apiUrl: z.string() }))
     .query(async ({ input }) => {
       const connected = await checkAdsPowerConnection(input.apiUrl, ADSPOWER_CONFIG.apiKey);
@@ -248,7 +244,7 @@ const automationRouter = router({
 // ─── Task Logs Router ─────────────────────────────────────────────────────────
 
 const taskLogsRouter = router({
-  list: protectedProcedure
+  list: publicProcedure
     .input(z.object({
       taskId: z.number().optional(),
       status: z.enum(["pending", "running", "success", "failed", "skipped"]).optional(),
@@ -261,12 +257,9 @@ const taskLogsRouter = router({
 });
 
 // ─── Phone Numbers Router ─────────────────────────────────────────────────────
-// 手机号录入格式：每行一条「手机号|接码URL」，原样存储，不做拆分处理
-// 每次调用 getNext 接口，返回一条未使用的记录，同时立即标记为已使用
 
 const phoneNumbersRouter = router({
-  // 获取手机号列表（支持状态筛选和搜索）
-  list: protectedProcedure
+  list: publicProcedure
     .input(z.object({
       status: z.enum(["unused", "in_use", "used"]).optional(),
       search: z.string().optional(),
@@ -277,26 +270,22 @@ const phoneNumbersRouter = router({
       return getPhoneNumbers(input);
     }),
 
-  // 获取统计数据（各状态数量）
-  stats: protectedProcedure.query(async () => {
+  stats: publicProcedure.query(async () => {
     return getPhoneStats();
   }),
 
-  // 批量导入：每行一条「手机号|接码URL」，原样存储
-  bulkImport: protectedProcedure
+  bulkImport: publicProcedure
     .input(z.object({ text: z.string().min(1, "请输入手机号数据") }))
     .mutation(async ({ input }) => {
       const lines = input.text.split("\n").filter((l) => l.trim());
       return bulkImportPhoneNumbers(lines);
     }),
 
-  // 获取下一个未使用的手机号，调用后立即标记为已使用
-  getNext: protectedProcedure.mutation(async () => {
+  getNext: publicProcedure.mutation(async () => {
     return getNextAvailablePhone();
   }),
 
-  // 手动标记已使用（可附带使用此号码注册的邮箱）
-  markUsed: protectedProcedure
+  markUsed: publicProcedure
     .input(z.object({
       phone: z.string(),
       usedByEmail: z.string().optional(),
@@ -306,16 +295,14 @@ const phoneNumbersRouter = router({
       return { success: true };
     }),
 
-  // 重置为未使用（用于重新分配）
-  reset: protectedProcedure
+  reset: publicProcedure
     .input(z.object({ phone: z.string() }))
     .mutation(async ({ input }) => {
       await resetPhoneStatus(input.phone);
       return { success: true };
     }),
 
-  // 删除手机号
-  delete: protectedProcedure
+  delete: publicProcedure
     .input(z.object({ ids: z.array(z.number()) }))
     .mutation(async ({ input }) => {
       await deletePhoneNumbers(input.ids);
@@ -326,15 +313,6 @@ const phoneNumbersRouter = router({
 // ─── App Router ───────────────────────────────────────────────────────────────
 
 export const appRouter = router({
-  system: systemRouter,
-  auth: router({
-    me: publicProcedure.query((opts) => opts.ctx.user),
-    logout: publicProcedure.mutation(({ ctx }) => {
-      const cookieOptions = getSessionCookieOptions(ctx.req);
-      ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
-      return { success: true } as const;
-    }),
-  }),
   accounts: accountsRouter,
   dashboard: dashboardRouter,
   automation: automationRouter,
