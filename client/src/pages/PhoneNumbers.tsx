@@ -1,5 +1,4 @@
 import { useState } from "react";
-import DashboardLayout from "@/components/DashboardLayout";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -136,8 +135,7 @@ export default function PhoneNumbers() {
   };
 
   return (
-    <DashboardLayout>
-      <div className="space-y-5">
+    <div className="space-y-5">
         {/* 页面标题 */}
         <div className="flex items-center justify-between">
           <div>
@@ -418,7 +416,6 @@ export default function PhoneNumbers() {
           </CardContent>
         </Card>
 
-      </div>
-    </DashboardLayout>
+    </div>
   );
 }
