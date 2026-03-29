@@ -108,3 +108,21 @@
 ## UI 修复（2026-03-29 第八轮）
 - [x] 修复手机号管理页面顶部留白过大（与其他页面不统一）
 - [x] 移除手机号管理页面底部的「插件调用接口」流程描述文字
+
+## 清理认证相关代码（2026-03-29 第九轮）
+- [ ] 后端：移除 JWT 签名/Cookie 写入逻辑（server/_core/context.ts、auth 路由）
+- [ ] 后端：移除 OAuth 回调路由（/api/oauth/callback）
+- [ ] 后端：移除 auth.me、auth.logout 等 tRPC procedure
+- [ ] 后端：移除 JWT_SECRET 依赖，简化 env.ts
+- [ ] 前端：移除 useAuth hook 和登录 URL 逻辑
+- [ ] 前端：移除 LoginPage 或登录相关组件
+- [ ] 更新 env.example，只保留 DATABASE_URL、APP_PORT 两个必要变量
+- [ ] 运行测试并保存 Checkpoint
+
+## 账号列表批量操作（2026-03-29 第十轮）
+- [x] 恢复 env.ts 完整字段，修复 TS 错误
+- [x] 修复 db.ts 重复导出 getAccountByEmail
+- [x] 账号列表：表头全选/反选复选框，每行复选框
+- [x] 账号列表：批量删除按钮（选中后出现）
+- [x] 账号列表：批量复制按钮，格式为「账号----密码」每行一个
+- [x] 运行测试并保存 Checkpoint（17 个测试全部通过）

@@ -1,3 +1,4 @@
+// 本地部署模式：OAuth/JWT 相关字段留空，不影响运行
 export const ENV = {
   appId: process.env.VITE_APP_ID ?? "",
   cookieSecret: process.env.JWT_SECRET ?? "",
