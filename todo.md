@@ -49,3 +49,9 @@
 - [x] automation_tasks 表新增 adspowerApiKey 和 targetUrl 字段
 - [x] 前端創建任務對話新增 API Key 和 targetUrl 輸入欄，並發數上限調整為 50
 - [x] ApiDocs.tsx 插件修改指南更新包含 phone/clientId 字段
+
+## 更新任务（2026-03-29 第二轮）
+- [x] 深度强化 AdsPower 随机指纹：UA 版本号随机、字体列表随机、平台随机、屏幕色深随机、像素比随机、端口随机、WebGL 厂商/渲染器随机
+- [x] 所有前端页面文字改为简体中文
+- [x] 后端日志/错误信息改为简体中文
+- [x] 运行测试并保存 Checkpoint（15 个测试全部通过，TypeScript 无错误）

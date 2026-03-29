@@ -1,13 +1,13 @@
 /**
- * 賬號管理系統核心功能測試
- * 涵蓋：賬號 CRUD、邀請碼狀態管理、批量導入、AdsPower 集成、並發調度器
+ * 账号管理系统核心功能测试
+ * 涵盖：账号 CRUD、邀请码状态管理、批量导入、AdsPower 集成、并发调度器
  */
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 import { generateRandomFingerprint } from "./adspower";
 
-// ─── Mock 數據庫模塊 ──────────────────────────────────────────────────────────
+// ─── Mock 数据库模块 ──────────────────────────────────────────────────────────
 
 vi.mock("./db", () => ({
   createAccount: vi.fn().mockResolvedValue(undefined),
@@ -53,12 +53,12 @@ vi.mock("./db", () => ({
   getUserByOpenId: vi.fn().mockResolvedValue(undefined),
 }));
 
-// ─── Mock AdsPower 模塊 ───────────────────────────────────────────────────────
+// ─── Mock AdsPower 模块 ───────────────────────────────────────────────────────
 
 vi.mock("./adspower", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./adspower")>();
   return {
-    ...actual,  // 保留 generateRandomFingerprint（純函數，不需要 mock）
+    ...actual,  // 保留 generateRandomFingerprint（纯函数，不需要 mock）
     checkAdsPowerConnection: vi.fn().mockResolvedValue(false),
     getActiveBrowsers: vi.fn().mockResolvedValue([]),
     createAdsPowerBrowser: vi.fn().mockResolvedValue({ success: true, profileId: "test-profile-123" }),
@@ -66,7 +66,7 @@ vi.mock("./adspower", async (importOriginal) => {
   };
 });
 
-// ─── Mock 調度器模塊 ──────────────────────────────────────────────────────────
+// ─── Mock 调度器模块 ──────────────────────────────────────────────────────────
 
 vi.mock("./scheduler", () => ({
   startScheduler: vi.fn().mockResolvedValue(undefined),
@@ -75,7 +75,7 @@ vi.mock("./scheduler", () => ({
   getRunningTaskIds: vi.fn().mockReturnValue([]),
 }));
 
-// ─── 工具函數 ─────────────────────────────────────────────────────────────────
+// ─── 工具函数 ─────────────────────────────────────────────────────────────────
 
 function createAdminContext(): TrpcContext {
   return {
@@ -95,7 +95,7 @@ function createAdminContext(): TrpcContext {
   };
 }
 
-// ─── 測試：賬號創建（含新字段） ───────────────────────────────────────────────
+// ─── 测试：账号创建（含新字段） ───────────────────────────────────────────────
 
 describe("accounts.create", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -171,7 +171,7 @@ describe("accounts.create", () => {
   });
 });
 
-// ─── 測試：邀請碼狀態管理 ─────────────────────────────────────────────────────
+// ─── 测试：邀请码状态管理 ─────────────────────────────────────────────────────
 
 describe("accounts.updateInviteStatus", () => {
   it("updates invite status to in_progress", async () => {
@@ -203,7 +203,7 @@ describe("accounts.updateInviteStatus", () => {
   });
 });
 
-// ─── 測試：儀表板統計 ─────────────────────────────────────────────────────────
+// ─── 测试：仪表板统计 ─────────────────────────────────────────────────────────
 
 describe("dashboard.stats", () => {
   it("returns dashboard statistics", async () => {
@@ -222,7 +222,7 @@ describe("dashboard.stats", () => {
   });
 });
 
-// ─── 測試：批量導入 ───────────────────────────────────────────────────────────
+// ─── 测试：批量导入 ───────────────────────────────────────────────────────────
 
 describe("accounts.bulkImport", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -289,7 +289,7 @@ describe("accounts.bulkImport", () => {
   });
 });
 
-// ─── 測試：AdsPower 連通性 ────────────────────────────────────────────────────
+// ─── 测试：AdsPower 连通性 ────────────────────────────────────────────────────
 
 describe("automation.checkAdspower", () => {
   it("returns disconnected status for unreachable AdsPower", async () => {
@@ -305,14 +305,14 @@ describe("automation.checkAdspower", () => {
   });
 });
 
-// ─── 測試：AdsPower 隨機指紋生成 ─────────────────────────────────────────────
+// ─── 测试：AdsPower 随机指纹生成 ─────────────────────────────────────────────
 
 describe("generateRandomFingerprint", () => {
   it("generates a valid fingerprint config", () => {
     const { fingerprint_config, _meta } = generateRandomFingerprint();
 
     expect(fingerprint_config).toBeDefined();
-    expect(fingerprint_config.automatic_timezone).toBe("1");
+    expect(fingerprint_config.automatic_timezone).toBe("0"); // 手动指定时区，更可控
     expect(fingerprint_config.canvas).toBe("0");
     expect(fingerprint_config.webgl).toBe("0");
     expect(fingerprint_config.audio).toBe("0");

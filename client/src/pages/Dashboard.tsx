@@ -9,7 +9,6 @@ import {
   Clock,
   Coins,
   GitBranch,
-  Loader2,
   Users,
 } from "lucide-react";
 import { useLocation } from "wouter";
@@ -74,7 +73,7 @@ function InviteStatusBar({ unused, inProgress, used }: { unused: number; inProgr
         </span>
         <span className="flex items-center gap-1.5">
           <span className="w-2 h-2 rounded-full bg-yellow-500 inline-block" />
-          邀請中 {inProgress}
+          邀请中 {inProgress}
         </span>
         <span className="flex items-center gap-1.5">
           <span className="w-2 h-2 rounded-full bg-blue-500 inline-block" />
@@ -96,52 +95,52 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold text-foreground">儀表板</h1>
-        <p className="text-sm text-muted-foreground mt-1">賬號管理與自動化任務總覽</p>
+        <h1 className="text-xl font-semibold text-foreground">仪表板</h1>
+        <p className="text-sm text-muted-foreground mt-1">账号管理与自动化任务总览</p>
       </div>
 
-      {/* 統計卡片 */}
+      {/* 统计卡片 */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
-          title="總賬號數"
+          title="总账号数"
           value={stats?.totalAccounts ?? 0}
           icon={Users}
           color="bg-blue-500/15 text-blue-400"
-          sub={`共 ${totalCodes} 個邀請碼`}
+          sub={`共 ${totalCodes} 个邀请码`}
           loading={isLoading}
         />
         <StatCard
-          title="總積分"
+          title="总积分"
           value={stats?.totalCredits?.toLocaleString() ?? 0}
           icon={Coins}
           color="bg-yellow-500/15 text-yellow-400"
-          sub="所有賬號積分合計"
+          sub="所有账号积分合计"
           loading={isLoading}
         />
         <StatCard
-          title="未使用邀請碼"
+          title="未使用邀请码"
           value={stats?.unusedCodes ?? 0}
           icon={Clock}
           color="bg-purple-500/15 text-purple-400"
-          sub="可觸發自動化任務"
+          sub="可触发自动化任务"
           loading={isLoading}
         />
         <StatCard
-          title="已完成邀請"
+          title="已完成邀请"
           value={stats?.usedCodes ?? 0}
           icon={CheckCircle2}
           color="bg-green-500/15 text-green-400"
-          sub={`邀請中 ${stats?.inProgressCodes ?? 0} 個`}
+          sub={`邀请中 ${stats?.inProgressCodes ?? 0} 个`}
           loading={isLoading}
         />
       </div>
 
-      {/* 邀請碼狀態分佈 */}
+      {/* 邀请码状态分布 */}
       <Card className="bg-card border-border/50">
         <CardHeader className="pb-3">
           <CardTitle className="text-sm font-medium text-foreground flex items-center gap-2">
             <GitBranch className="w-4 h-4 text-primary" />
-            邀請碼狀態分佈
+            邀请码状态分布
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -157,13 +156,13 @@ export default function Dashboard() {
         </CardContent>
       </Card>
 
-      {/* 最近賬號 */}
+      {/* 最近账号 */}
       <Card className="bg-card border-border/50">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-sm font-medium text-foreground flex items-center gap-2">
               <Activity className="w-4 h-4 text-primary" />
-              最近注冊賬號
+              最近注册账号
             </CardTitle>
             <button
               onClick={() => setLocation("/accounts")}
@@ -183,7 +182,7 @@ export default function Dashboard() {
           ) : stats?.recentAccounts?.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Bot className="w-8 h-8 mx-auto mb-2 opacity-30" />
-              <p className="text-sm">暫無賬號數據，請先導入賬號</p>
+              <p className="text-sm">暂无账号数据，请先导入账号</p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -196,7 +195,7 @@ export default function Dashboard() {
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-foreground truncate">{account.email}</p>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      邀請碼：{account.inviteCode || "—"} · {account.totalCredits?.toLocaleString()} 積分
+                      邀请码：{account.inviteCode || "—"} · {account.totalCredits?.toLocaleString()} 积分
                     </p>
                   </div>
                   <Badge
@@ -212,7 +211,7 @@ export default function Dashboard() {
                     {account.inviteStatus === "unused"
                       ? "未使用"
                       : account.inviteStatus === "in_progress"
-                      ? "邀請中"
+                      ? "邀请中"
                       : "已使用"}
                   </Badge>
                 </div>
@@ -225,10 +224,10 @@ export default function Dashboard() {
       {/* 快捷操作 */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
-          { label: "導入賬號", path: "/import", icon: Users, desc: "批量導入 JSON 數據" },
-          { label: "啟動自動化", path: "/automation", icon: Bot, desc: "創建並啟動任務" },
-          { label: "查看邀請鏈", path: "/invitation-tree", icon: GitBranch, desc: "可視化邀請關係" },
-          { label: "查看日誌", path: "/logs", icon: Activity, desc: "任務執行記錄" },
+          { label: "导入账号", path: "/import", icon: Users, desc: "批量导入 JSON 数据" },
+          { label: "启动自动化", path: "/automation", icon: Bot, desc: "创建并启动任务" },
+          { label: "查看邀请链", path: "/invitation-tree", icon: GitBranch, desc: "可视化邀请关系" },
+          { label: "查看日志", path: "/logs", icon: Activity, desc: "任务执行记录" },
         ].map((item) => (
           <button
             key={item.path}

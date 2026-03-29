@@ -26,7 +26,7 @@ type InviteStatus = "unused" | "in_progress" | "used";
 
 const statusLabel: Record<InviteStatus, string> = {
   unused: "未使用",
-  in_progress: "邀請中",
+  in_progress: "邀请中",
   used: "已使用",
 };
 
@@ -65,31 +65,31 @@ export default function Accounts() {
 
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
-    toast.success(`已複製 ${label}`);
+    toast.success(`已复制 ${label}`);
   };
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-foreground">賬號管理</h1>
+          <h1 className="text-xl font-semibold text-foreground">账号管理</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            共 {data?.total ?? 0} 個賬號
+            共 {data?.total ?? 0} 个账号
           </p>
         </div>
         <Button onClick={() => setLocation("/import")} size="sm">
           <Users className="w-4 h-4 mr-2" />
-          導入賬號
+          导入账号
         </Button>
       </div>
 
-      {/* 搜索和篩選 */}
+      {/* 搜索和筛选 */}
       <Card className="bg-card border-border/50">
         <CardContent className="p-4">
           <div className="flex gap-3 flex-wrap">
             <div className="flex gap-2 flex-1 min-w-[200px]">
               <Input
-                placeholder="搜索 email、邀請碼、用戶名..."
+                placeholder="搜索 email、邀请码、用户名..."
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleSearch()}
@@ -104,12 +104,12 @@ export default function Accounts() {
               onValueChange={(v) => { setInviteStatus(v); setPage(1); }}
             >
               <SelectTrigger className="w-36 bg-muted/50 border-border/50 text-foreground">
-                <SelectValue placeholder="邀請碼狀態" />
+                <SelectValue placeholder="邀请码状态" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">全部狀態</SelectItem>
+                <SelectItem value="all">全部状态</SelectItem>
                 <SelectItem value="unused">未使用</SelectItem>
-                <SelectItem value="in_progress">邀請中</SelectItem>
+                <SelectItem value="in_progress">邀请中</SelectItem>
                 <SelectItem value="used">已使用</SelectItem>
               </SelectContent>
             </Select>
@@ -117,7 +117,7 @@ export default function Accounts() {
         </CardContent>
       </Card>
 
-      {/* 賬號表格 */}
+      {/* 账号表格 */}
       <Card className="bg-card border-border/50">
         <CardContent className="p-0">
           <div className="overflow-x-auto">
@@ -125,11 +125,11 @@ export default function Accounts() {
               <thead>
                 <tr className="border-b border-border/50">
                   <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3 uppercase tracking-wider">Email</th>
-                  <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3 uppercase tracking-wider">邀請碼</th>
-                  <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3 uppercase tracking-wider">狀態</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3 uppercase tracking-wider">積分</th>
-                  <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3 uppercase tracking-wider">會員</th>
-                  <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3 uppercase tracking-wider">注冊時間</th>
+                  <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3 uppercase tracking-wider">邀请码</th>
+                  <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3 uppercase tracking-wider">状态</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3 uppercase tracking-wider">积分</th>
+                  <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3 uppercase tracking-wider">会员</th>
+                  <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3 uppercase tracking-wider">注册时间</th>
                   <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3 uppercase tracking-wider">操作</th>
                 </tr>
               </thead>
@@ -147,7 +147,7 @@ export default function Accounts() {
                 ) : data?.items?.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="text-center py-12 text-muted-foreground text-sm">
-                      暫無賬號數據
+                      暂无账号数据
                     </td>
                   </tr>
                 ) : (
@@ -175,7 +175,7 @@ export default function Accounts() {
                               {account.inviteCode}
                             </code>
                             <button
-                              onClick={(e) => { e.stopPropagation(); copyToClipboard(account.inviteCode!, "邀請碼"); }}
+                              onClick={(e) => { e.stopPropagation(); copyToClipboard(account.inviteCode!, "邀请码"); }}
                               className="text-muted-foreground hover:text-foreground transition-colors"
                             >
                               <Copy className="w-3 h-3" />
@@ -206,8 +206,8 @@ export default function Accounts() {
                       <td className="px-4 py-3">
                         <span className="text-xs text-muted-foreground">
                           {account.registeredAt
-                            ? new Date(account.registeredAt).toLocaleDateString("zh-TW")
-                            : new Date(account.createdAt).toLocaleDateString("zh-TW")}
+                            ? new Date(account.registeredAt).toLocaleDateString("zh-CN")
+                            : new Date(account.createdAt).toLocaleDateString("zh-CN")}
                         </span>
                       </td>
                       <td className="px-4 py-3">
@@ -217,7 +217,7 @@ export default function Accounts() {
                           className="h-7 text-xs text-muted-foreground hover:text-foreground"
                           onClick={(e) => { e.stopPropagation(); setLocation(`/accounts/${account.id}`); }}
                         >
-                          詳情
+                          详情
                         </Button>
                       </td>
                     </tr>
@@ -227,11 +227,11 @@ export default function Accounts() {
             </table>
           </div>
 
-          {/* 分頁 */}
+          {/* 分页 */}
           {totalPages > 1 && (
             <div className="flex items-center justify-between px-4 py-3 border-t border-border/50">
               <span className="text-xs text-muted-foreground">
-                第 {page} / {totalPages} 頁，共 {data?.total} 條
+                第 {page} / {totalPages} 页，共 {data?.total} 条
               </span>
               <div className="flex gap-2">
                 <Button

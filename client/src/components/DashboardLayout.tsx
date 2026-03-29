@@ -39,13 +39,13 @@ import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
 import { Button } from "./ui/button";
 
 const menuItems = [
-  { icon: LayoutDashboard, label: "儀表板", path: "/" },
-  { icon: Users, label: "賬號管理", path: "/accounts" },
-  { icon: Plus, label: "導入賬號", path: "/import" },
-  { icon: GitBranch, label: "邀請關係", path: "/invitation-tree" },
-  { icon: Activity, label: "積分統計", path: "/credits" },
-  { icon: Bot, label: "自動化任務", path: "/automation" },
-  { icon: FileText, label: "執行日誌", path: "/logs" },
+  { icon: LayoutDashboard, label: "仪表板", path: "/" },
+  { icon: Users, label: "账号管理", path: "/accounts" },
+  { icon: Plus, label: "导入账号", path: "/import" },
+  { icon: GitBranch, label: "邀请关系", path: "/invitation-tree" },
+  { icon: Activity, label: "积分统计", path: "/credits" },
+  { icon: Bot, label: "自动化任务", path: "/automation" },
+  { icon: FileText, label: "执行日志", path: "/logs" },
   { icon: Webhook, label: "API 集成", path: "/api-docs" },
 ];
 
@@ -76,14 +76,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Bot className="w-7 h-7 text-primary" />
             </div>
             <h1 className="text-2xl font-semibold tracking-tight text-center text-foreground">
-              賬號管理系統
+              账号管理系统
             </h1>
             <p className="text-sm text-muted-foreground text-center max-w-sm">
-              請登入以訪問賬號管理和自動化任務控制系統。
+              请登录以访问账号管理和自动化任务控制系统。
             </p>
           </div>
           <Button onClick={() => { window.location.href = getLoginUrl(); }} size="lg" className="w-full">
-            登入繼續
+            登录继续
           </Button>
         </div>
       </div>
@@ -154,7 +154,7 @@ function DashboardLayoutContent({
               {!isCollapsed && (
                 <div className="flex items-center gap-2 min-w-0">
                   <Bot className="h-4 w-4 text-primary shrink-0" />
-                  <span className="font-semibold text-sm truncate text-foreground">賬號管理系統</span>
+                  <span className="font-semibold text-sm truncate text-foreground">账号管理系统</span>
                 </div>
               )}
             </div>
@@ -220,7 +220,7 @@ function DashboardLayoutContent({
           <div className="flex border-b border-border/50 h-14 items-center bg-background/95 px-4 backdrop-blur sticky top-0 z-40">
             <SidebarTrigger className="h-8 w-8 rounded-lg mr-3" />
             <span className="text-sm font-medium text-foreground">
-              {activeMenuItem?.label ?? "賬號管理系統"}
+              {activeMenuItem?.label ?? "账号管理系统"}
             </span>
           </div>
         )}

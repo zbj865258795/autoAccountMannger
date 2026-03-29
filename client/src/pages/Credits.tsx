@@ -28,17 +28,17 @@ export default function Credits() {
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-xl font-semibold text-foreground">積分統計</h1>
-        <p className="text-sm text-muted-foreground mt-1">所有賬號的積分分佈與統計</p>
+        <h1 className="text-xl font-semibold text-foreground">积分统计</h1>
+        <p className="text-sm text-muted-foreground mt-1">所有账号的积分分布与统计</p>
       </div>
 
-      {/* 統計卡片 */}
+      {/* 统计卡片 */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { title: "總積分", value: stats?.totalCredits?.toLocaleString() ?? 0, icon: Coins, color: "bg-yellow-500/15 text-yellow-400" },
-          { title: "平均積分", value: stats?.avgCredits?.toLocaleString() ?? 0, icon: TrendingUp, color: "bg-blue-500/15 text-blue-400" },
-          { title: "最高積分", value: stats?.maxCredits?.toLocaleString() ?? 0, icon: Zap, color: "bg-purple-500/15 text-purple-400" },
-          { title: "賬號總數", value: stats?.totalAccounts ?? 0, icon: Users, color: "bg-green-500/15 text-green-400" },
+          { title: "总积分", value: stats?.totalCredits?.toLocaleString() ?? 0, icon: Coins, color: "bg-yellow-500/15 text-yellow-400" },
+          { title: "平均积分", value: stats?.avgCredits?.toLocaleString() ?? 0, icon: TrendingUp, color: "bg-blue-500/15 text-blue-400" },
+          { title: "最高积分", value: stats?.maxCredits?.toLocaleString() ?? 0, icon: Zap, color: "bg-purple-500/15 text-purple-400" },
+          { title: "账号总数", value: stats?.totalAccounts ?? 0, icon: Users, color: "bg-green-500/15 text-green-400" },
         ].map((item) => (
           <Card key={item.title} className="bg-card border-border/50">
             <CardContent className="p-5">
@@ -61,16 +61,16 @@ export default function Credits() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {/* 會員等級分佈 */}
+        {/* 会员等级分布 */}
         <Card className="bg-card border-border/50">
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium text-foreground">會員等級分佈</CardTitle>
+            <CardTitle className="text-sm font-medium text-foreground">会员等级分布</CardTitle>
           </CardHeader>
           <CardContent>
             {distLoading ? (
               <Skeleton className="h-48 w-full" />
             ) : membershipData.length === 0 ? (
-              <div className="h-48 flex items-center justify-center text-muted-foreground text-sm">暫無數據</div>
+              <div className="h-48 flex items-center justify-center text-muted-foreground text-sm">暂无数据</div>
             ) : (
               <ResponsiveContainer width="100%" height={200}>
                 <PieChart>
@@ -101,16 +101,16 @@ export default function Credits() {
           </CardContent>
         </Card>
 
-        {/* 積分 Top 10 */}
+        {/* 积分 Top 10 */}
         <Card className="bg-card border-border/50">
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium text-foreground">積分 Top 10 賬號</CardTitle>
+            <CardTitle className="text-sm font-medium text-foreground">积分 Top 10 账号</CardTitle>
           </CardHeader>
           <CardContent>
             {distLoading ? (
               <Skeleton className="h-48 w-full" />
             ) : topAccounts.length === 0 ? (
-              <div className="h-48 flex items-center justify-center text-muted-foreground text-sm">暫無數據</div>
+              <div className="h-48 flex items-center justify-center text-muted-foreground text-sm">暂无数据</div>
             ) : (
               <ResponsiveContainer width="100%" height={200}>
                 <BarChart data={topAccounts} layout="vertical" margin={{ left: 0, right: 20 }}>
@@ -125,7 +125,7 @@ export default function Credits() {
                   />
                   <Tooltip
                     contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px", color: "hsl(var(--foreground))" }}
-                    formatter={(value: any) => [value.toLocaleString(), "積分"]}
+                    formatter={(value: any) => [value.toLocaleString(), "积分"]}
                   />
                   <Bar dataKey="totalCredits" fill="#6366f1" radius={[0, 4, 4, 0]} />
                 </BarChart>
@@ -135,10 +135,10 @@ export default function Credits() {
         </Card>
       </div>
 
-      {/* 積分詳細列表 */}
+      {/* 积分详细列表 */}
       <Card className="bg-card border-border/50">
         <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-medium text-foreground">積分明細</CardTitle>
+          <CardTitle className="text-sm font-medium text-foreground">积分明细</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
@@ -146,10 +146,10 @@ export default function Credits() {
               <thead>
                 <tr className="border-b border-border/50">
                   <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3 uppercase tracking-wider">Email</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3 uppercase tracking-wider">總積分</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3 uppercase tracking-wider">免費積分</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3 uppercase tracking-wider">刷新積分</th>
-                  <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3 uppercase tracking-wider">會員</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3 uppercase tracking-wider">总积分</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3 uppercase tracking-wider">免费积分</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3 uppercase tracking-wider">刷新积分</th>
+                  <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3 uppercase tracking-wider">会员</th>
                 </tr>
               </thead>
               <tbody>

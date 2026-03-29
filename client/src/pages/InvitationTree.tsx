@@ -2,7 +2,6 @@ import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ArrowDown, GitBranch, Search, Users } from "lucide-react";
@@ -12,7 +11,7 @@ type InviteStatus = "unused" | "in_progress" | "used";
 
 const statusLabel: Record<InviteStatus, string> = {
   unused: "未使用",
-  in_progress: "邀請中",
+  in_progress: "邀请中",
   used: "已使用",
 };
 
@@ -57,7 +56,7 @@ function AccountNode({
               <code className="text-xs font-mono text-primary/80">{account.inviteCode}</code>
             )}
             <span className="text-xs text-muted-foreground">
-              {account.totalCredits?.toLocaleString()} 積分
+              {account.totalCredits?.toLocaleString()} 积分
             </span>
           </div>
         </div>
@@ -85,7 +84,7 @@ function ChainView({ accountId }: { accountId: number }) {
   }
 
   if (!chain || chain.length === 0) {
-    return <p className="text-sm text-muted-foreground text-center py-8">無邀請關係數據</p>;
+    return <p className="text-sm text-muted-foreground text-center py-8">无邀请关系数据</p>;
   }
 
   return (
@@ -122,30 +121,30 @@ export default function InvitationTree() {
 
   const accounts = accountsData?.items ?? [];
 
-  // 找出根節點（沒有 invitedById 的賬號）
+  // 找出根节点（没有 invitedById 的账号）
   const rootAccounts = accounts.filter((a) => !a.invitedById);
 
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-xl font-semibold text-foreground">邀請關係</h1>
-        <p className="text-sm text-muted-foreground mt-1">查看賬號之間的邀請鏈條關係</p>
+        <h1 className="text-xl font-semibold text-foreground">邀请关系</h1>
+        <p className="text-sm text-muted-foreground mt-1">查看账号之间的邀请链条关系</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {/* 左側：賬號列表 */}
+        {/* 左侧：账号列表 */}
         <div className="space-y-3">
           <Card className="bg-card border-border/50">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium text-foreground flex items-center gap-2">
                 <Users className="w-4 h-4 text-primary" />
-                選擇賬號查看邀請鏈
+                选择账号查看邀请链
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="flex gap-2">
                 <Input
-                  placeholder="搜索 email 或邀請碼..."
+                  placeholder="搜索 email 或邀请码..."
                   value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
                   className="bg-muted/50 border-border/50 text-foreground placeholder:text-muted-foreground"
@@ -156,7 +155,7 @@ export default function InvitationTree() {
                 {isLoading ? (
                   [...Array(5)].map((_, i) => <Skeleton key={i} className="h-14 w-full" />)
                 ) : accounts.length === 0 ? (
-                  <div className="text-center py-8 text-muted-foreground text-sm">暫無賬號</div>
+                  <div className="text-center py-8 text-muted-foreground text-sm">暂无账号</div>
                 ) : (
                   accounts.map((account) => (
                     <button
@@ -176,7 +175,7 @@ export default function InvitationTree() {
                               <code className="text-xs font-mono text-primary/80">{account.inviteCode}</code>
                             )}
                             {!account.invitedById && (
-                              <span className="text-xs text-muted-foreground">（根節點）</span>
+                              <span className="text-xs text-muted-foreground">（根节点）</span>
                             )}
                           </div>
                         </div>
@@ -195,16 +194,16 @@ export default function InvitationTree() {
           </Card>
         </div>
 
-        {/* 右側：邀請鏈展示 */}
+        {/* 右侧：邀请链展示 */}
         <div>
           <Card className="bg-card border-border/50">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium text-foreground flex items-center gap-2">
                 <GitBranch className="w-4 h-4 text-primary" />
-                邀請鏈條
+                邀请链条
                 {selectedId && (
                   <span className="text-xs text-muted-foreground font-normal ml-1">
-                    （從選中賬號展開）
+                    （从选中账号展开）
                   </span>
                 )}
               </CardTitle>
@@ -213,8 +212,8 @@ export default function InvitationTree() {
               {!selectedId ? (
                 <div className="text-center py-12 text-muted-foreground">
                   <GitBranch className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                  <p className="text-sm">請在左側選擇一個賬號</p>
-                  <p className="text-xs mt-1">系統將展示其完整的邀請鏈條</p>
+                  <p className="text-sm">请在左侧选择一个账号</p>
+                  <p className="text-xs mt-1">系统将展示其完整的邀请链条</p>
                 </div>
               ) : (
                 <ChainView accountId={selectedId} />
@@ -222,21 +221,21 @@ export default function InvitationTree() {
             </CardContent>
           </Card>
 
-          {/* 統計說明 */}
+          {/* 统计说明 */}
           <Card className="bg-card border-border/50 mt-3">
             <CardContent className="p-4">
               <div className="grid grid-cols-3 gap-3 text-center">
                 <div>
                   <p className="text-lg font-bold text-foreground">{rootAccounts.length}</p>
-                  <p className="text-xs text-muted-foreground">根賬號</p>
+                  <p className="text-xs text-muted-foreground">根账号</p>
                 </div>
                 <div>
                   <p className="text-lg font-bold text-foreground">{accounts.filter(a => a.invitedById).length}</p>
-                  <p className="text-xs text-muted-foreground">被邀請賬號</p>
+                  <p className="text-xs text-muted-foreground">被邀请账号</p>
                 </div>
                 <div>
                   <p className="text-lg font-bold text-foreground">{accounts.filter(a => a.inviteStatus === "used").length}</p>
-                  <p className="text-xs text-muted-foreground">已完成邀請</p>
+                  <p className="text-xs text-muted-foreground">已完成邀请</p>
                 </div>
               </div>
             </CardContent>
