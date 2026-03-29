@@ -431,7 +431,7 @@ export async function createAdsPowerBrowser(
     body.tabs = tabs;
   }
 
-  // 代理配置
+  // 代理配置（AdsPower v2 API 要求必须提供 user_proxy_config）
   if (options.proxyConfig && options.proxyConfig.proxyType !== "noproxy") {
     body.user_proxy_config = {
       proxy_soft: "other",
@@ -441,6 +441,12 @@ export async function createAdsPowerBrowser(
       proxy_user: options.proxyConfig.user ?? "",
       proxy_password: options.proxyConfig.password ?? "",
       global_config: "1",
+    };
+  } else {
+    // 无代理时也必须传 user_proxy_config，否则 API 会报错
+    body.user_proxy_config = {
+      proxy_soft: "no_proxy",
+      proxy_type: "noproxy",
     };
   }
 
