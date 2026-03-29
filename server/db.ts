@@ -687,3 +687,46 @@ export async function getRunningLogsWithBrowserId() {
       )
     );
 }
+
+/**
+ * 将指定任务下所有 running 状态的日志批量标记为 failed
+ * 用于手动停止/暂停任务时清理残留的 running 日志
+ */
+export async function failAllRunningLogsForTask(
+  taskId: number,
+  errorMessage: string
+): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+
+  const result = await db
+    .update(taskLogs)
+    .set({
+      status: "failed",
+      errorMessage,
+      completedAt: new Date(),
+    })
+    .where(and(eq(taskLogs.taskId, taskId), eq(taskLogs.status, "running")));
+
+  return (result as any)[0]?.affectedRows ?? 0;
+}
+
+/**
+ * 获取指定任务下所有 running 且有 adspowerBrowserId 的日志
+ * 用于停止任务时关闭对应的 AdsPower 浏览器
+ */
+export async function getRunningLogsForTask(taskId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db
+    .select()
+    .from(taskLogs)
+    .where(
+      and(
+        eq(taskLogs.taskId, taskId),
+        eq(taskLogs.status, "running"),
+        sql`${taskLogs.adspowerBrowserId} IS NOT NULL AND ${taskLogs.adspowerBrowserId} != ''`
+      )
+    );
+}
