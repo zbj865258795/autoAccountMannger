@@ -118,24 +118,8 @@ const TIMEZONES = [
   "Pacific/Auckland",
 ];
 
-/** 语言池 */
-const LANGUAGES = [
-  "en-US,en;q=0.9",
-  "en-GB,en;q=0.9",
-  "en-US,en;q=0.9,zh;q=0.8",
-  "zh-CN,zh;q=0.9,en;q=0.8",
-  "zh-TW,zh;q=0.9,en;q=0.8",
-  "ja-JP,ja;q=0.9,en;q=0.8",
-  "ko-KR,ko;q=0.9,en;q=0.8",
-  "de-DE,de;q=0.9,en;q=0.8",
-  "fr-FR,fr;q=0.9,en;q=0.8",
-  "es-ES,es;q=0.9,en;q=0.8",
-  "pt-BR,pt;q=0.9,en;q=0.8",
-  "ru-RU,ru;q=0.9,en;q=0.8",
-  "it-IT,it;q=0.9,en;q=0.8",
-  "nl-NL,nl;q=0.9,en;q=0.8",
-  "pl-PL,pl;q=0.9,en;q=0.8",
-];
+/** 语言（固定为台湾地区繁体中文） */
+const LANGUAGE_TW = "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7";
 
 /** 屏幕分辨率池 */
 const RESOLUTIONS = [
@@ -245,8 +229,8 @@ export function generateRandomFingerprint() {
   const finalLon = (cityInfo.lon + lonOffset).toFixed(6);
   const timezone = cityInfo.tz;
 
-  // ── 4. 语言 ──────────────────────────────────
-  const language = randomPick(LANGUAGES);
+   // ── 4. 语言（固定台湾地区）──────────────────────
+  const language = LANGUAGE_TW;
 
   // ── 5. 屏幕参数 ──────────────────────────────
   const resolution = randomPick(RESOLUTIONS);
@@ -456,15 +440,16 @@ export async function createAdsPowerBrowser(
 
     const response = await client.post("/api/v2/browser-profile/create", body);
     const data = response.data;
-
     console.log(`[AdsPower] 创建浏览器响应: ${JSON.stringify(data)}`);
 
-    if (data.code === 0 && data.data?.id) {
-      console.log(`[AdsPower] 创建浏览器成功: ${data.data.id} | ${_meta.browserType} | ${_meta.osType} | ${_meta.location} | ${_meta.resolution} | WebGL: ${_meta.webglVendor}`);
-      return { success: true, profileId: data.data.id };
+    // v2 API 返回的是 profile_id，不是 id
+    const profileId = data.data?.profile_id || data.data?.id;
+    if (data.code === 0 && profileId) {
+      console.log(`[AdsPower] 创建浏览器成功: ${profileId} | ${_meta.browserType} | ${_meta.osType} | ${_meta.location} | ${_meta.resolution} | WebGL: ${_meta.webglVendor}`);
+      return { success: true, profileId };
     } else {
       const errMsg = data.msg ?? `API 返回错误码: ${data.code}`;
-      console.error(`[AdsPower] 创建浏览器失败: ${errMsg}`);
+      console.error(`[AdsPower] 创建浏览器失败: ${errMsg} | 响应: ${JSON.stringify(data)}`);
       return { success: false, error: errMsg };
     }
   } catch (error: unknown) {

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { Link } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  AlertTriangle,
   Bot,
   Clock,
   Loader2,
@@ -210,6 +212,41 @@ function AdsPowerStatus({ apiUrl }: { apiUrl: string }) {
   );
 }
 
+function RecentErrors({ taskId }: { taskId: number }) {
+  const { data } = trpc.taskLogs.list.useQuery(
+    { taskId, status: "failed", page: 1, pageSize: 3 },
+    { refetchInterval: 10000 }
+  );
+
+  const logs = data?.items ?? [];
+  if (logs.length === 0) return null;
+
+  return (
+    <div className="mt-3 pt-3 border-t border-border/30">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-1.5 text-xs text-red-400">
+          <AlertTriangle className="w-3 h-3" />
+          <span>最近失败记录</span>
+        </div>
+        <Link href="/logs" className="text-xs text-muted-foreground hover:text-foreground underline">
+          查看全部日志
+        </Link>
+      </div>
+      <div className="space-y-1.5">
+        {logs.map((log: any) => (
+          <div key={log.id} className="p-2 rounded bg-red-500/5 border border-red-500/10">
+            <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+              <span>{log.startedAt ? new Date(log.startedAt).toLocaleString("zh-CN") : "-"}</span>
+              {log.durationMs != null && <span>{(log.durationMs / 1000).toFixed(1)}s</span>}
+            </div>
+            <p className="text-xs text-red-400 font-mono break-all">{log.errorMessage || "未知错误"}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Automation() {
   const utils = trpc.useUtils();
   const [showCreate, setShowCreate] = useState(false);
@@ -346,6 +383,9 @@ export default function Automation() {
                       <span>最后执行：{new Date(task.lastExecutedAt).toLocaleString("zh-CN")}</span>
                     )}
                   </div>
+
+                  {/* 最近失败日志 */}
+                  <RecentErrors taskId={task.id} />
                 </CardContent>
               </Card>
             );
