@@ -1,11 +1,4 @@
-import { useAuth } from "@/_core/hooks/useAuth";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import {
   Sidebar,
   SidebarContent,
@@ -19,7 +12,6 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
 import {
   Activity,
@@ -27,7 +19,6 @@ import {
   FileText,
   GitBranch,
   LayoutDashboard,
-  LogOut,
   PanelLeft,
   Phone,
   Plus,
@@ -36,8 +27,7 @@ import {
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
-import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
-import { Button } from "./ui/button";
+
 
 const menuItems = [
   { icon: LayoutDashboard, label: "仪表板", path: "/" },
@@ -61,37 +51,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const saved = localStorage.getItem(SIDEBAR_WIDTH_KEY);
     return saved ? parseInt(saved, 10) : DEFAULT_WIDTH;
   });
-  const { loading, user } = useAuth();
 
   useEffect(() => {
     localStorage.setItem(SIDEBAR_WIDTH_KEY, sidebarWidth.toString());
   }, [sidebarWidth]);
 
-  if (loading) return <DashboardLayoutSkeleton />;
-
-  if (!user) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-background">
-        <div className="flex flex-col items-center gap-8 p-8 max-w-md w-full">
-          <div className="flex flex-col items-center gap-4">
-            <div className="w-14 h-14 rounded-2xl bg-primary/20 flex items-center justify-center">
-              <Bot className="w-7 h-7 text-primary" />
-            </div>
-            <h1 className="text-2xl font-semibold tracking-tight text-center text-foreground">
-              账号管理系统
-            </h1>
-            <p className="text-sm text-muted-foreground text-center max-w-sm">
-              请登录以访问账号管理和自动化任务控制系统。
-            </p>
-          </div>
-          <Button onClick={() => { window.location.href = getLoginUrl(); }} size="lg" className="w-full">
-            登录继续
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
+  // 本地部署模式：无需登录，直接渲染
   return (
     <SidebarProvider style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}>
       <DashboardLayoutContent setSidebarWidth={setSidebarWidth}>
@@ -108,7 +73,6 @@ function DashboardLayoutContent({
   children: React.ReactNode;
   setSidebarWidth: (width: number) => void;
 }) {
-  const { user, logout } = useAuth();
   const [location, setLocation] = useLocation();
   const { state, toggleSidebar } = useSidebar();
   const isCollapsed = state === "collapsed";
