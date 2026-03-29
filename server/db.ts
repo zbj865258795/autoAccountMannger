@@ -666,3 +666,24 @@ export async function getPhoneStats(): Promise<{
   }
   return stats;
 }
+
+// ─── 浏览器状态监控 ─────────────────────────────────────────────────────────────
+
+/**
+ * 获取所有状态为 running 且有 adspowerBrowserId 的任务日志
+ * 用于浏览器状态轮询：检测浏览器是否异常关闭
+ */
+export async function getRunningLogsWithBrowserId() {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db
+    .select()
+    .from(taskLogs)
+    .where(
+      and(
+        eq(taskLogs.status, "running"),
+        sql`${taskLogs.adspowerBrowserId} IS NOT NULL AND ${taskLogs.adspowerBrowserId} != ''`
+      )
+    );
+}

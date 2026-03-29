@@ -6,18 +6,21 @@
  * 2. 根據 maxConcurrent（線程數）和 targetCount（目標總數）計算本次需要創建幾個瀏覽器
  * 3. 調用 AdsPower API 創建並啟動對應數量的瀏覽器實例
  * 4. 邀請碼的認領和狀態變更由插件端通過 callback 接口完成
+ * 5. 定時輪詢已啟動瀏覽器的狀態，異常關閉時自動標記任務失敗並清理
  */
 
 import {
   getUnusedInviteCodeCount,
   createTaskLog,
   getAutomationTaskById,
+  getRunningLogsWithBrowserId,
   incrementTaskCounters,
   updateAutomationTask,
   updateTaskLog,
 } from "./db";
 import {
   createAdsPowerBrowser,
+  getActiveBrowsers,
   startAdsPowerBrowser,
   stopAndDeleteAdsPowerBrowser,
 } from "./adspower";
@@ -26,6 +29,101 @@ import { ADSPOWER_CONFIG } from "./config";
 // ─── 全局調度器狀態 ───────────────────────────────────────────────────────────
 
 const schedulerTimers = new Map<number, NodeJS.Timeout>();
+
+// ─── 瀏覽器狀態監控 ──────────────────────────────────────────────────────────
+
+let browserMonitorTimer: NodeJS.Timeout | null = null;
+const BROWSER_MONITOR_INTERVAL = 15000; // 每 15 秒檢查一次
+
+/**
+ * 啟動瀏覽器狀態監控
+ * 定時檢查所有 running 狀態的任務日誌對應的瀏覽器是否還活著
+ * 如果瀏覽器被手動關閉或異常退出，自動標記為失敗並清理
+ */
+function startBrowserMonitor(): void {
+  if (browserMonitorTimer) return; // 已經在運行
+
+  console.log(`[BrowserMonitor] Started | interval: ${BROWSER_MONITOR_INTERVAL / 1000}s`);
+
+  browserMonitorTimer = setInterval(async () => {
+    try {
+      await checkBrowserStatus();
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error(`[BrowserMonitor] Error: ${msg}`);
+    }
+  }, BROWSER_MONITOR_INTERVAL);
+}
+
+/**
+ * 停止瀏覽器狀態監控（當沒有任何運行中的調度器時）
+ */
+function stopBrowserMonitor(): void {
+  if (browserMonitorTimer) {
+    clearInterval(browserMonitorTimer);
+    browserMonitorTimer = null;
+    console.log(`[BrowserMonitor] Stopped`);
+  }
+}
+
+/**
+ * 核心檢查邏輯：
+ * 1. 從數據庫獲取所有 running 且有 adspowerBrowserId 的任務日誌
+ * 2. 從 AdsPower 獲取當前活躍的瀏覽器列表
+ * 3. 對比：如果某個日誌的瀏覽器不在活躍列表中，說明已關閉
+ * 4. 標記該日誌為 failed，並嘗試刪除 AdsPower 中的瀏覽器環境
+ */
+async function checkBrowserStatus(): Promise<void> {
+  // 1. 獲取所有 running 且有 browserId 的日誌
+  const runningLogs = await getRunningLogsWithBrowserId();
+  if (runningLogs.length === 0) return;
+
+  // 2. 獲取 AdsPower 當前活躍的瀏覽器列表
+  const apiUrl = ADSPOWER_CONFIG.apiUrl;
+  const activeBrowsers = await getActiveBrowsers(apiUrl);
+  const activeIds = new Set(activeBrowsers.map((b) => b.browserId));
+
+  console.log(
+    `[BrowserMonitor] Checking ${runningLogs.length} running browser(s) | ${activeIds.size} active in AdsPower`
+  );
+
+  // 3. 對比：找出已關閉的瀏覽器
+  for (const log of runningLogs) {
+    const browserId = log.adspowerBrowserId;
+    if (!browserId) continue;
+
+    if (!activeIds.has(browserId)) {
+      // 瀏覽器已不在活躍列表中 → 被關閉或異常退出
+      const durationMs = log.startedAt
+        ? Date.now() - new Date(log.startedAt).getTime()
+        : undefined;
+
+      console.log(
+        `[BrowserMonitor] Browser ${browserId} (log #${log.id}) is no longer active, marking as failed`
+      );
+
+      // 標記日誌為失敗
+      await updateTaskLog(log.id, {
+        status: "failed",
+        errorMessage: "浏览器被关闭或异常退出（由状态监控检测到）",
+        durationMs,
+        completedAt: new Date(),
+      });
+
+      // 更新任務計數器
+      if (log.taskId) {
+        await incrementTaskCounters(log.taskId, { totalFailed: 1 });
+      }
+
+      // 嘗試清理 AdsPower 中的瀏覽器環境（可能已經不存在，忽略錯誤）
+      const adspowerConfig = {
+        apiUrl,
+        apiKey: ADSPOWER_CONFIG.apiKey,
+      };
+      await stopAndDeleteAdsPowerBrowser(adspowerConfig, browserId).catch(() => {});
+    }
+  }
+}
 
 // ─── 啟動調度器 ───────────────────────────────────────────────────────────────
 
@@ -56,12 +154,17 @@ export async function startScheduler(taskId: number): Promise<void> {
     if (!currentTask || currentTask.status !== "running") {
       clearInterval(timer);
       schedulerTimers.delete(taskId);
+      // 如果沒有任何運行中的調度器，停止瀏覽器監控
+      if (schedulerTimers.size === 0) stopBrowserMonitor();
       return;
     }
     await executeTask(taskId);
   }, (task.scanIntervalSeconds || 60) * 1000);
 
   schedulerTimers.set(taskId, timer);
+
+  // 啟動瀏覽器狀態監控（如果尚未啟動）
+  startBrowserMonitor();
 }
 
 // ─── 暫停調度器 ───────────────────────────────────────────────────────────────
@@ -74,6 +177,7 @@ export async function pauseScheduler(taskId: number): Promise<void> {
   }
   await updateAutomationTask(taskId, { status: "paused" });
   console.log(`[Scheduler] Task ${taskId} paused`);
+  if (schedulerTimers.size === 0) stopBrowserMonitor();
 }
 
 // ─── 停止調度器 ───────────────────────────────────────────────────────────────
@@ -86,6 +190,7 @@ export async function stopScheduler(taskId: number): Promise<void> {
   }
   await updateAutomationTask(taskId, { status: "stopped" });
   console.log(`[Scheduler] Task ${taskId} stopped`);
+  if (schedulerTimers.size === 0) stopBrowserMonitor();
 }
 
 // ─── 獲取運行中的任務 ID ──────────────────────────────────────────────────────
@@ -129,8 +234,12 @@ async function executeTask(taskId: number): Promise<void> {
       return;
     }
 
-    // 2. 計算本次需要創建的瀏覽器數量
-    let browsersToCreate = Math.min(maxConcurrent, unusedCount);
+    // 2. 查詢當前正在運行中的瀏覽器數量（避免重複創建）
+    const runningLogs = await getRunningLogsWithBrowserId();
+    const currentRunning = runningLogs.filter((l) => l.taskId === taskId).length;
+
+    // 3. 計算本次需要創建的瀏覽器數量（扣除已在運行的）
+    let browsersToCreate = Math.min(maxConcurrent - currentRunning, unusedCount);
 
     // 如果有目標總數限制，還需要考慮剩餘名額
     if (task.targetCount) {
@@ -139,16 +248,18 @@ async function executeTask(taskId: number): Promise<void> {
     }
 
     if (browsersToCreate <= 0) {
-      console.log(`[Scheduler] Task ${taskId}: No browsers needed to create`);
+      console.log(
+        `[Scheduler] Task ${taskId}: No new browsers needed (running: ${currentRunning}/${maxConcurrent})`
+      );
       await updateAutomationTask(taskId, { lastExecutedAt: new Date() });
       return;
     }
 
     console.log(
-      `[Scheduler] Task ${taskId}: ${unusedCount} unused invite codes available, creating ${browsersToCreate} browser(s)`
+      `[Scheduler] Task ${taskId}: ${unusedCount} unused codes | ${currentRunning} running | creating ${browsersToCreate} new browser(s)`
     );
 
-    // 3. 並發創建瀏覽器（不綁定具體邀請碼，邀請碼由插件端認領）
+    // 4. 並發創建瀏覽器（不綁定具體邀請碼，邀請碼由插件端認領）
     await Promise.all(
       Array.from({ length: browsersToCreate }, (_, i) =>
         createOneBrowser(taskId, task, adspowerConfig, targetUrl, i)
