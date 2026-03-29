@@ -200,6 +200,45 @@ export async function getUnusedInviteCodes() {
     .orderBy(asc(accounts.createdAt));
 }
 
+/**
+ * 原子操作：获取一个「未使用」邀请码并立即标记为「邀请中」
+ * 使用 SELECT ... FOR UPDATE + UPDATE 事务，彻底防止并发重复分配
+ * 返回被锁定的账号记录，若无可用则返回 null
+ */
+export async function claimNextInviteCode(): Promise<{
+  id: number;
+  inviteCode: string | null;
+  email: string;
+} | null> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // 使用事务 + SELECT FOR UPDATE 保证原子性
+  const result = await db.transaction(async (tx) => {
+    // 1. 加行锁，找到第一条未使用的邀请码
+    const rows = await tx
+      .select({ id: accounts.id, inviteCode: accounts.inviteCode, email: accounts.email })
+      .from(accounts)
+      .where(eq(accounts.inviteStatus, "unused"))
+      .orderBy(asc(accounts.createdAt))
+      .limit(1)
+      .for("update");
+
+    if (rows.length === 0) return null;
+    const row = rows[0];
+
+    // 2. 原子更新为「邀请中」
+    await tx
+      .update(accounts)
+      .set({ inviteStatus: "in_progress" })
+      .where(eq(accounts.id, row.id));
+
+    return row;
+  });
+
+  return result ?? null;
+}
+
 export async function getInvitationChain(accountId: number): Promise<typeof accounts.$inferSelect[]> {
   const db = await getDb();
   if (!db) return [];
@@ -477,20 +516,31 @@ export async function getNextAvailablePhone(): Promise<{
 } | null> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const results = await db
-    .select()
-    .from(phoneNumbers)
-    .where(eq(phoneNumbers.status, "unused"))
-    .orderBy(phoneNumbers.createdAt)
-    .limit(1);
-  if (results.length === 0) return null;
-  const record = results[0];
-  // 标记为使用中
-  await db
-    .update(phoneNumbers)
-    .set({ status: "in_use", updatedAt: new Date() })
-    .where(eq(phoneNumbers.id, record.id));
-  return { id: record.id, phone: record.phone, smsUrl: record.smsUrl };
+
+  // 使用事务 + SELECT FOR UPDATE 保证原子性，彻底防止并发重复分配
+  const result = await db.transaction(async (tx) => {
+    // 1. 加行锁，找到第一条未使用的手机号
+    const rows = await tx
+      .select({ id: phoneNumbers.id, phone: phoneNumbers.phone, smsUrl: phoneNumbers.smsUrl })
+      .from(phoneNumbers)
+      .where(eq(phoneNumbers.status, "unused"))
+      .orderBy(phoneNumbers.createdAt)
+      .limit(1)
+      .for("update");
+
+    if (rows.length === 0) return null;
+    const row = rows[0];
+
+    // 2. 原子更新为「使用中」
+    await tx
+      .update(phoneNumbers)
+      .set({ status: "in_use", updatedAt: new Date() })
+      .where(eq(phoneNumbers.id, row.id));
+
+    return row;
+  });
+
+  return result ?? null;
 }
 
 /**

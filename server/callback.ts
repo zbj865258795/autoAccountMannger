@@ -30,6 +30,7 @@
 import type { Express, Request, Response } from "express";
 import {
   createAccount,
+  claimNextInviteCode,
   getNextAvailablePhone,
   markPhoneUsedById,
   updateInviteStatusById,
@@ -55,10 +56,10 @@ export function registerCallbackRoutes(app: Express): void {
   // ─────────────────────────────────────────────
   app.get("/api/callback/next-invite-code", async (_req: Request, res: Response) => {
     try {
-      const { getUnusedInviteCodes } = await import("./db");
-      const unusedCodes = await getUnusedInviteCodes();
+      // 原子操作：SELECT FOR UPDATE + UPDATE 在同一事务内完成，彻底防止并发重复分配
+      const next = await claimNextInviteCode();
 
-      if (unusedCodes.length === 0) {
+      if (!next) {
         return res.json({
           success: true,
           inviteCode: null,
@@ -66,11 +67,7 @@ export function registerCallbackRoutes(app: Express): void {
         });
       }
 
-      const next = unusedCodes[0];
-
-      // 立即标记为「邀请中」，防止并发重复分配
-      await updateInviteStatusById(next.id, "in_progress");
-      console.log(`[Callback] Invite code ${next.inviteCode} (id=${next.id}) marked as in_progress`);
+      console.log(`[Callback] Invite code ${next.inviteCode} (id=${next.id}) claimed atomically`);
 
       return res.json({
         success: true,

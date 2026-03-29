@@ -145,7 +145,7 @@
 - [x] 修复 register 接口：inviteCode/email unique 冲突时捕获并返回友好错误码
 - [x] 完善 ApiDocs 页面：每个接口补充完整参数表格（字段名、类型、是否必填、说明）
 - [x] 完善 ApiDocs 页面：每个接口补充完整返回值表格（字段名、类型、说明）
-- [ ] 保存 Checkpoint 并推送 GitHub
+- [x] 保存 Checkpoint 并推送 GitHub
 
 ## 邀请码接口重设计（2026-03-29 第十五轮）
 - [x] get-next-invite-code：获取邀请码时直接标记为「邀请中」，同时返回 id 和 inviteCode
@@ -153,4 +153,10 @@
 - [x] register 接口：新增 inviterAccountId 参数，通过 id 直接将邀请人邀请码标记为「已使用」
 - [x] 删除多余的 invite-used 接口（功能已合并到 get-next-invite-code）
 - [x] 更新 ApiDocs 文档，反映新的接口设计
+- [ ] 保存 Checkpoint 并推送 GitHub
+
+## 并发锁优化（2026-03-29 第十六轮）
+- [x] next-invite-code：改为原子 SQL UPDATE（SELECT FOR UPDATE + UPDATE 同一事务），彻底解决并发重复分配
+- [x] get-phone：同样改为原子 SQL UPDATE（SELECT FOR UPDATE + UPDATE 同一事务），彻底解决并发重复分配
+- [x] 测试并发场景验证（3并发请求，每次返回不同邀请码，无重复）
 - [ ] 保存 Checkpoint 并推送 GitHub
