@@ -53,7 +53,9 @@ function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose
   const [name, setName] = useState("自動注冊任務");
   const [interval, setInterval] = useState(60);
   const [apiUrl, setApiUrl] = useState("http://local.adspower.net:50325");
+  const [apiKey, setApiKey] = useState("");
   const [groupId, setGroupId] = useState("");
+  const [targetUrl, setTargetUrl] = useState("");
   const [maxConcurrent, setMaxConcurrent] = useState(1);
 
   const createTask = trpc.automation.create.useMutation({
@@ -85,8 +87,29 @@ function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose
             <Input
               value={apiUrl}
               onChange={(e) => setApiUrl(e.target.value)}
+              placeholder="http://local.adspower.net:50325"
               className="bg-muted/50 border-border/50 text-foreground font-mono text-sm"
             />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">API Key（可選，開啟安全校驗時填寫）</Label>
+            <Input
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="AdsPower API Key"
+              type="password"
+              className="bg-muted/50 border-border/50 text-foreground font-mono text-sm"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">注冊目標 URL（可選）</Label>
+            <Input
+              value={targetUrl}
+              onChange={(e) => setTargetUrl(e.target.value)}
+              placeholder="https://example.com/register"
+              className="bg-muted/50 border-border/50 text-foreground font-mono text-sm"
+            />
+            <p className="text-xs text-muted-foreground">瀏覽器打開後自動跳轉到此 URL，邀請碼會自動附加到 URL 參數</p>
           </div>
           <div className="space-y-2">
             <Label className="text-xs text-muted-foreground">分組 ID（可選）</Label>
@@ -123,7 +146,7 @@ function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose
               value={[maxConcurrent]}
               onValueChange={([v]) => setMaxConcurrent(v)}
               min={1}
-              max={10}
+              max={50}
               step={1}
               className="w-full"
             />
@@ -135,7 +158,15 @@ function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>取消</Button>
           <Button
-            onClick={() => createTask.mutate({ name, scanIntervalSeconds: interval, adspowerApiUrl: apiUrl, adspowerGroupId: groupId || undefined, maxConcurrent })}
+            onClick={() => createTask.mutate({
+              name,
+              scanIntervalSeconds: interval,
+              adspowerApiUrl: apiUrl,
+              adspowerApiKey: apiKey || undefined,
+              adspowerGroupId: groupId || undefined,
+              targetUrl: targetUrl || undefined,
+              maxConcurrent,
+            })}
             disabled={createTask.isPending || !name.trim()}
           >
             {createTask.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}

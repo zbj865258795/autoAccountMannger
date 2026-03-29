@@ -35,7 +35,9 @@ function transformPluginData(item: any, invitedByCode?: string) {
   return {
     email: item.email || userInfo.email,
     password: item.password,
+    phone: item.phone,
     token: item.token,
+    clientId: item.clientId,
     userId: userInfo.userId,
     displayname: userInfo.displayname || userInfo.nickname,
     membershipVersion: userInfo.membershipVersion || creditsInfo.membershipVersion || "free",
@@ -236,6 +238,8 @@ export default function ImportAccounts() {
                         <span>邀請碼：<code className="text-primary font-mono">{item.inviteCode || "—"}</code></span>
                         <span>積分：{item.totalCredits?.toLocaleString()}</span>
                         <span>會員：{item.membershipVersion}</span>
+                        {item.phone && <span>手機：{item.phone}</span>}
+                        {item.clientId && <span className="col-span-2">ClientID：<code className="text-muted-foreground font-mono text-xs">{item.clientId}</code></span>}
                         {item.invitedByCode && (
                           <span>邀請者：<code className="text-yellow-400 font-mono">{item.invitedByCode}</code></span>
                         )}
@@ -257,8 +261,10 @@ export default function ImportAccounts() {
 {`// 插件完整輸出格式（推薦）
 {
   "email": "xxx@outlook.com",
-  "password": "...",
+  "password": "aB3#kLm9",
+  "phone": "+17699335914",
   "token": "eyJ...",
+  "clientId": "c4QzUWRnJKGQ6...",
   "user_info": {
     "userId": "...",
     "displayname": "...",
@@ -273,12 +279,16 @@ export default function ImportAccounts() {
   "invitation_info": {
     "invitationCodes": [{
       "id": "...",
-      "inviteCode": "KZUPX5EF3K7I"
+      "inviteCode": "DNTT7V7WJAS6ABI"
     }]
   }
 }
 
-// 也支持數組格式 [{ ... }, { ... }]`}
+// 也支持數組格式 [{ ... }, { ... }]
+// 也支持簡化格式（直接字段）：
+// { email, password, phone, token, clientId,
+//   membershipVersion, totalCredits, freeCredits,
+//   refreshCredits, inviteCode, invitedByCode }`}
               </pre>
             </CardContent>
           </Card>

@@ -15,6 +15,20 @@
       "when": 1774754714747,
       "tag": "0001_curvy_steve_rogers",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1774761017235,
+      "tag": "0002_magenta_enchantress",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1774761350289,
+      "tag": "0003_great_lilith",
+      "breakpoints": true
     }
   ]
 }

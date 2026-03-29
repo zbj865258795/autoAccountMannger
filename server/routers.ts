@@ -29,7 +29,9 @@ import { startScheduler, pauseScheduler, stopScheduler, getRunningTaskIds } from
 const AccountImportSchema = z.object({
   email: z.string().email(),
   password: z.string(),
+  phone: z.string().optional(),
   token: z.string().optional(),
+  clientId: z.string().optional(),
   userId: z.string().optional(),
   displayname: z.string().optional(),
   membershipVersion: z.string().optional().default("free"),
@@ -196,8 +198,10 @@ const automationRouter = router({
         name: z.string().min(1),
         scanIntervalSeconds: z.number().min(10).default(60),
         adspowerApiUrl: z.string().default("http://local.adspower.net:50325"),
+        adspowerApiKey: z.string().optional(),
         adspowerGroupId: z.string().optional(),
-        maxConcurrent: z.number().min(1).max(5).default(1),
+        targetUrl: z.string().optional(),
+        maxConcurrent: z.number().min(1).max(50).default(1),
       })
     )
     .mutation(async ({ input }) => {
@@ -213,8 +217,10 @@ const automationRouter = router({
           name: z.string().optional(),
           scanIntervalSeconds: z.number().min(10).optional(),
           adspowerApiUrl: z.string().optional(),
+          adspowerApiKey: z.string().optional(),
           adspowerGroupId: z.string().optional(),
-          maxConcurrent: z.number().min(1).max(5).optional(),
+          targetUrl: z.string().optional(),
+          maxConcurrent: z.number().min(1).max(50).optional(),
         }),
       })
     )

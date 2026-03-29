@@ -37,3 +37,15 @@
 - [x] AdsPower API 集成腳本
 - [x] 單元測試（賬號 CRUD、邀請碼狀態流轉、批量導入、儀表板統計）
 - [x] 保存 Checkpoint
+
+## 更新任務（2026-03-29）
+- [x] 閱讀 AdsPower API 文檔，確認創建/刪除瀏覽器接口參數
+- [x] 數據庫新增 phone、clientId 字段並執行遷移
+- [x] 重寫 AdsPower 服務：每次創建隨機指紋（UA、分辨率、語言、時區、WebGL 等）
+- [x] 實現刪除 AdsPower 瀏覽器功能（v2 API，支持批量，每批最多 100 個）
+- [x] 更新回調接口支持 phone、clientId 字段
+- [x] 更新前端導入頁面支持新字段
+- [x] 更新測試並複檢所有功能（15 個測試全部通過）
+- [x] automation_tasks 表新增 adspowerApiKey 和 targetUrl 字段
+- [x] 前端創建任務對話新增 API Key 和 targetUrl 輸入欄，並發數上限調整為 50
+- [x] ApiDocs.tsx 插件修改指南更新包含 phone/clientId 字段

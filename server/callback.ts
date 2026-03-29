@@ -1,17 +1,21 @@
 /**
  * Chrome 插件回調 REST 端點
  *
- * 當 Chrome 插件完成賬號注冊後，調用此端點將新賬號信息保存到數據庫。
+ * 插件完成注冊後，調用此端點將新賬號信息保存到數據庫。
  *
- * POST /api/callback/register
- * {
- *   email, password, token, userId, displayname,
- *   membershipVersion, totalCredits, freeCredits, refreshCredits,
- *   inviteCode, inviteCodeId, invitedByCode, registeredAt
- * }
+ * ─── 插件需要調用的接口 ───
  *
- * POST /api/callback/invite-used
- * { inviteCode } - 通知系統某邀請碼已被使用（注冊完成）
+ * 1. 注冊開始前，獲取邀請碼：
+ *    GET /api/callback/next-invite-code
+ *
+ * 2. 注冊成功後，上報完整賬號數據：
+ *    POST /api/callback/register
+ *    Body: { email, password, phone, token, clientId,
+ *            membershipVersion, totalCredits, freeCredits, refreshCredits,
+ *            inviteCode, invitedByCode, registeredAt }
+ *
+ * 3. 健康檢查：
+ *    GET /api/callback/health
  */
 
 import type { Express, Request, Response } from "express";
@@ -21,40 +25,109 @@ import {
   updateInviteStatus,
   updateAutomationTask,
   getAutomationTasks,
-  createTaskLog,
-  updateTaskLog,
   getTaskLogs,
+  updateTaskLog,
 } from "./db";
 
 export function registerCallbackRoutes(app: Express): void {
-  /**
-   * 主要回調端點：Chrome 插件注冊成功後調用
-   * 接收完整的賬號信息並保存到數據庫
-   */
-  app.post("/api/callback/register", async (req: Request, res: Response) => {
-    try {
-      const {
-        email,
-        password,
-        token,
-        userId,
-        displayname,
-        membershipVersion,
-        totalCredits,
-        freeCredits,
-        refreshCredits,
-        inviteCode,
-        inviteCodeId,
-        invitedByCode,
-        registeredAt,
-        notes,
-      } = req.body;
 
-      if (!email || !password) {
-        return res.status(400).json({ success: false, error: "email and password are required" });
+  // ─────────────────────────────────────────────
+  // 健康檢查
+  // ─────────────────────────────────────────────
+  app.get("/api/callback/health", (_req: Request, res: Response) => {
+    res.json({ success: true, status: "ok", timestamp: new Date().toISOString() });
+  });
+
+  // ─────────────────────────────────────────────
+  // 獲取下一個可用邀請碼（插件主動拉取）
+  // ─────────────────────────────────────────────
+  app.get("/api/callback/next-invite-code", async (req: Request, res: Response) => {
+    try {
+      const { getUnusedInviteCodes } = await import("./db");
+      const unusedCodes = await getUnusedInviteCodes();
+
+      if (unusedCodes.length === 0) {
+        return res.json({
+          success: true,
+          inviteCode: null,
+          message: "No unused invite codes available",
+        });
       }
 
-      // 查找邀請者
+      const next = unusedCodes[0];
+      return res.json({
+        success: true,
+        inviteCode: next.inviteCode,
+        sourceEmail: next.email,
+        sourceAccountId: next.id,
+      });
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ success: false, error: msg });
+    }
+  });
+
+  // ─────────────────────────────────────────────
+  // 主要回調：插件注冊成功後上報賬號數據
+  // 兼容兩種格式：
+  //   (A) 簡化格式：直接字段
+  //   (B) 完整格式：包含 user_info / credits_info / invitation_info 嵌套對象
+  // ─────────────────────────────────────────────
+  app.post("/api/callback/register", async (req: Request, res: Response) => {
+    try {
+      const body = req.body;
+
+      // ── 解析字段（兼容兩種格式）──
+      const email: string = body.email;
+      const password: string = body.password;
+      const phone: string | undefined = body.phone;
+      const token: string | undefined = body.token;
+      const clientId: string | undefined = body.clientId;
+
+      if (!email || !password) {
+        return res.status(400).json({
+          success: false,
+          error: "email and password are required",
+        });
+      }
+
+      // 嵌套格式兼容
+      const userInfo = body.user_info || {};
+      const creditsInfo = body.credits_info || {};
+      const invitationInfo = body.invitation_info || {};
+
+      const userId: string | undefined = body.userId || userInfo.userId;
+      const displayname: string | undefined =
+        body.displayname || userInfo.displayname || userInfo.nickname;
+      const membershipVersion: string =
+        body.membershipVersion || userInfo.membershipVersion || creditsInfo.membershipVersion || "free";
+      const totalCredits: number =
+        body.totalCredits ?? creditsInfo.totalCredits ?? 0;
+      const freeCredits: number =
+        body.freeCredits ?? creditsInfo.freeCredits ?? 0;
+      const refreshCredits: number =
+        body.refreshCredits ?? creditsInfo.refreshCredits ?? 0;
+
+      // 邀請碼（此賬號持有的邀請碼）
+      let inviteCode: string | undefined = body.inviteCode;
+      let inviteCodeId: string | undefined = body.inviteCodeId;
+      if (!inviteCode && invitationInfo.invitationCodes?.length > 0) {
+        const primary = invitationInfo.invitationCodes[0];
+        inviteCode = primary.inviteCode;
+        inviteCodeId = primary.id;
+      }
+
+      // 邀請者邀請碼（此賬號是被誰邀請的）
+      const invitedByCode: string | undefined = body.invitedByCode;
+
+      const registeredAt: Date =
+        body.registeredAt
+          ? new Date(body.registeredAt)
+          : userInfo.registeredAt
+          ? new Date(userInfo.registeredAt)
+          : new Date();
+
+      // ── 查找邀請者 ──
       let invitedById: number | undefined;
       if (invitedByCode) {
         const inviter = await getAccountByInviteCode(invitedByCode);
@@ -65,145 +138,77 @@ export function registerCallbackRoutes(app: Express): void {
         }
       }
 
-      // 創建新賬號
+      // ── 創建新賬號 ──
       await createAccount({
         email,
         password,
+        phone,
         token,
+        clientId,
         userId,
         displayname,
-        membershipVersion: membershipVersion || "free",
-        totalCredits: totalCredits || 0,
-        freeCredits: freeCredits || 0,
-        refreshCredits: refreshCredits || 0,
+        membershipVersion,
+        totalCredits,
+        freeCredits,
+        refreshCredits,
         inviteCode,
         inviteCodeId,
         invitedByCode,
         invitedById,
-        registeredAt: registeredAt ? new Date(registeredAt) : new Date(),
-        notes,
+        registeredAt,
+        inviteStatus: "unused",
       });
 
-      // 更新相關任務的統計
-      const runningTasks = await getAutomationTasks();
-      for (const task of runningTasks) {
+      // ── 更新運行中的任務統計 ──
+      const allTasks = await getAutomationTasks();
+      for (const task of allTasks) {
         if (task.status === "running") {
           await updateAutomationTask(task.id, {
             totalAccountsCreated: (task.totalAccountsCreated || 0) + 1,
+            totalSuccess: (task.totalSuccess || 0) + 1,
           });
 
-          // 查找並更新對應的任務日誌（找到使用了此邀請碼的日誌）
+          // 找到對應的任務日誌並標記成功
           if (invitedByCode) {
-            const logs = await getTaskLogs({ taskId: task.id, status: "running", pageSize: 10 });
-            const matchingLog = logs.items.find((l) => l.usedInviteCode === invitedByCode);
+            const logs = await getTaskLogs({
+              taskId: task.id,
+              status: "running",
+              pageSize: 20,
+            });
+            const matchingLog = logs.items.find(
+              (l) => l.usedInviteCode === invitedByCode
+            );
             if (matchingLog) {
               await updateTaskLog(matchingLog.id, {
                 status: "success",
                 completedAt: new Date(),
+                durationMs: Date.now() - (matchingLog.startedAt?.getTime() ?? Date.now()),
               });
             }
           }
         }
       }
 
-      console.log(`[Callback] New account registered: ${email} (invited by: ${invitedByCode || "none"})`);
+      console.log(
+        `[Callback] New account registered: ${email} | inviteCode: ${inviteCode ?? "none"} | invitedBy: ${invitedByCode ?? "none"}`
+      );
 
       return res.json({
         success: true,
         message: "Account registered successfully",
         email,
+        inviteCode: inviteCode ?? null,
       });
-    } catch (error: any) {
-      console.error("[Callback] Register error:", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "Internal server error",
-      });
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error("[Callback] Register error:", msg);
+      return res.status(500).json({ success: false, error: msg });
     }
   });
 
-  /**
-   * 接收完整的 JSON 格式賬號數據（與插件輸出格式完全兼容）
-   * 支持直接粘貼插件輸出的完整 JSON
-   */
-  app.post("/api/callback/register-full", async (req: Request, res: Response) => {
-    try {
-      const data = req.body;
-
-      // 解析完整的插件輸出格式
-      const email = data.email;
-      const password = data.password;
-      const token = data.token;
-      const userInfo = data.user_info || {};
-      const creditsInfo = data.credits_info || {};
-      const invitationInfo = data.invitation_info || {};
-
-      if (!email || !password) {
-        return res.status(400).json({ success: false, error: "email and password are required" });
-      }
-
-      // 提取邀請碼
-      const inviteCodes = invitationInfo.invitationCodes || [];
-      const primaryInviteCode = inviteCodes[0];
-
-      // 查找邀請者（如果有 invitedByCode 字段）
-      let invitedById: number | undefined;
-      const invitedByCode = data.invitedByCode;
-      if (invitedByCode) {
-        const inviter = await getAccountByInviteCode(invitedByCode);
-        if (inviter) {
-          invitedById = inviter.id;
-          await updateInviteStatus(invitedByCode, "used");
-        }
-      }
-
-      await createAccount({
-        email,
-        password,
-        token,
-        userId: userInfo.userId,
-        displayname: userInfo.displayname || userInfo.nickname,
-        membershipVersion: userInfo.membershipVersion || creditsInfo.membershipVersion || "free",
-        totalCredits: creditsInfo.totalCredits || 0,
-        freeCredits: creditsInfo.freeCredits || 0,
-        refreshCredits: creditsInfo.refreshCredits || 0,
-        inviteCode: primaryInviteCode?.inviteCode,
-        inviteCodeId: primaryInviteCode?.id,
-        invitedByCode,
-        invitedById,
-        registeredAt: userInfo.registeredAt ? new Date(userInfo.registeredAt) : new Date(),
-      });
-
-      // 更新任務統計
-      const runningTasks = await getAutomationTasks();
-      for (const task of runningTasks) {
-        if (task.status === "running") {
-          await updateAutomationTask(task.id, {
-            totalAccountsCreated: (task.totalAccountsCreated || 0) + 1,
-          });
-        }
-      }
-
-      console.log(`[Callback] Full account data registered: ${email}`);
-
-      return res.json({
-        success: true,
-        message: "Account registered successfully",
-        email,
-        inviteCode: primaryInviteCode?.inviteCode,
-      });
-    } catch (error: any) {
-      console.error("[Callback] Register-full error:", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "Internal server error",
-      });
-    }
-  });
-
-  /**
-   * 通知邀請碼已被使用（注冊流程開始時調用）
-   */
+  // ─────────────────────────────────────────────
+  // 通知邀請碼開始被使用（注冊流程開始時調用，可選）
+  // ─────────────────────────────────────────────
   app.post("/api/callback/invite-used", async (req: Request, res: Response) => {
     try {
       const { inviteCode } = req.body;
@@ -215,39 +220,9 @@ export function registerCallbackRoutes(app: Express): void {
       console.log(`[Callback] Invite code marked as in_progress: ${inviteCode}`);
 
       return res.json({ success: true });
-    } catch (error: any) {
-      return res.status(500).json({ success: false, error: error?.message });
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ success: false, error: msg });
     }
-  });
-
-  /**
-   * 獲取下一個可用的邀請碼（Chrome 插件主動拉取）
-   */
-  app.get("/api/callback/next-invite-code", async (req: Request, res: Response) => {
-    try {
-      const { getUnusedInviteCodes } = await import("./db");
-      const unusedCodes = await getUnusedInviteCodes();
-
-      if (unusedCodes.length === 0) {
-        return res.json({ success: true, inviteCode: null, message: "No unused invite codes available" });
-      }
-
-      const next = unusedCodes[0];
-      return res.json({
-        success: true,
-        inviteCode: next.inviteCode,
-        sourceEmail: next.email,
-        sourceAccountId: next.id,
-      });
-    } catch (error: any) {
-      return res.status(500).json({ success: false, error: error?.message });
-    }
-  });
-
-  /**
-   * 健康檢查端點
-   */
-  app.get("/api/callback/health", (_req: Request, res: Response) => {
-    res.json({ success: true, status: "ok", timestamp: new Date().toISOString() });
   });
 }

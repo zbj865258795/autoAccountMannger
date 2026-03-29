@@ -42,6 +42,8 @@ export const accounts = mysqlTable("accounts", {
   userId: varchar("userId", { length: 64 }),
   displayname: varchar("displayname", { length: 128 }),
   membershipVersion: varchar("membershipVersion", { length: 64 }).default("free"),
+  phone: varchar("phone", { length: 32 }),
+  clientId: varchar("clientId", { length: 64 }),
 
   // 積分信息
   totalCredits: int("totalCredits").default(0),
@@ -85,7 +87,9 @@ export const automationTasks = mysqlTable("automation_tasks", {
   // 配置
   scanIntervalSeconds: int("scanIntervalSeconds").default(60),  // 掃描間隔（秒）
   adspowerApiUrl: varchar("adspowerApiUrl", { length: 512 }).default("http://local.adspower.net:50325"),
+  adspowerApiKey: varchar("adspowerApiKey", { length: 256 }),   // AdsPower API Key（開啟安全校驗時使用）
   adspowerGroupId: varchar("adspowerGroupId", { length: 64 }),
+  targetUrl: varchar("targetUrl", { length: 512 }),              // 注冊目標 URL（插件打開的頁面）
   maxConcurrent: int("maxConcurrent").default(1),  // 最大並發數
 
   // 統計

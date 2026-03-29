@@ -1,6 +1,11 @@
 /**
  * 自動化任務調度器
- * 定時掃描數據庫中未使用的邀請碼，並觸發 AdsPower 創建瀏覽器實例
+ *
+ * 核心邏輯：
+ * 1. 定時掃描數據庫中「未使用」的邀請碼
+ * 2. 根據 maxConcurrent 設置，同時啟動多個 AdsPower 瀏覽器實例
+ * 3. 每個瀏覽器實例對應一個邀請碼，插件自動運行注冊流程
+ * 4. 注冊成功後插件回調系統，更新邀請碼狀態為「已使用」
  */
 
 import {
@@ -11,15 +16,17 @@ import {
   updateInviteStatus,
   updateTaskLog,
 } from "./db";
-import { createAdsPowerBrowser } from "./adspower";
+import {
+  createAdsPowerBrowser,
+  startAdsPowerBrowser,
+} from "./adspower";
 
-// 全局調度器狀態
+// ─── 全局調度器狀態 ───────────────────────────────────────────────────────────
+
 const schedulerTimers = new Map<number, NodeJS.Timeout>();
-let isRunning = false;
 
-/**
- * 啟動自動化任務調度器
- */
+// ─── 啟動調度器 ───────────────────────────────────────────────────────────────
+
 export async function startScheduler(taskId: number): Promise<void> {
   if (schedulerTimers.has(taskId)) {
     console.log(`[Scheduler] Task ${taskId} is already running`);
@@ -27,16 +34,16 @@ export async function startScheduler(taskId: number): Promise<void> {
   }
 
   const task = await getAutomationTaskById(taskId);
-  if (!task) {
-    throw new Error(`Task ${taskId} not found`);
-  }
+  if (!task) throw new Error(`Task ${taskId} not found`);
 
   await updateAutomationTask(taskId, {
     status: "running",
     startedAt: new Date(),
   });
 
-  console.log(`[Scheduler] Starting task ${taskId} with interval ${task.scanIntervalSeconds}s`);
+  console.log(
+    `[Scheduler] Starting task ${taskId} "${task.name}" | interval: ${task.scanIntervalSeconds}s | maxConcurrent: ${task.maxConcurrent}`
+  );
 
   // 立即執行一次
   await executeTask(taskId);
@@ -55,9 +62,8 @@ export async function startScheduler(taskId: number): Promise<void> {
   schedulerTimers.set(taskId, timer);
 }
 
-/**
- * 暫停自動化任務
- */
+// ─── 暫停調度器 ───────────────────────────────────────────────────────────────
+
 export async function pauseScheduler(taskId: number): Promise<void> {
   const timer = schedulerTimers.get(taskId);
   if (timer) {
@@ -68,9 +74,8 @@ export async function pauseScheduler(taskId: number): Promise<void> {
   console.log(`[Scheduler] Task ${taskId} paused`);
 }
 
-/**
- * 停止自動化任務
- */
+// ─── 停止調度器 ───────────────────────────────────────────────────────────────
+
 export async function stopScheduler(taskId: number): Promise<void> {
   const timer = schedulerTimers.get(taskId);
   if (timer) {
@@ -81,24 +86,28 @@ export async function stopScheduler(taskId: number): Promise<void> {
   console.log(`[Scheduler] Task ${taskId} stopped`);
 }
 
-/**
- * 獲取所有正在運行的任務 ID
- */
+// ─── 獲取運行中的任務 ID ──────────────────────────────────────────────────────
+
 export function getRunningTaskIds(): number[] {
   return Array.from(schedulerTimers.keys());
 }
 
-/**
- * 執行一次掃描和觸發邏輯
- */
+// ─── 核心執行邏輯（支持並發） ─────────────────────────────────────────────────
+
 async function executeTask(taskId: number): Promise<void> {
   const task = await getAutomationTaskById(taskId);
   if (!task) return;
 
-  const startTime = Date.now();
+  const maxConcurrent = task.maxConcurrent || 1;
+  const adspowerConfig = {
+    apiUrl: task.adspowerApiUrl || "http://local.adspower.net:50325",
+    apiKey: (task as any).adspowerApiKey || undefined,
+    groupId: task.adspowerGroupId || undefined,
+  };
+  const targetUrl = (task as any).targetUrl || undefined;
 
   try {
-    // 1. 掃描未使用的邀請碼
+    // 1. 掃描所有「未使用」的邀請碼
     const unusedCodes = await getUnusedInviteCodes();
 
     if (unusedCodes.length === 0) {
@@ -107,18 +116,52 @@ async function executeTask(taskId: number): Promise<void> {
       return;
     }
 
-    // 2. 取第一個未使用的邀請碼（按創建時間排序）
-    const targetAccount = unusedCodes[0];
-    const inviteCode = targetAccount.inviteCode;
+    // 2. 取前 N 個（N = maxConcurrent），並發啟動多個瀏覽器
+    const toProcess = unusedCodes.slice(0, maxConcurrent);
+    console.log(
+      `[Scheduler] Task ${taskId}: Found ${unusedCodes.length} unused codes, processing ${toProcess.length} concurrently`
+    );
 
-    if (!inviteCode) {
-      console.log(`[Scheduler] Task ${taskId}: Account has no invite code`);
-      return;
-    }
+    // 3. 並發執行
+    await Promise.all(
+      toProcess.map((targetAccount) =>
+        processOneInviteCode(taskId, task, targetAccount, adspowerConfig, targetUrl)
+      )
+    );
 
-    console.log(`[Scheduler] Task ${taskId}: Processing invite code ${inviteCode} from account ${targetAccount.email}`);
+    await updateAutomationTask(taskId, { lastExecutedAt: new Date() });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`[Scheduler] Task ${taskId}: Unexpected error - ${msg}`);
+    await updateAutomationTask(taskId, {
+      lastExecutedAt: new Date(),
+      totalFailed: (task.totalFailed || 0) + 1,
+    });
+  }
+}
 
-    // 3. 創建任務日誌
+// ─── 處理單個邀請碼（創建一個瀏覽器實例） ────────────────────────────────────
+
+async function processOneInviteCode(
+  taskId: number,
+  task: Awaited<ReturnType<typeof getAutomationTaskById>>,
+  targetAccount: { id: number; email: string; inviteCode: string | null },
+  adspowerConfig: { apiUrl: string; apiKey?: string; groupId?: string },
+  targetUrl?: string
+): Promise<void> {
+  const inviteCode = targetAccount.inviteCode;
+  if (!inviteCode) {
+    console.log(`[Scheduler] Task ${taskId}: Account ${targetAccount.email} has no invite code, skipping`);
+    return;
+  }
+
+  const startTime = Date.now();
+  let logId: number | undefined;
+
+  try {
+    console.log(`[Scheduler] Task ${taskId}: Processing invite code ${inviteCode} from ${targetAccount.email}`);
+
+    // 1. 創建任務日誌
     const logResult = await createTaskLog({
       taskId,
       status: "running",
@@ -126,68 +169,71 @@ async function executeTask(taskId: number): Promise<void> {
       sourceAccountId: targetAccount.id,
       startedAt: new Date(),
     });
+    logId = (logResult as any)[0]?.insertId;
 
-    // 獲取日誌 ID（MySQL insertId）
-    const logId = (logResult as any)[0]?.insertId;
-
-    // 4. 將邀請碼狀態改為「邀請中」
+    // 2. 將邀請碼狀態改為「邀請中」（防止其他任務重複使用）
     await updateInviteStatus(inviteCode, "in_progress");
 
-    // 5. 調用 AdsPower API 創建瀏覽器實例
-    const browserResult = await createAdsPowerBrowser(
-      {
-        apiUrl: task.adspowerApiUrl || "http://local.adspower.net:50325",
-        groupId: task.adspowerGroupId || undefined,
-      },
-      inviteCode
-    );
+    // 3. 調用 AdsPower API 創建瀏覽器環境（隨機指紋）
+    const createResult = await createAdsPowerBrowser(adspowerConfig, inviteCode, {
+      targetUrl,
+    });
 
-    const durationMs = Date.now() - startTime;
-
-    if (browserResult.success) {
-      // 6a. 成功：更新日誌
-      if (logId) {
-        await updateTaskLog(logId, {
-          status: "success",
-          adspowerBrowserId: browserResult.browserId,
-          durationMs,
-          completedAt: new Date(),
-        });
-      }
-
-      await updateAutomationTask(taskId, {
-        lastExecutedAt: new Date(),
-        totalSuccess: (task.totalSuccess || 0) + 1,
-      });
-
-      console.log(`[Scheduler] Task ${taskId}: Browser created successfully - ${browserResult.browserId}`);
-    } else {
-      // 6b. 失敗：恢復邀請碼狀態，記錄錯誤
-      await updateInviteStatus(inviteCode, "unused");
-
-      if (logId) {
-        await updateTaskLog(logId, {
-          status: "failed",
-          errorMessage: browserResult.error,
-          durationMs,
-          completedAt: new Date(),
-        });
-      }
-
-      await updateAutomationTask(taskId, {
-        lastExecutedAt: new Date(),
-        totalFailed: (task.totalFailed || 0) + 1,
-      });
-
-      console.error(`[Scheduler] Task ${taskId}: Failed to create browser - ${browserResult.error}`);
+    if (!createResult.success || !createResult.profileId) {
+      throw new Error(createResult.error || "Failed to create browser profile");
     }
-  } catch (error: any) {
+
+    const profileId = createResult.profileId;
+
+    // 4. 啟動瀏覽器
+    const startResult = await startAdsPowerBrowser(adspowerConfig, profileId);
+
     const durationMs = Date.now() - startTime;
-    console.error(`[Scheduler] Task ${taskId}: Unexpected error - ${error?.message}`);
+
+    if (startResult.success) {
+      // 成功：更新日誌（注冊完成後由插件回調更新最終狀態）
+      if (logId) {
+        await updateTaskLog(logId, {
+          status: "running",  // 保持 running，等待插件回調後改為 success
+          adspowerBrowserId: profileId,
+          durationMs,
+        });
+      }
+
+      await updateAutomationTask(taskId, {
+        lastExecutedAt: new Date(),
+        totalSuccess: (task?.totalSuccess || 0) + 1,
+      });
+
+      console.log(
+        `[Scheduler] Task ${taskId}: Browser started successfully | profile: ${profileId} | inviteCode: ${inviteCode}`
+      );
+    } else {
+      throw new Error(startResult.error || "Failed to start browser");
+    }
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    const durationMs = Date.now() - startTime;
+
+    // 失敗：恢復邀請碼狀態
+    await updateInviteStatus(inviteCode, "unused");
+
+    if (logId) {
+      await updateTaskLog(logId, {
+        status: "failed",
+        errorMessage: msg,
+        durationMs,
+        completedAt: new Date(),
+      });
+    }
 
     await updateAutomationTask(taskId, {
       lastExecutedAt: new Date(),
-      totalFailed: (task.totalFailed || 0) + 1,
+      totalFailed: (task?.totalFailed || 0) + 1,
     });
+
+    console.error(
+      `[Scheduler] Task ${taskId}: Failed to process invite code ${inviteCode} - ${msg}`
+    );
   }
 }

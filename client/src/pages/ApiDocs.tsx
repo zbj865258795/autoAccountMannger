@@ -182,7 +182,9 @@ reportRegistrationSuccess(accountData, usedInviteCode);`} />
     body: JSON.stringify({
       email: data.email,                    // 必填
       password: data.password,              // 必填
+      phone: data.phone,                    // 手機號（如有）
       token: data.token,                    // JWT token
+      clientId: data.clientId,              // 平台 clientId
       inviteCode: data.inviteCode,          // 新賬號的邀請碼
       invitedByCode: data.usedInviteCode,   // 本次使用的邀請碼（關鍵！）
       totalCredits: data.totalCredits,
