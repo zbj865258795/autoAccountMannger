@@ -2,19 +2,18 @@
  * 自動化任務調度器
  *
  * 核心邏輯：
- * 1. 定時掃描數據庫中「未使用」的邀請碼
- * 2. 根據 maxConcurrent 設置，同時啟動多個 AdsPower 瀏覽器實例
- * 3. 每個瀏覽器實例對應一個邀請碼，插件自動運行注冊流程
- * 4. 注冊成功後插件回調系統，更新邀請碼狀態為「已使用」
+ * 1. 定時查詢數據庫中「未使用」的邀請碼數量（只讀，不修改狀態）
+ * 2. 根據 maxConcurrent（線程數）和 targetCount（目標總數）計算本次需要創建幾個瀏覽器
+ * 3. 調用 AdsPower API 創建並啟動對應數量的瀏覽器實例
+ * 4. 邀請碼的認領和狀態變更由插件端通過 callback 接口完成
  */
 
 import {
-  claimNextInviteCode,
+  getUnusedInviteCodeCount,
   createTaskLog,
   getAutomationTaskById,
   incrementTaskCounters,
   updateAutomationTask,
-  updateInviteStatus,
   updateTaskLog,
 } from "./db";
 import {
@@ -95,7 +94,7 @@ export function getRunningTaskIds(): number[] {
   return Array.from(schedulerTimers.keys());
 }
 
-// ─── 核心執行邏輯（支持並發） ─────────────────────────────────────────────────
+// ─── 核心執行邏輯（只負責創建瀏覽器，不操作邀請碼） ──────────────────────────
 
 async function executeTask(taskId: number): Promise<void> {
   const task = await getAutomationTaskById(taskId);
@@ -112,7 +111,7 @@ async function executeTask(taskId: number): Promise<void> {
     return;
   }
 
-  // API Key 从配置文件读取（固定写死，不依赖数据库字段）
+  // API Key 从配置文件读取
   const adspowerConfig = {
     apiUrl: task.adspowerApiUrl || ADSPOWER_CONFIG.apiUrl,
     apiKey: ADSPOWER_CONFIG.apiKey,
@@ -121,32 +120,38 @@ async function executeTask(taskId: number): Promise<void> {
   const targetUrl = (task as any).targetUrl || undefined;
 
   try {
-    // 1. 原子地批量认领 N 个邀请码（N = maxConcurrent）
-    // 使用 claimNextInviteCode 逐个原子认领，彻底避免并发重复分配
-    // 每次调用都在事务内完成 SELECT FOR UPDATE + UPDATE，多个并发任务不会拿到同一条记录
-    const claimPromises: Promise<{ id: number; inviteCode: string | null; email: string } | null>[] = [];
-    for (let i = 0; i < maxConcurrent; i++) {
-      claimPromises.push(claimNextInviteCode());
-    }
-    const claimedResults = await Promise.all(claimPromises);
-    const toProcess = claimedResults.filter(
-      (r): r is { id: number; inviteCode: string | null; email: string } => r !== null
-    );
+    // 1. 只讀查詢：獲取當前未使用的邀請碼數量（不修改任何狀態）
+    const unusedCount = await getUnusedInviteCodeCount();
 
-    if (toProcess.length === 0) {
-      console.log(`[Scheduler] Task ${taskId}: No unused invite codes found`);
+    if (unusedCount === 0) {
+      console.log(`[Scheduler] Task ${taskId}: No unused invite codes available`);
+      await updateAutomationTask(taskId, { lastExecutedAt: new Date() });
+      return;
+    }
+
+    // 2. 計算本次需要創建的瀏覽器數量
+    let browsersToCreate = Math.min(maxConcurrent, unusedCount);
+
+    // 如果有目標總數限制，還需要考慮剩餘名額
+    if (task.targetCount) {
+      const remaining = task.targetCount - (task.totalAccountsCreated ?? 0);
+      browsersToCreate = Math.min(browsersToCreate, remaining);
+    }
+
+    if (browsersToCreate <= 0) {
+      console.log(`[Scheduler] Task ${taskId}: No browsers needed to create`);
       await updateAutomationTask(taskId, { lastExecutedAt: new Date() });
       return;
     }
 
     console.log(
-      `[Scheduler] Task ${taskId}: Claimed ${toProcess.length} invite code(s) atomically, processing concurrently`
+      `[Scheduler] Task ${taskId}: ${unusedCount} unused invite codes available, creating ${browsersToCreate} browser(s)`
     );
 
-    // 2. 並發執行（邀請碼已在認領時原子標記為 in_progress，無需再次更新）
+    // 3. 並發創建瀏覽器（不綁定具體邀請碼，邀請碼由插件端認領）
     await Promise.all(
-      toProcess.map((targetAccount) =>
-        processOneInviteCode(taskId, task, targetAccount, adspowerConfig, targetUrl)
+      Array.from({ length: browsersToCreate }, (_, i) =>
+        createOneBrowser(taskId, task, adspowerConfig, targetUrl, i)
       )
     );
 
@@ -158,41 +163,32 @@ async function executeTask(taskId: number): Promise<void> {
   }
 }
 
-// ─── 處理單個邀請碼（創建一個瀏覽器實例） ────────────────────────────────────
+// ─── 創建單個瀏覽器實例（不涉及邀請碼操作） ─────────────────────────────────
 
-async function processOneInviteCode(
+async function createOneBrowser(
   taskId: number,
   task: Awaited<ReturnType<typeof getAutomationTaskById>>,
-  targetAccount: { id: number; email: string; inviteCode: string | null },
   adspowerConfig: { apiUrl: string; apiKey?: string; groupId?: string },
-  targetUrl?: string
+  targetUrl?: string,
+  index?: number
 ): Promise<void> {
-  const inviteCode = targetAccount.inviteCode;
-  if (!inviteCode) {
-    console.log(`[Scheduler] Task ${taskId}: Account ${targetAccount.email} has no invite code, skipping`);
-    return;
-  }
-
   const startTime = Date.now();
   let logId: number | undefined;
 
   try {
-    console.log(`[Scheduler] Task ${taskId}: Processing invite code ${inviteCode} from ${targetAccount.email}`);
+    console.log(`[Scheduler] Task ${taskId}: Creating browser instance #${(index ?? 0) + 1}`);
 
     // 1. 創建任務日誌
     const logResult = await createTaskLog({
       taskId,
       status: "running",
-      usedInviteCode: inviteCode,
-      sourceAccountId: targetAccount.id,
       startedAt: new Date(),
     });
     logId = (logResult as any)[0]?.insertId;
 
-    // 2. 邀請碼已在 claimNextInviteCode() 中原子標記為「邀請中」，此處無需再次更新
-
-    // 3. 調用 AdsPower API 創建瀏覽器環境（隨機指紋）
-    const createResult = await createAdsPowerBrowser(adspowerConfig, inviteCode, {
+    // 2. 調用 AdsPower API 創建瀏覽器環境（隨機指紋）
+    //    注意：不傳入邀請碼，瀏覽器只是一個空環境，邀請碼由插件端認領
+    const createResult = await createAdsPowerBrowser(adspowerConfig, `task_${taskId}_${Date.now()}`, {
       targetUrl,
     });
 
@@ -202,26 +198,23 @@ async function processOneInviteCode(
 
     const profileId = createResult.profileId;
 
-    // 4. 啟動瀏覽器
+    // 3. 啟動瀏覽器
     const startResult = await startAdsPowerBrowser(adspowerConfig, profileId);
 
     const durationMs = Date.now() - startTime;
 
     if (startResult.success) {
-      // 成功：更新日誌（注冊完成後由插件回調更新最終狀態）
+      // 成功：更新日誌
       if (logId) {
         await updateTaskLog(logId, {
-          status: "running",  // 保持 running，等待插件回調後改為 success
+          status: "running",
           adspowerBrowserId: profileId,
           durationMs,
         });
       }
 
-      // 注意：此處不計 totalSuccess，因為注冊尚未完成
-      // totalSuccess 和 totalAccountsCreated 由插件回調 register 成功後原子自增
-
       console.log(
-        `[Scheduler] Task ${taskId}: Browser started successfully | profile: ${profileId} | inviteCode: ${inviteCode}`
+        `[Scheduler] Task ${taskId}: Browser started successfully | profile: ${profileId}`
       );
     } else {
       // 啟動失敗，清理已創建的瀏覽器環境
@@ -233,9 +226,6 @@ async function processOneInviteCode(
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     const durationMs = Date.now() - startTime;
-
-    // 失敗：恢復邀請碼狀態
-    await updateInviteStatus(inviteCode, "unused");
 
     if (logId) {
       await updateTaskLog(logId, {
@@ -249,7 +239,7 @@ async function processOneInviteCode(
     await incrementTaskCounters(taskId, { totalFailed: 1 });
 
     console.error(
-      `[Scheduler] Task ${taskId}: Failed to process invite code ${inviteCode} - ${msg}`
+      `[Scheduler] Task ${taskId}: Failed to create/start browser - ${msg}`
     );
   }
 }

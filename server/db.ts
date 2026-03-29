@@ -201,6 +201,19 @@ export async function getUnusedInviteCodes() {
 }
 
 /**
+ * 只读查询：获取当前未使用邀请码的数量（不修改任何状态）
+ */
+export async function getUnusedInviteCodeCount(): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const result = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(accounts)
+    .where(eq(accounts.inviteStatus, "unused"));
+  return Number(result[0]?.count ?? 0);
+}
+
+/**
  * 原子操作：获取一个「未使用」邀请码并立即标记为「邀请中」
  * 使用 SELECT ... FOR UPDATE + UPDATE 事务，彻底防止并发重复分配
  * 返回被锁定的账号记录，若无可用则返回 null
