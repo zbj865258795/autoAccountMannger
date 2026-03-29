@@ -462,33 +462,30 @@ export async function getPhoneNumbers(params: {
  * 同时将状态改为 in_use，防止并发重复分配
  */
 export async function getNextAvailablePhone(): Promise<{
+  id: number;
   phone: string;
   smsUrl: string;
 } | null> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-
   const results = await db
     .select()
     .from(phoneNumbers)
     .where(eq(phoneNumbers.status, "unused"))
     .orderBy(phoneNumbers.createdAt)
     .limit(1);
-
   if (results.length === 0) return null;
-
   const record = results[0];
   // 标记为使用中
   await db
     .update(phoneNumbers)
     .set({ status: "in_use", updatedAt: new Date() })
     .where(eq(phoneNumbers.id, record.id));
-
-  return { phone: record.phone, smsUrl: record.smsUrl };
+  return { id: record.id, phone: record.phone, smsUrl: record.smsUrl };
 }
 
 /**
- * 标记手机号为已使用
+ * 标记手机号为已使用（按 phone 字段查找，兼容旧逻辑）
  */
 export async function markPhoneUsed(phone: string, usedByEmail?: string): Promise<void> {
   const db = await getDb();
@@ -502,6 +499,21 @@ export async function markPhoneUsed(phone: string, usedByEmail?: string): Promis
       updatedAt: new Date(),
     })
     .where(eq(phoneNumbers.phone, phone));
+}
+/**
+ * 标记手机号为已使用（按 id 查找，推荐使用）
+ */
+export async function markPhoneUsedById(id: number): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .update(phoneNumbers)
+    .set({
+      status: "used",
+      usedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(phoneNumbers.id, id));
 }
 
 /**

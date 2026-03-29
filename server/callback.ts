@@ -23,6 +23,7 @@ import {
   createAccount,
   getAccountByInviteCode,
   getNextAvailablePhone,
+  markPhoneUsedById,
   updateInviteStatus,
   updateAutomationTask,
   getAutomationTasks,
@@ -119,9 +120,8 @@ export function registerCallbackRoutes(app: Express): void {
       }
 
       // 邀請者邀請碼（此賬號是被誰邀請的）
-      // 兼容两种字段名：invitedByCode（旧格式）和 referrerCode（新格式）
-      const invitedByCode: string | undefined = body.invitedByCode || body.referrerCode;
-      const referrerCode: string | undefined = invitedByCode;
+      // 兼容两种字段名：invitedByCode（旧格式）和 referrerCode（新格式），统一存入 referrerCode 字段
+      const referrerCode: string | undefined = body.referrerCode || body.invitedByCode;
 
       const registeredAt: Date =
         body.registeredAt
@@ -132,12 +132,12 @@ export function registerCallbackRoutes(app: Express): void {
 
       // ── 查找邀請者 ──
       let invitedById: number | undefined;
-      if (invitedByCode) {
-        const inviter = await getAccountByInviteCode(invitedByCode);
+      if (referrerCode) {
+        const inviter = await getAccountByInviteCode(referrerCode);
         if (inviter) {
           invitedById = inviter.id;
           // 將邀請者的邀請碼狀態改為「已使用」
-          await updateInviteStatus(invitedByCode, "used");
+          await updateInviteStatus(referrerCode, "used");
         }
       }
 
@@ -156,7 +156,6 @@ export function registerCallbackRoutes(app: Express): void {
         refreshCredits,
         inviteCode,
         inviteCodeId,
-        invitedByCode,
         referrerCode,
         invitedById,
         registeredAt,
@@ -173,14 +172,14 @@ export function registerCallbackRoutes(app: Express): void {
           });
 
           // 找到對應的任務日誌並標記成功
-          if (invitedByCode) {
+          if (referrerCode) {
             const logs = await getTaskLogs({
               taskId: task.id,
               status: "running",
               pageSize: 20,
             });
             const matchingLog = logs.items.find(
-              (l) => l.usedInviteCode === invitedByCode
+              (l) => l.usedInviteCode === referrerCode
             );
             if (matchingLog) {
               await updateTaskLog(matchingLog.id, {
@@ -194,7 +193,7 @@ export function registerCallbackRoutes(app: Express): void {
       }
 
       console.log(
-        `[Callback] New account registered: ${email} | inviteCode: ${inviteCode ?? "none"} | invitedBy: ${invitedByCode ?? "none"}`
+        `[Callback] New account registered: ${email} | inviteCode: ${inviteCode ?? "none"} | invitedBy: ${referrerCode ?? "none"}`
       );
 
       return res.json({
@@ -211,7 +210,7 @@ export function registerCallbackRoutes(app: Express): void {
   });
 
   // ─────────────────────────────────────────────
-  // 获取手机号接口（插件调用，返回一条未使用的手机号，调用后自动标记已使用）
+  // 获取手机号接口（插件调用，返回一条未使用的手机号，调用后自动标记为使用中）
   // ─────────────────────────────────────────────
   app.post("/api/callback/get-phone", async (_req: Request, res: Response) => {
     try {
@@ -219,10 +218,11 @@ export function registerCallbackRoutes(app: Express): void {
       if (!record) {
         return res.json({ success: false, message: "暂无可用手机号" });
       }
-      // 原样返回存储的字符串（手机号|接码URL）
       return res.json({
         success: true,
-        data: `${record.phone}|${record.smsUrl}`,
+        id: record.id,
+        phone: record.phone,
+        smsUrl: record.smsUrl,
       });
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -232,16 +232,24 @@ export function registerCallbackRoutes(app: Express): void {
 
   // ─────────────────────────────────────────────
   // 标记手机号为已使用（插件获取验证码后调用）
+  // 传入 id（推荐）或 phone（兼容）
   // ─────────────────────────────────────────────
   app.post("/api/callback/mark-phone-used", async (req: Request, res: Response) => {
     try {
-      const { phone, usedByEmail } = req.body;
-      if (!phone) {
-        return res.status(400).json({ success: false, error: "phone is required" });
+      const { id, phone } = req.body;
+      if (!id && !phone) {
+        return res.status(400).json({ success: false, error: "id or phone is required" });
       }
-      const { markPhoneUsed } = await import("./db");
-      await markPhoneUsed(phone, usedByEmail);
-      console.log(`[Callback] Phone marked as used: ${phone}`);
+      if (id) {
+        // 推荐：按 id 标记
+        await markPhoneUsedById(Number(id));
+        console.log(`[Callback] Phone id=${id} marked as used`);
+      } else {
+        // 兼容：按 phone 标记
+        const { markPhoneUsed } = await import("./db");
+        await markPhoneUsed(phone);
+        console.log(`[Callback] Phone ${phone} marked as used`);
+      }
       return res.json({ success: true, message: "手机号已标记为已使用" });
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
