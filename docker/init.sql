@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS `automation_tasks` (
   `name` varchar(128) NOT NULL,
   `status` enum('idle','running','paused','stopped') NOT NULL DEFAULT 'idle',
   `scanIntervalSeconds` int DEFAULT 60,
-  `adspowerApiUrl` varchar(512) DEFAULT 'http://local.adspower.net:50325',
+  `adspowerApiUrl` varchar(512) DEFAULT 'http://host.docker.internal:50325',
   `adspowerApiKey` varchar(256),
   `adspowerGroupId` varchar(64),
   `targetUrl` varchar(512),

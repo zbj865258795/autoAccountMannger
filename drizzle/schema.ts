@@ -88,7 +88,7 @@ export const automationTasks = mysqlTable("automation_tasks", {
 
   // 配置
   scanIntervalSeconds: int("scanIntervalSeconds").default(60),  // 掃描間隔（秒）
-  adspowerApiUrl: varchar("adspowerApiUrl", { length: 512 }).default("http://local.adspower.net:50325"),
+  adspowerApiUrl: varchar("adspowerApiUrl", { length: 512 }).default("http://host.docker.internal:50325"),
   adspowerApiKey: varchar("adspowerApiKey", { length: 256 }),   // AdsPower API Key（開啟安全校驗時使用）
   adspowerGroupId: varchar("adspowerGroupId", { length: 64 }),
   targetUrl: varchar("targetUrl", { length: 512 }),              // 注冊目標 URL（插件打開的頁面）

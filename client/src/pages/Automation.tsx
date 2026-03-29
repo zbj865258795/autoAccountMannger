@@ -50,7 +50,7 @@ const statusConfig: Record<TaskStatus, { label: string; class: string; icon: Rea
 function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: () => void }) {
   const [name, setName] = useState("自动注册任务");
   const [interval, setInterval] = useState(60);
-  const [apiUrl, setApiUrl] = useState("http://local.adspower.net:50325");
+  const [apiUrl, setApiUrl] = useState("http://host.docker.internal:50325");
   const [groupId, setGroupId] = useState("");
   const [targetUrl, setTargetUrl] = useState("");
   const [maxConcurrent, setMaxConcurrent] = useState(1);
@@ -85,7 +85,7 @@ function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose
             <Input
               value={apiUrl}
               onChange={(e) => setApiUrl(e.target.value)}
-              placeholder="http://local.adspower.net:50325"
+              placeholder="http://host.docker.internal:50325"
               className="bg-muted/50 border-border/50 text-foreground font-mono text-sm"
             />
           </div>
@@ -392,7 +392,7 @@ export default function Automation() {
                             {sc.label}
                           </Badge>
                         </div>
-                        <AdsPowerStatus apiUrl={task.adspowerApiUrl ?? "http://local.adspower.net:50325"} />
+                        <AdsPowerStatus apiUrl={task.adspowerApiUrl ?? "http://host.docker.internal:50325"} />
                       </div>
                       <div className="flex gap-2 ml-3">
                         {(task.status === "idle" || task.status === "paused" || task.status === "stopped") && (
