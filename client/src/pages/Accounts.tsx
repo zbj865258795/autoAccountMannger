@@ -385,6 +385,7 @@ export default function Accounts() {
                   <th className="text-left text-xs font-medium text-muted-foreground px-3 py-3 uppercase tracking-wider whitespace-nowrap">邀请码状态</th>
                   <th className="text-left text-xs font-medium text-muted-foreground px-3 py-3 uppercase tracking-wider whitespace-nowrap">邀请人邀请码</th>
                   <th className="text-left text-xs font-medium text-muted-foreground px-3 py-3 uppercase tracking-wider whitespace-nowrap">会员版本</th>
+                  <th className="text-right text-xs font-medium text-muted-foreground px-3 py-3 uppercase tracking-wider whitespace-nowrap">总积分</th>
                   <th className="text-left text-xs font-medium text-muted-foreground px-3 py-3 uppercase tracking-wider whitespace-nowrap">注册时间</th>
                   {/* 固定操作列 */}
                   <th
@@ -404,7 +405,7 @@ export default function Accounts() {
                 {isLoading ? (
                   [...Array(5)].map((_, i) => (
                     <tr key={i} className="border-b border-border/30">
-                      {[...Array(11)].map((_, j) => (
+                      {[...Array(12)].map((_, j) => (
                         <td key={j} className="px-3 py-3">
                           <Skeleton className="h-4 w-full" />
                         </td>
@@ -414,7 +415,7 @@ export default function Accounts() {
                 ) : items.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={11}
+                      colSpan={12}
                       className="text-center py-12 text-muted-foreground text-sm"
                     >
                       暂无账号数据，请先导入账号
@@ -509,6 +510,12 @@ export default function Accounts() {
                         <td className="px-3 py-3">
                           <span className="text-xs text-muted-foreground capitalize">
                             {account.membershipVersion || "free"}
+                          </span>
+                        </td>
+                        {/* 总积分 */}
+                        <td className="px-3 py-3 text-right">
+                          <span className="text-xs font-medium text-foreground">
+                            {(account.totalCredits ?? 0).toLocaleString()}
                           </span>
                         </td>
                         {/* 注册时间 */}
