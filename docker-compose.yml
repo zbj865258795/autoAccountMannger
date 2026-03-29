@@ -1,0 +1,55 @@
+version: "3.9"
+
+services:
+  # ─── MySQL 数据库 ──────────────────────────────────────────────────────────
+  db:
+    image: mysql:8.0
+    container_name: account_mgr_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-account_manager}
+      MYSQL_USER: ${MYSQL_USER:-appuser}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-apppassword}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-rootpassword}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ─── 账号管理应用 ──────────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: account_mgr_app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: mysql://${MYSQL_USER:-appuser}:${MYSQL_PASSWORD:-apppassword}@db:3306/${MYSQL_DATABASE:-account_manager}
+      JWT_SECRET: ${JWT_SECRET:-change-this-to-a-random-secret-string}
+      # 以下为可选项，本地部署无需填写
+      VITE_APP_ID: ""
+      OAUTH_SERVER_URL: ""
+      OWNER_OPEN_ID: ""
+      BUILT_IN_FORGE_API_URL: ""
+      BUILT_IN_FORGE_API_KEY: ""
+    volumes:
+      - app_logs:/app/logs
+
+volumes:
+  mysql_data:
+    driver: local
+  app_logs:
+    driver: local

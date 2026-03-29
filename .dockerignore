@@ -1,0 +1,7 @@
+node_modules
+.manus-logs
+dist
+client/dist
+.git
+*.log
+.DS_Store
