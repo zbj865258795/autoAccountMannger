@@ -32,6 +32,7 @@ import {
   createAccount,
   claimNextInviteCode,
   getNextAvailablePhone,
+  incrementTaskCounters,
   markPhoneUsedById,
   updateInviteStatusById,
   updateAutomationTask,
@@ -224,10 +225,8 @@ export function registerCallbackRoutes(app: Express): void {
       const allTasks = await getAutomationTasks();
       for (const task of allTasks) {
         if (task.status === "running") {
-          await updateAutomationTask(task.id, {
-            totalAccountsCreated: (task.totalAccountsCreated || 0) + 1,
-            totalSuccess: (task.totalSuccess || 0) + 1,
-          });
+          // 使用原子自增，避免并发 read-modify-write 导致计数丢失
+          await incrementTaskCounters(task.id, { totalAccountsCreated: 1, totalSuccess: 1 });
 
           if (resolvedReferrerCode) {
             const logs = await getTaskLogs({

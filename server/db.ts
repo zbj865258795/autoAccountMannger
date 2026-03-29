@@ -368,6 +368,30 @@ export async function updateAutomationTask(id: number, data: Partial<InsertAutom
   await db.update(automationTasks).set(data).where(eq(automationTasks.id, id));
 }
 
+/**
+ * 原子自增任务计数器，彻底避免并发 read-modify-write 竞态
+ * 使用 SQL SET col = col + delta 而非先读后写
+ */
+export async function incrementTaskCounters(
+  id: number,
+  deltas: {
+    totalSuccess?: number;
+    totalFailed?: number;
+    totalAccountsCreated?: number;
+  }
+): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const sets: Record<string, unknown> = { lastExecutedAt: new Date() };
+  if (deltas.totalSuccess)
+    sets.totalSuccess = sql`totalSuccess + ${deltas.totalSuccess}`;
+  if (deltas.totalFailed)
+    sets.totalFailed = sql`totalFailed + ${deltas.totalFailed}`;
+  if (deltas.totalAccountsCreated)
+    sets.totalAccountsCreated = sql`totalAccountsCreated + ${deltas.totalAccountsCreated}`;
+  await db.update(automationTasks).set(sets).where(eq(automationTasks.id, id));
+}
+
 // ─── Task Logs ────────────────────────────────────────────────────────────────
 
 export interface TaskLogFilter {

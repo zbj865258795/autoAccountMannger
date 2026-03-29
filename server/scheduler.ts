@@ -9,9 +9,10 @@
  */
 
 import {
+  claimNextInviteCode,
   createTaskLog,
   getAutomationTaskById,
-  getUnusedInviteCodes,
+  incrementTaskCounters,
   updateAutomationTask,
   updateInviteStatus,
   updateTaskLog,
@@ -109,22 +110,29 @@ async function executeTask(taskId: number): Promise<void> {
   const targetUrl = (task as any).targetUrl || undefined;
 
   try {
-    // 1. 掃描所有「未使用」的邀請碼
-    const unusedCodes = await getUnusedInviteCodes();
+    // 1. 原子地批量认领 N 个邀请码（N = maxConcurrent）
+    // 使用 claimNextInviteCode 逐个原子认领，彻底避免并发重复分配
+    // 每次调用都在事务内完成 SELECT FOR UPDATE + UPDATE，多个并发任务不会拿到同一条记录
+    const claimPromises: Promise<{ id: number; inviteCode: string | null; email: string } | null>[] = [];
+    for (let i = 0; i < maxConcurrent; i++) {
+      claimPromises.push(claimNextInviteCode());
+    }
+    const claimedResults = await Promise.all(claimPromises);
+    const toProcess = claimedResults.filter(
+      (r): r is { id: number; inviteCode: string | null; email: string } => r !== null
+    );
 
-    if (unusedCodes.length === 0) {
+    if (toProcess.length === 0) {
       console.log(`[Scheduler] Task ${taskId}: No unused invite codes found`);
       await updateAutomationTask(taskId, { lastExecutedAt: new Date() });
       return;
     }
 
-    // 2. 取前 N 個（N = maxConcurrent），並發啟動多個瀏覽器
-    const toProcess = unusedCodes.slice(0, maxConcurrent);
     console.log(
-      `[Scheduler] Task ${taskId}: Found ${unusedCodes.length} unused codes, processing ${toProcess.length} concurrently`
+      `[Scheduler] Task ${taskId}: Claimed ${toProcess.length} invite code(s) atomically, processing concurrently`
     );
 
-    // 3. 並發執行
+    // 2. 並發執行（邀請碼已在認領時原子標記為 in_progress，無需再次更新）
     await Promise.all(
       toProcess.map((targetAccount) =>
         processOneInviteCode(taskId, task, targetAccount, adspowerConfig, targetUrl)
@@ -135,10 +143,7 @@ async function executeTask(taskId: number): Promise<void> {
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error(`[Scheduler] Task ${taskId}: Unexpected error - ${msg}`);
-    await updateAutomationTask(taskId, {
-      lastExecutedAt: new Date(),
-      totalFailed: (task.totalFailed || 0) + 1,
-    });
+    await incrementTaskCounters(taskId, { totalFailed: 1 });
   }
 }
 
@@ -173,8 +178,7 @@ async function processOneInviteCode(
     });
     logId = (logResult as any)[0]?.insertId;
 
-    // 2. 將邀請碼狀態改為「邀請中」（防止其他任務重複使用）
-    await updateInviteStatus(inviteCode, "in_progress");
+    // 2. 邀請碼已在 claimNextInviteCode() 中原子標記為「邀請中」，此處無需再次更新
 
     // 3. 調用 AdsPower API 創建瀏覽器環境（隨機指紋）
     const createResult = await createAdsPowerBrowser(adspowerConfig, inviteCode, {
@@ -202,10 +206,7 @@ async function processOneInviteCode(
         });
       }
 
-      await updateAutomationTask(taskId, {
-        lastExecutedAt: new Date(),
-        totalSuccess: (task?.totalSuccess || 0) + 1,
-      });
+      await incrementTaskCounters(taskId, { totalSuccess: 1 });
 
       console.log(
         `[Scheduler] Task ${taskId}: Browser started successfully | profile: ${profileId} | inviteCode: ${inviteCode}`
@@ -229,10 +230,7 @@ async function processOneInviteCode(
       });
     }
 
-    await updateAutomationTask(taskId, {
-      lastExecutedAt: new Date(),
-      totalFailed: (task?.totalFailed || 0) + 1,
-    });
+    await incrementTaskCounters(taskId, { totalFailed: 1 });
 
     console.error(
       `[Scheduler] Task ${taskId}: Failed to process invite code ${inviteCode} - ${msg}`
