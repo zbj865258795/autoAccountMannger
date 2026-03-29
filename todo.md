@@ -57,40 +57,41 @@
 - [x] 运行测试并保存 Checkpoint（15 个测试全部通过，TypeScript 无错误）
 
 ## 更新任务（2026-03-29 第三轮）
-- [ ] AdsPower API Key 写入配置文件（server/config.ts），不在界面暴露
-- [ ] adspower.ts 自动从配置读取 API Key，所有请求自动携带 Authorization 头
-- [ ] 自动化任务界面移除 API Key 输入框（已写死，无需用户填写）
-- [ ] 确认回调接口字段完全匹配插件输出 JSON（email/password/phone/token/clientId/membershipVersion/totalCredits/freeCredits/inviteCode）
-- [ ] 更新测试并保存 Checkpoint
+- [x] AdsPower API Key 写入配置文件（server/config.ts），不在界面暴露
+- [x] adspower.ts 自动从配置读取 API Key，所有请求自动携带 Authorization 头
+- [x] 自动化任务界面移除 API Key 输入框（已写死，无需用户填写）
+- [x] 确认回调接口字段完全匹配插件输出 JSON（email/password/phone/token/clientId/membershipVersion/totalCredits/freeCredits/inviteCode）
+- [x] 更新测试并保存 Checkpoint
 
 ## 更新任务（2026-03-29 第四轮）
-- [ ] 修复测试失败（adspowerApiKey 字段移除后测试未同步更新）
-- [ ] 新增 phone_numbers 数据库表（phone, smsUrl, status: unused/in_use/used, usedByEmail）
-- [ ] 后端 API：批量导入手机号（支持「手机号|接码URL」格式）
-- [ ] 后端 API：获取下一个可用手机号（供插件调用）
-- [ ] 后端 API：标记手机号为使用中/已使用
-- [ ] REST 回调接口：插件获取手机号 GET /api/callback/next-phone
-- [ ] REST 回调接口：插件标记手机号已使用 POST /api/callback/phone-used
-- [ ] 前端：手机号管理页面（批量导入、列表、状态筛选）
-- [ ] DashboardLayout 新增「手机号管理」导航项
-- [ ] 更新测试并保存 Checkpoint
+- [x] 修复测试失败（adspowerApiKey 字段移除后测试未同步更新）
+- [x] 新增 phone_numbers 数据库表（phone, smsUrl, status: unused/in_use/used, usedByEmail）
+- [x] 后端 API：批量导入手机号（支持「手机号|接码URL」格式）
+- [x] 后端 API：获取下一个可用手机号（供插件调用）
+- [x] 后端 API：标记手机号为使用中/已使用
+- [x] REST 回调接口：插件获取手机号 POST /api/callback/get-phone
+- [x] REST 回调接口：插件标记手机号已使用 POST /api/callback/mark-phone-used
+- [x] 前端：手机号管理页面（批量导入、列表、状态筛选）
+- [x] DashboardLayout 新增「手机号管理」导航项
+- [x] 更新测试并保存 Checkpoint
 
 ## 本地化改造（2026-03-29 第五轮）
-- [ ] 移除 Manus OAuth 登录依赖，改为无需登录直接访问
-- [ ] 将所有 protectedProcedure 改为 publicProcedure（无需认证）
-- [ ] 前端移除登录逻辑，直接渲染仪表板
-- [ ] 创建 .env.example 模板文件
-- [ ] 创建 Docker Compose 配置（MySQL + 应用）
-- [ ] 编写本地部署 README
-- [ ] 推送到 GitHub
+- [x] 移除 Manus OAuth 登录依赖，改为无需登录直接访问
+- [x] 将所有 protectedProcedure 改为 publicProcedure（无需认证）
+- [x] 前端移除登录逻辑，直接渲染仪表板
+- [x] 创建 .env.example 模板文件
+- [x] 创建 Docker Compose 配置（MySQL + 应用）
+- [x] 编写本地部署 README
+- [x] 推送到 GitHub
 
 ## 修复任务（2026-03-29 第六轮）
-- [ ] 数据库新增 referrerCode 字段（邀请人邀请码）并执行迁移
-- [ ] 手机号三状态：获取时标记「使用中」，插件确认后标记「已使用」
-- [ ] 后端新增 POST /api/callback/phone-used 接口（标记手机号已使用）
-- [ ] 账号表格展示全字段（含 referrerCode），移除详情跳转
-- [ ] 导入格式只支持新格式（含 referrerCode 字段）
-- [ ] 仪表板移除「总积分」卡片，只保留账号数量统计
-- [ ] 移除积分统计页面（Credits.tsx）和导航入口
-- [ ] API 集成页面将所有 Manus 地址改为本地运行地址
-- [ ] 全面复检并运行测试
+- [x] 数据库新增 referrerCode 字段（邀请人邀请码）并执行迁移
+- [x] 手机号三状态：获取时标记「使用中」，插件确认后标记「已使用」
+- [x] 后端新增 POST /api/callback/mark-phone-used 接口（标记手机号已使用）
+- [x] 账号表格展示全字段（含 referrerCode），移除详情跳转
+- [x] 导入格式只支持新格式（含 referrerCode 字段）
+- [x] 仪表板移除「总积分」卡片，只保留账号数量统计
+- [x] 移除积分统计页面（Credits.tsx）和导航入口
+- [x] API 集成页面将所有 Manus 地址改为本地运行地址
+- [x] 全面复检并运行测试（17 个测试全部通过， TypeScript 无错误）
+- [x] 推送到 GitHub
