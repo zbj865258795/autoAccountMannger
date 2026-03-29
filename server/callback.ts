@@ -225,44 +225,70 @@ export function registerCallbackRoutes(app: Express): void {
 
       // ── 更新运行中的任务统计 ──
       const allTasks = await getAutomationTasks();
+
+      // 优先通过 adspowerBrowserId 直接匹配日志（插件端上报时应携带此字段）
+      const adspowerBrowserId: string | undefined = body.adspowerBrowserId;
+
       for (const task of allTasks) {
         if (task.status === "running") {
           // 使用原子自增，避免并发 read-modify-write 导致计数丢失
           await incrementTaskCounters(task.id, { totalAccountsCreated: 1, totalSuccess: 1 });
 
-          if (resolvedReferrerCode) {
-            const logs = await getTaskLogs({
-              taskId: task.id,
-              status: "running",
-              pageSize: 20,
-            });
-            const matchingLog = logs.items.find(
+          // ── 匹配对应的任务日志 ──
+          // 优先级：1) adspowerBrowserId 直接匹配  2) usedInviteCode 匹配  3) 任意 running 日志
+          const logs = await getTaskLogs({
+            taskId: task.id,
+            status: "running",
+            pageSize: 50,
+          });
+
+          let matchingLog = logs.items.find(
+            (l) => adspowerBrowserId && l.adspowerBrowserId === adspowerBrowserId
+          );
+
+          if (!matchingLog && resolvedReferrerCode) {
+            matchingLog = logs.items.find(
               (l) => l.usedInviteCode === resolvedReferrerCode
             );
-            if (matchingLog) {
-              await updateTaskLog(matchingLog.id, {
-                status: "success",
-                completedAt: new Date(),
-                durationMs: Date.now() - (matchingLog.startedAt?.getTime() ?? Date.now()),
-              });
+          }
 
-              // 注册成功后，关闭并删除 AdsPower 浏览器环境
-              if (matchingLog.adspowerBrowserId) {
-                const adspowerConfig = {
-                  apiUrl: task.adspowerApiUrl || ADSPOWER_CONFIG.apiUrl,
-                  apiKey: ADSPOWER_CONFIG.apiKey,
-                };
-                stopAndDeleteAdsPowerBrowser(adspowerConfig, matchingLog.adspowerBrowserId)
-                  .then((result) => {
-                    if (result.success) {
-                      console.log(`[Callback] Browser ${matchingLog.adspowerBrowserId} destroyed after successful registration`);
-                    } else {
-                      console.error(`[Callback] Failed to destroy browser ${matchingLog.adspowerBrowserId}: ${result.error}`);
-                    }
-                  })
-                  .catch((e) => console.error(`[Callback] Error destroying browser: ${e}`));
+          // 如果上面都没匹配到，取最早的一条 running 日志（必须有 adspowerBrowserId）
+          if (!matchingLog) {
+            matchingLog = logs.items
+              .filter((l) => !!l.adspowerBrowserId)
+              .sort((a, b) => (a.startedAt?.getTime() ?? 0) - (b.startedAt?.getTime() ?? 0))[0];
+          }
+
+          if (matchingLog) {
+            console.log(`[Callback] Matched log #${matchingLog.id} | browserId: ${matchingLog.adspowerBrowserId ?? 'none'} | inviteCode: ${matchingLog.usedInviteCode ?? 'none'}`);
+
+            await updateTaskLog(matchingLog.id, {
+              status: "success",
+              completedAt: new Date(),
+              durationMs: Date.now() - (matchingLog.startedAt?.getTime() ?? Date.now()),
+            });
+
+            // 注册成功后，同步关闭并删除 AdsPower 浏览器环境
+            if (matchingLog.adspowerBrowserId) {
+              const adspowerConfig = {
+                apiUrl: task.adspowerApiUrl || ADSPOWER_CONFIG.apiUrl,
+                apiKey: ADSPOWER_CONFIG.apiKey,
+              };
+              try {
+                const result = await stopAndDeleteAdsPowerBrowser(adspowerConfig, matchingLog.adspowerBrowserId);
+                if (result.success) {
+                  console.log(`[Callback] Browser ${matchingLog.adspowerBrowserId} destroyed after successful registration`);
+                } else {
+                  console.error(`[Callback] Failed to destroy browser ${matchingLog.adspowerBrowserId}: ${result.error}`);
+                }
+              } catch (e) {
+                console.error(`[Callback] Error destroying browser ${matchingLog.adspowerBrowserId}: ${e}`);
               }
+            } else {
+              console.warn(`[Callback] Log #${matchingLog.id} has no adspowerBrowserId, cannot destroy browser`);
             }
+          } else {
+            console.warn(`[Callback] No matching running log found for task ${task.id} | adspowerBrowserId: ${adspowerBrowserId ?? 'none'} | referrerCode: ${resolvedReferrerCode ?? 'none'}`);
           }
         }
       }
