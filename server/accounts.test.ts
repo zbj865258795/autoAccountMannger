@@ -317,7 +317,7 @@ describe("generateRandomFingerprint", () => {
     expect(fingerprint_config.webgl).toBe("0");
     expect(fingerprint_config.audio).toBe("0");
     expect(fingerprint_config.resolution).toMatch(/^\d+x\d+$/);
-    expect(fingerprint_config.hardware_concurrency).toMatch(/^(2|4|8|16)$/);
+    expect(fingerprint_config.hardware_concurrency).toMatch(/^(2|4|6|8|12|16)$/);
     expect(fingerprint_config.device_memory).toMatch(/^(2|4|8)$/);
     expect(_meta.browserType).toMatch(/^(chrome|firefox)$/);
     expect(_meta.location).toBeTruthy();
@@ -358,16 +358,16 @@ describe("generateRandomFingerprint", () => {
 describe("automation.create", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("creates automation task with apiKey and targetUrl", async () => {
+  it("creates automation task with targetUrl and concurrent settings", async () => {
     const { createAutomationTask } = await import("./db");
     const ctx = createAdminContext();
     const caller = appRouter.createCaller(ctx);
 
+    // API Key 已写死到配置文件，不再通过接口传入
     const result = await caller.automation.create({
       name: "Test Task",
       scanIntervalSeconds: 30,
       adspowerApiUrl: "http://local.adspower.net:50325",
-      adspowerApiKey: "test-api-key",
       targetUrl: "https://example.com/register",
       maxConcurrent: 5,
     });
@@ -377,7 +377,6 @@ describe("automation.create", () => {
       expect.objectContaining({
         name: "Test Task",
         maxConcurrent: 5,
-        adspowerApiKey: "test-api-key",
         targetUrl: "https://example.com/register",
       })
     );

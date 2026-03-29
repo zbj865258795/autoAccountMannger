@@ -140,3 +140,34 @@ export const taskLogs = mysqlTable("task_logs", {
 
 export type TaskLog = typeof taskLogs.$inferSelect;
 export type InsertTaskLog = typeof taskLogs.$inferInsert;
+
+/**
+ * 手机号表：存储用于注册的手机号和接码 URL
+ * 格式：手机号|接码URL，例如 +12232263007|https://sms-555.com/xxx
+ */
+export const phoneNumbers = mysqlTable("phone_numbers", {
+  id: int("id").autoincrement().primaryKey(),
+
+  // 手机号（带国家代码，如 +12232263007）
+  phone: varchar("phone", { length: 32 }).notNull().unique(),
+
+  // 接码 URL（用于获取验证码）
+  smsUrl: varchar("smsUrl", { length: 1024 }).notNull(),
+
+  // 状态：unused=未使用, in_use=使用中, used=已使用
+  status: mysqlEnum("status", ["unused", "in_use", "used"]).default("unused").notNull(),
+
+  // 使用此号码注册的账号 email
+  usedByEmail: varchar("usedByEmail", { length: 320 }),
+
+  // 时间
+  usedAt: timestamp("usedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+
+  // 备注
+  notes: text("notes"),
+});
+
+export type PhoneNumber = typeof phoneNumbers.$inferSelect;
+export type InsertPhoneNumber = typeof phoneNumbers.$inferInsert;

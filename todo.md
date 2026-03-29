@@ -55,3 +55,22 @@
 - [x] 所有前端页面文字改为简体中文
 - [x] 后端日志/错误信息改为简体中文
 - [x] 运行测试并保存 Checkpoint（15 个测试全部通过，TypeScript 无错误）
+
+## 更新任务（2026-03-29 第三轮）
+- [ ] AdsPower API Key 写入配置文件（server/config.ts），不在界面暴露
+- [ ] adspower.ts 自动从配置读取 API Key，所有请求自动携带 Authorization 头
+- [ ] 自动化任务界面移除 API Key 输入框（已写死，无需用户填写）
+- [ ] 确认回调接口字段完全匹配插件输出 JSON（email/password/phone/token/clientId/membershipVersion/totalCredits/freeCredits/inviteCode）
+- [ ] 更新测试并保存 Checkpoint
+
+## 更新任务（2026-03-29 第四轮）
+- [ ] 修复测试失败（adspowerApiKey 字段移除后测试未同步更新）
+- [ ] 新增 phone_numbers 数据库表（phone, smsUrl, status: unused/in_use/used, usedByEmail）
+- [ ] 后端 API：批量导入手机号（支持「手机号|接码URL」格式）
+- [ ] 后端 API：获取下一个可用手机号（供插件调用）
+- [ ] 后端 API：标记手机号为使用中/已使用
+- [ ] REST 回调接口：插件获取手机号 GET /api/callback/next-phone
+- [ ] REST 回调接口：插件标记手机号已使用 POST /api/callback/phone-used
+- [ ] 前端：手机号管理页面（批量导入、列表、状态筛选）
+- [ ] DashboardLayout 新增「手机号管理」导航项
+- [ ] 更新测试并保存 Checkpoint

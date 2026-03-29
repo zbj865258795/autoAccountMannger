@@ -5,8 +5,9 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import {
+  bulkImportPhoneNumbers,
   createAccount,
-  createAutomationTask,
+  deletePhoneNumbers,
   getAccountById,
   getAccountByInviteCode,
   getAccounts,
@@ -15,13 +16,20 @@ import {
   getCreditDistribution,
   getDashboardStats,
   getInvitationChain,
+  getNextAvailablePhone,
+  getPhoneNumbers,
+  getPhoneStats,
   getTaskLogs,
   getUnusedInviteCodes,
+  markPhoneUsed,
+  resetPhoneStatus,
   updateAccount,
+  createAutomationTask,
   updateAutomationTask,
   updateInviteStatus,
 } from "./db";
 import { checkAdsPowerConnection, getActiveBrowsers } from "./adspower";
+import { ADSPOWER_CONFIG } from "./config";
 import { startScheduler, pauseScheduler, stopScheduler, getRunningTaskIds } from "./scheduler";
 
 // ─── Zod Schemas ─────────────────────────────────────────────────────────────
@@ -84,29 +92,23 @@ const accountsRouter = router({
     return getCreditDistribution();
   }),
 
-  // 手動新增單個賬號
   create: protectedProcedure.input(AccountImportSchema).mutation(async ({ input }) => {
-    // 如果有 invitedByCode，查找邀請者
     let invitedById: number | undefined;
     if (input.invitedByCode) {
       const inviter = await getAccountByInviteCode(input.invitedByCode);
       if (inviter) {
         invitedById = inviter.id;
-        // 將邀請者的邀請碼狀態改為「已使用」
         await updateInviteStatus(input.invitedByCode, "used");
       }
     }
-
     await createAccount({
       ...input,
       registeredAt: input.registeredAt ? new Date(input.registeredAt) : new Date(),
       invitedById,
     });
-
     return { success: true };
   }),
 
-  // 批量導入賬號（支持 JSON 數組）
   bulkImport: protectedProcedure
     .input(z.object({ accounts: z.array(AccountImportSchema) }))
     .mutation(async ({ input }) => {
@@ -124,43 +126,34 @@ const accountsRouter = router({
               await updateInviteStatus(accountData.invitedByCode, "used");
             }
           }
-
           await createAccount({
             ...accountData,
             registeredAt: accountData.registeredAt ? new Date(accountData.registeredAt) : new Date(),
             invitedById,
           });
           successCount++;
-        } catch (err: any) {
+        } catch (err: unknown) {
           failCount++;
-          errors.push(`${accountData.email}: ${err?.message || "Unknown error"}`);
+          const msg = err instanceof Error ? err.message : "Unknown error";
+          errors.push(`${accountData.email}: ${msg}`);
         }
       }
 
       return { successCount, failCount, errors };
     }),
 
-  // 更新賬號信息
   update: protectedProcedure
-    .input(
-      z.object({
-        id: z.number(),
-        data: AccountImportSchema.partial(),
-      })
-    )
+    .input(z.object({ id: z.number(), data: AccountImportSchema.partial() }))
     .mutation(async ({ input }) => {
-      await updateAccount(input.id, input.data as any);
+      await updateAccount(input.id, input.data as Parameters<typeof updateAccount>[1]);
       return { success: true };
     }),
 
-  // 更新邀請碼狀態
   updateInviteStatus: protectedProcedure
-    .input(
-      z.object({
-        inviteCode: z.string(),
-        status: z.enum(["unused", "in_progress", "used"]),
-      })
-    )
+    .input(z.object({
+      inviteCode: z.string(),
+      status: z.enum(["unused", "in_progress", "used"]),
+    }))
     .mutation(async ({ input }) => {
       await updateInviteStatus(input.inviteCode, input.status);
       return { success: true };
@@ -174,8 +167,6 @@ const dashboardRouter = router({
     return getDashboardStats();
   }),
 });
-
-// ─── Accounts Extended Router ─────────────────────────────────────────────────────
 
 // ─── Automation Router ────────────────────────────────────────────────────────
 
@@ -193,37 +184,31 @@ const automationRouter = router({
   }),
 
   create: protectedProcedure
-    .input(
-      z.object({
-        name: z.string().min(1),
-        scanIntervalSeconds: z.number().min(10).default(60),
-        adspowerApiUrl: z.string().default("http://local.adspower.net:50325"),
-        adspowerApiKey: z.string().optional(),
-        adspowerGroupId: z.string().optional(),
-        targetUrl: z.string().optional(),
-        maxConcurrent: z.number().min(1).max(50).default(1),
-      })
-    )
+    .input(z.object({
+      name: z.string().min(1),
+      scanIntervalSeconds: z.number().min(10).default(60),
+      adspowerApiUrl: z.string().default(ADSPOWER_CONFIG.apiUrl),
+      adspowerGroupId: z.string().optional(),
+      targetUrl: z.string().optional(),
+      maxConcurrent: z.number().min(1).max(50).default(1),
+    }))
     .mutation(async ({ input }) => {
       await createAutomationTask(input);
       return { success: true };
     }),
 
   update: protectedProcedure
-    .input(
-      z.object({
-        id: z.number(),
-        data: z.object({
-          name: z.string().optional(),
-          scanIntervalSeconds: z.number().min(10).optional(),
-          adspowerApiUrl: z.string().optional(),
-          adspowerApiKey: z.string().optional(),
-          adspowerGroupId: z.string().optional(),
-          targetUrl: z.string().optional(),
-          maxConcurrent: z.number().min(1).max(50).optional(),
-        }),
-      })
-    )
+    .input(z.object({
+      id: z.number(),
+      data: z.object({
+        name: z.string().optional(),
+        scanIntervalSeconds: z.number().min(10).optional(),
+        adspowerApiUrl: z.string().optional(),
+        adspowerGroupId: z.string().optional(),
+        targetUrl: z.string().optional(),
+        maxConcurrent: z.number().min(1).max(50).optional(),
+      }),
+    }))
     .mutation(async ({ input }) => {
       await updateAutomationTask(input.id, input.data);
       return { success: true };
@@ -250,11 +235,11 @@ const automationRouter = router({
       return { success: true };
     }),
 
-  // 檢查 AdsPower 連通性
+  // 检查 AdsPower 连通性（自动使用配置文件中的 API Key）
   checkAdspower: protectedProcedure
     .input(z.object({ apiUrl: z.string() }))
     .query(async ({ input }) => {
-      const connected = await checkAdsPowerConnection(input.apiUrl);
+      const connected = await checkAdsPowerConnection(input.apiUrl, ADSPOWER_CONFIG.apiKey);
       const activeBrowsers = connected ? await getActiveBrowsers(input.apiUrl) : [];
       return { connected, activeBrowsers };
     }),
@@ -264,16 +249,77 @@ const automationRouter = router({
 
 const taskLogsRouter = router({
   list: protectedProcedure
-    .input(
-      z.object({
-        taskId: z.number().optional(),
-        status: z.enum(["pending", "running", "success", "failed", "skipped"]).optional(),
-        page: z.number().min(1).default(1),
-        pageSize: z.number().min(1).max(100).default(50),
-      })
-    )
+    .input(z.object({
+      taskId: z.number().optional(),
+      status: z.enum(["pending", "running", "success", "failed", "skipped"]).optional(),
+      page: z.number().min(1).default(1),
+      pageSize: z.number().min(1).max(100).default(50),
+    }))
     .query(async ({ input }) => {
       return getTaskLogs(input);
+    }),
+});
+
+// ─── Phone Numbers Router ─────────────────────────────────────────────────────
+// 手机号录入格式：每行一条「手机号|接码URL」，原样存储，不做拆分处理
+// 每次调用 getNext 接口，返回一条未使用的记录，同时立即标记为已使用
+
+const phoneNumbersRouter = router({
+  // 获取手机号列表（支持状态筛选和搜索）
+  list: protectedProcedure
+    .input(z.object({
+      status: z.enum(["unused", "in_use", "used"]).optional(),
+      search: z.string().optional(),
+      page: z.number().min(1).default(1),
+      pageSize: z.number().min(1).max(100).default(50),
+    }))
+    .query(async ({ input }) => {
+      return getPhoneNumbers(input);
+    }),
+
+  // 获取统计数据（各状态数量）
+  stats: protectedProcedure.query(async () => {
+    return getPhoneStats();
+  }),
+
+  // 批量导入：每行一条「手机号|接码URL」，原样存储
+  bulkImport: protectedProcedure
+    .input(z.object({ text: z.string().min(1, "请输入手机号数据") }))
+    .mutation(async ({ input }) => {
+      const lines = input.text.split("\n").filter((l) => l.trim());
+      return bulkImportPhoneNumbers(lines);
+    }),
+
+  // 获取下一个未使用的手机号，调用后立即标记为已使用
+  getNext: protectedProcedure.mutation(async () => {
+    return getNextAvailablePhone();
+  }),
+
+  // 手动标记已使用（可附带使用此号码注册的邮箱）
+  markUsed: protectedProcedure
+    .input(z.object({
+      phone: z.string(),
+      usedByEmail: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      await markPhoneUsed(input.phone, input.usedByEmail);
+      return { success: true };
+    }),
+
+  // 重置为未使用（用于重新分配）
+  reset: protectedProcedure
+    .input(z.object({ phone: z.string() }))
+    .mutation(async ({ input }) => {
+      await resetPhoneStatus(input.phone);
+      return { success: true };
+    }),
+
+  // 删除手机号
+  delete: protectedProcedure
+    .input(z.object({ ids: z.array(z.number()) }))
+    .mutation(async ({ input }) => {
+      await deletePhoneNumbers(input.ids);
+      return { success: true };
     }),
 });
 
@@ -293,6 +339,7 @@ export const appRouter = router({
   dashboard: dashboardRouter,
   automation: automationRouter,
   taskLogs: taskLogsRouter,
+  phoneNumbers: phoneNumbersRouter,
 });
 
 export type AppRouter = typeof appRouter;

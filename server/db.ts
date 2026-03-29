@@ -1,7 +1,7 @@
-import { and, asc, desc, eq, gte, like, lte, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, like, lte, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { accounts, automationTasks, taskLogs, users } from "../drizzle/schema";
-import type { InsertAccount, InsertAutomationTask, InsertTaskLog } from "../drizzle/schema";
+import { accounts, automationTasks, phoneNumbers, taskLogs, users } from "../drizzle/schema";
+import type { InsertAccount, InsertAutomationTask, InsertPhoneNumber, InsertTaskLog } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -363,4 +363,196 @@ export async function updateTaskLog(id: number, data: Partial<InsertTaskLog>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(taskLogs).set(data).where(eq(taskLogs.id, id));
+}
+
+// ─── Phone Numbers ───────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 批量导入手机号（支持“手机号|接码URL”格式）
+ * 重复的手机号会被跳过（不报错）
+ */
+export async function bulkImportPhoneNumbers(
+  lines: string[]
+): Promise<{ imported: number; skipped: number; errors: string[] }> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  let imported = 0;
+  let skipped = 0;
+  const errors: string[] = [];
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    // 支持用 | 或空格分隔
+    const separatorIdx = line.indexOf("|");
+    if (separatorIdx === -1) {
+      errors.push(`格式错误（缺少 | 分隔符）: ${line}`);
+      continue;
+    }
+
+    const phone = line.slice(0, separatorIdx).trim();
+    const smsUrl = line.slice(separatorIdx + 1).trim();
+
+    if (!phone || !smsUrl) {
+      errors.push(`手机号或接码URL为空: ${line}`);
+      continue;
+    }
+
+    try {
+      await db
+        .insert(phoneNumbers)
+        .values({ phone, smsUrl, status: "unused" })
+        .onDuplicateKeyUpdate({ set: { smsUrl, updatedAt: new Date() } });
+      imported++;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(`导入失败 ${phone}: ${msg}`);
+      skipped++;
+    }
+  }
+
+  return { imported, skipped, errors };
+}
+
+/**
+ * 获取手机号列表（支持状态筛选和分页）
+ */
+export async function getPhoneNumbers(params: {
+  status?: "unused" | "in_use" | "used";
+  search?: string;
+  page?: number;
+  pageSize?: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const page = params.page ?? 1;
+  const pageSize = params.pageSize ?? 50;
+  const offset = (page - 1) * pageSize;
+
+  const conditions: ReturnType<typeof eq>[] = [];
+  if (params.status) conditions.push(eq(phoneNumbers.status, params.status));
+  if (params.search) conditions.push(like(phoneNumbers.phone, `%${params.search}%`));
+
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+  const [items, countResult] = await Promise.all([
+    db
+      .select()
+      .from(phoneNumbers)
+      .where(whereClause)
+      .orderBy(desc(phoneNumbers.createdAt))
+      .limit(pageSize)
+      .offset(offset),
+    db
+      .select({ count: count() })
+      .from(phoneNumbers)
+      .where(whereClause),
+  ]);
+
+  return { items, total: Number(countResult[0]?.count ?? 0) };
+}
+
+/**
+ * 获取下一个可用手机号（状态为 unused）
+ * 同时将状态改为 in_use，防止并发重复分配
+ */
+export async function getNextAvailablePhone(): Promise<{
+  phone: string;
+  smsUrl: string;
+} | null> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const results = await db
+    .select()
+    .from(phoneNumbers)
+    .where(eq(phoneNumbers.status, "unused"))
+    .orderBy(phoneNumbers.createdAt)
+    .limit(1);
+
+  if (results.length === 0) return null;
+
+  const record = results[0];
+  // 标记为使用中
+  await db
+    .update(phoneNumbers)
+    .set({ status: "in_use", updatedAt: new Date() })
+    .where(eq(phoneNumbers.id, record.id));
+
+  return { phone: record.phone, smsUrl: record.smsUrl };
+}
+
+/**
+ * 标记手机号为已使用
+ */
+export async function markPhoneUsed(phone: string, usedByEmail?: string): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .update(phoneNumbers)
+    .set({
+      status: "used",
+      usedByEmail: usedByEmail ?? null,
+      usedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(phoneNumbers.phone, phone));
+}
+
+/**
+ * 重置手机号状态为未使用（一键重置）
+ */
+export async function resetPhoneStatus(phone: string): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .update(phoneNumbers)
+    .set({
+      status: "unused",
+      usedByEmail: null,
+      usedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(phoneNumbers.phone, phone));
+}
+
+/**
+ * 删除手机号
+ */
+export async function deletePhoneNumbers(ids: number[]): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (ids.length === 0) return;
+  await db.delete(phoneNumbers).where(inArray(phoneNumbers.id, ids));
+}
+
+/**
+ * 获取手机号统计（各状态数量）
+ */
+export async function getPhoneStats(): Promise<{
+  total: number;
+  unused: number;
+  inUse: number;
+  used: number;
+}> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const results = await db
+    .select({ status: phoneNumbers.status, count: count() })
+    .from(phoneNumbers)
+    .groupBy(phoneNumbers.status);
+
+  const stats = { total: 0, unused: 0, inUse: 0, used: 0 };
+  for (const row of results) {
+    const n = Number(row.count);
+    stats.total += n;
+    if (row.status === "unused") stats.unused = n;
+    else if (row.status === "in_use") stats.inUse = n;
+    else if (row.status === "used") stats.used = n;
+  }
+  return stats;
 }

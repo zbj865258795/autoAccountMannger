@@ -22,6 +22,7 @@ import type { Express, Request, Response } from "express";
 import {
   createAccount,
   getAccountByInviteCode,
+  getNextAvailablePhone,
   updateInviteStatus,
   updateAutomationTask,
   getAutomationTasks,
@@ -207,7 +208,27 @@ export function registerCallbackRoutes(app: Express): void {
   });
 
   // ─────────────────────────────────────────────
-  // 通知邀請碼開始被使用（注冊流程開始時調用，可選）
+  // 获取手机号接口（插件调用，返回一条未使用的手机号，调用后自动标记已使用）
+  // ─────────────────────────────────────────────
+  app.post("/api/callback/get-phone", async (_req: Request, res: Response) => {
+    try {
+      const record = await getNextAvailablePhone();
+      if (!record) {
+        return res.json({ success: false, message: "暂无可用手机号" });
+      }
+      // 原样返回存储的字符串（手机号|接码URL）
+      return res.json({
+        success: true,
+        data: `${record.phone}|${record.smsUrl}`,
+      });
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ success: false, error: msg });
+    }
+  });
+
+  // ─────────────────────────────────────────────
+  // 通知邀請碼開始被使用（注册流程開始時調用，可選）
   // ─────────────────────────────────────────────
   app.post("/api/callback/invite-used", async (req: Request, res: Response) => {
     try {

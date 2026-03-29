@@ -13,6 +13,7 @@ import Credits from "./pages/Credits";
 import Automation from "./pages/Automation";
 import TaskLogs from "./pages/TaskLogs";
 import ApiDocs from "./pages/ApiDocs";
+import PhoneNumbers from "./pages/PhoneNumbers";
 
 function Router() {
   return (
@@ -21,6 +22,7 @@ function Router() {
         <Route path="/" component={Dashboard} />
         <Route path="/accounts" component={Accounts} />
         <Route path="/import" component={ImportAccounts} />
+        <Route path="/phone-numbers" component={PhoneNumbers} />
         <Route path="/invitation-tree" component={InvitationTree} />
         <Route path="/credits" component={Credits} />
         <Route path="/automation" component={Automation} />

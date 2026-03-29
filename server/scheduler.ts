@@ -20,6 +20,7 @@ import {
   createAdsPowerBrowser,
   startAdsPowerBrowser,
 } from "./adspower";
+import { ADSPOWER_CONFIG } from "./config";
 
 // ─── 全局調度器狀態 ───────────────────────────────────────────────────────────
 
@@ -99,9 +100,10 @@ async function executeTask(taskId: number): Promise<void> {
   if (!task) return;
 
   const maxConcurrent = task.maxConcurrent || 1;
+  // API Key 从配置文件读取（固定写死，不依赖数据库字段）
   const adspowerConfig = {
-    apiUrl: task.adspowerApiUrl || "http://local.adspower.net:50325",
-    apiKey: (task as any).adspowerApiKey || undefined,
+    apiUrl: task.adspowerApiUrl || ADSPOWER_CONFIG.apiUrl,
+    apiKey: ADSPOWER_CONFIG.apiKey,
     groupId: task.adspowerGroupId || undefined,
   };
   const targetUrl = (task as any).targetUrl || undefined;

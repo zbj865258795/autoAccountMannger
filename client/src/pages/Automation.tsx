@@ -51,7 +51,6 @@ function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose
   const [name, setName] = useState("自动注册任务");
   const [interval, setInterval] = useState(60);
   const [apiUrl, setApiUrl] = useState("http://local.adspower.net:50325");
-  const [apiKey, setApiKey] = useState("");
   const [groupId, setGroupId] = useState("");
   const [targetUrl, setTargetUrl] = useState("");
   const [maxConcurrent, setMaxConcurrent] = useState(1);
@@ -86,16 +85,6 @@ function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose
               value={apiUrl}
               onChange={(e) => setApiUrl(e.target.value)}
               placeholder="http://local.adspower.net:50325"
-              className="bg-muted/50 border-border/50 text-foreground font-mono text-sm"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label className="text-xs text-muted-foreground">API Key（可选，开启安全校验时填写）</Label>
-            <Input
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="AdsPower API Key"
-              type="password"
               className="bg-muted/50 border-border/50 text-foreground font-mono text-sm"
             />
           </div>
@@ -160,7 +149,6 @@ function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose
               name,
               scanIntervalSeconds: interval,
               adspowerApiUrl: apiUrl,
-              adspowerApiKey: apiKey || undefined,
               adspowerGroupId: groupId || undefined,
               targetUrl: targetUrl || undefined,
               maxConcurrent,
