@@ -4,7 +4,9 @@ import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import {
   bulkImportPhoneNumbers,
   createAccount,
+  deleteAccount,
   deletePhoneNumbers,
+  getAccountByEmail,
   getAccountById,
   getAccountByInviteCode,
   getAccounts,
@@ -110,11 +112,21 @@ const accountsRouter = router({
     .input(z.object({ accounts: z.array(AccountImportSchema) }))
     .mutation(async ({ input }) => {
       let successCount = 0;
+      let skipCount = 0;
       let failCount = 0;
       const errors: string[] = [];
+      const skipped: string[] = [];
 
       for (const accountData of input.accounts) {
         try {
+          // 检查 email 是否已存在
+          const existing = await getAccountByEmail(accountData.email);
+          if (existing) {
+            skipCount++;
+            skipped.push(accountData.email);
+            continue;
+          }
+
           let invitedById: number | undefined;
           if (accountData.invitedByCode) {
             const inviter = await getAccountByInviteCode(accountData.invitedByCode);
@@ -136,7 +148,16 @@ const accountsRouter = router({
         }
       }
 
-      return { successCount, failCount, errors };
+      return { successCount, skipCount, failCount, errors, skipped };
+    }),
+
+  delete: publicProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      const account = await getAccountById(input.id);
+      if (!account) throw new TRPCError({ code: "NOT_FOUND", message: "账号不存在" });
+      await deleteAccount(input.id);
+      return { success: true };
     }),
 
   update: publicProcedure

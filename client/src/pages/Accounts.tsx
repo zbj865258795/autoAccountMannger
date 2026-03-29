@@ -11,8 +11,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ChevronLeft, ChevronRight, Copy, Search, Users } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, Search, Trash2, Users } from "lucide-react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 
@@ -30,11 +41,15 @@ const statusClass: Record<InviteStatus, string> = {
   used: "border-green-500/30 text-green-400 bg-green-500/10",
 };
 
-function CopyCell({ value, label }: { value?: string | null; label: string }) {
+function CopyCell({ value, label, maxW = 160 }: { value?: string | null; label: string; maxW?: number }) {
   if (!value) return <span className="text-muted-foreground text-xs">—</span>;
   return (
     <div className="flex items-center gap-1.5 min-w-0">
-      <span className="text-xs text-foreground font-mono truncate max-w-[160px]" title={value}>
+      <span
+        className="text-xs text-foreground font-mono truncate"
+        style={{ maxWidth: maxW }}
+        title={value}
+      >
         {value}
       </span>
       <button
@@ -59,6 +74,8 @@ export default function Accounts() {
   const [page, setPage] = useState(1);
   const pageSize = 20;
 
+  const utils = trpc.useUtils();
+
   const { data, isLoading } = trpc.accounts.list.useQuery(
     {
       search: search || undefined,
@@ -71,11 +88,37 @@ export default function Accounts() {
     { keepPreviousData: true } as any
   );
 
+  const deleteAccount = trpc.accounts.delete.useMutation({
+    onSuccess: () => {
+      toast.success("账号已删除");
+      utils.accounts.list.invalidate();
+      utils.dashboard.stats.invalidate();
+    },
+    onError: (err) => {
+      toast.error(`删除失败：${err.message}`);
+    },
+  });
+
   const totalPages = Math.ceil((data?.total ?? 0) / pageSize);
+  const total = data?.total ?? 0;
 
   const handleSearch = () => {
     setSearch(searchInput);
     setPage(1);
+  };
+
+  // 生成页码数组（最多显示 7 个页码）
+  const getPageNumbers = () => {
+    if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1);
+    const pages: (number | "...")[] = [];
+    if (page <= 4) {
+      pages.push(1, 2, 3, 4, 5, "...", totalPages);
+    } else if (page >= totalPages - 3) {
+      pages.push(1, "...", totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages);
+    } else {
+      pages.push(1, "...", page - 1, page, page + 1, "...", totalPages);
+    }
+    return pages;
   };
 
   return (
@@ -84,7 +127,7 @@ export default function Accounts() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-foreground">账号管理</h1>
-          <p className="text-sm text-muted-foreground mt-1">共 {data?.total ?? 0} 个账号</p>
+          <p className="text-sm text-muted-foreground mt-1">共 {total} 个账号</p>
         </div>
         <Button onClick={() => setLocation("/import")} size="sm">
           <Users className="w-4 h-4 mr-2" />
@@ -98,7 +141,7 @@ export default function Accounts() {
           <div className="flex gap-3 flex-wrap">
             <div className="flex gap-2 flex-1 min-w-[200px]">
               <Input
-                placeholder="搜索 email、邀请码、手机号..."
+                placeholder="搜索 email、邀请码..."
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleSearch()}
@@ -130,19 +173,26 @@ export default function Accounts() {
       <Card className="bg-card border-border/50">
         <CardContent className="p-0">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm" style={{ minWidth: "1400px" }}>
+            {/* 表格使用 sticky 固定最后一列（操作列） */}
+            <table className="w-full text-sm border-collapse" style={{ minWidth: "1400px" }}>
               <thead>
                 <tr className="border-b border-border/50 bg-muted/30">
                   <th className="text-left text-xs font-medium text-muted-foreground px-3 py-3 uppercase tracking-wider whitespace-nowrap">Email</th>
                   <th className="text-left text-xs font-medium text-muted-foreground px-3 py-3 uppercase tracking-wider whitespace-nowrap">密码</th>
                   <th className="text-left text-xs font-medium text-muted-foreground px-3 py-3 uppercase tracking-wider whitespace-nowrap">手机号</th>
+                  <th className="text-left text-xs font-medium text-muted-foreground px-3 py-3 uppercase tracking-wider whitespace-nowrap">Token</th>
                   <th className="text-left text-xs font-medium text-muted-foreground px-3 py-3 uppercase tracking-wider whitespace-nowrap">自己邀请码</th>
                   <th className="text-left text-xs font-medium text-muted-foreground px-3 py-3 uppercase tracking-wider whitespace-nowrap">邀请码状态</th>
                   <th className="text-left text-xs font-medium text-muted-foreground px-3 py-3 uppercase tracking-wider whitespace-nowrap">邀请人邀请码</th>
-                  <th className="text-left text-xs font-medium text-muted-foreground px-3 py-3 uppercase tracking-wider whitespace-nowrap">clientId</th>
                   <th className="text-left text-xs font-medium text-muted-foreground px-3 py-3 uppercase tracking-wider whitespace-nowrap">会员版本</th>
-                  <th className="text-left text-xs font-medium text-muted-foreground px-3 py-3 uppercase tracking-wider whitespace-nowrap">积分</th>
                   <th className="text-left text-xs font-medium text-muted-foreground px-3 py-3 uppercase tracking-wider whitespace-nowrap">注册时间</th>
+                  {/* 固定操作列 */}
+                  <th
+                    className="text-center text-xs font-medium text-muted-foreground px-3 py-3 uppercase tracking-wider whitespace-nowrap bg-muted/30"
+                    style={{ position: "sticky", right: 0, zIndex: 10, boxShadow: "-2px 0 4px rgba(0,0,0,0.15)" }}
+                  >
+                    操作
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -170,15 +220,19 @@ export default function Accounts() {
                     >
                       {/* Email */}
                       <td className="px-3 py-3">
-                        <CopyCell value={account.email} label="Email" />
+                        <CopyCell value={account.email} label="Email" maxW={180} />
                       </td>
                       {/* 密码 */}
                       <td className="px-3 py-3">
-                        <CopyCell value={account.password} label="密码" />
+                        <CopyCell value={account.password} label="密码" maxW={120} />
                       </td>
                       {/* 手机号 */}
                       <td className="px-3 py-3">
-                        <CopyCell value={account.phone} label="手机号" />
+                        <CopyCell value={account.phone} label="手机号" maxW={120} />
+                      </td>
+                      {/* Token */}
+                      <td className="px-3 py-3">
+                        <CopyCell value={account.token} label="Token" maxW={140} />
                       </td>
                       {/* 自己的邀请码 */}
                       <td className="px-3 py-3">
@@ -212,22 +266,12 @@ export default function Accounts() {
                       </td>
                       {/* 邀请人邀请码 */}
                       <td className="px-3 py-3">
-                        <CopyCell value={(account as any).referrerCode || account.invitedByCode} label="邀请人邀请码" />
-                      </td>
-                      {/* clientId */}
-                      <td className="px-3 py-3">
-                        <CopyCell value={account.clientId} label="clientId" />
+                        <CopyCell value={(account as any).referrerCode || account.invitedByCode} label="邀请人邀请码" maxW={120} />
                       </td>
                       {/* 会员版本 */}
                       <td className="px-3 py-3">
                         <span className="text-xs text-muted-foreground capitalize">
                           {account.membershipVersion || "free"}
-                        </span>
-                      </td>
-                      {/* 积分 */}
-                      <td className="px-3 py-3">
-                        <span className="text-xs text-foreground">
-                          {account.totalCredits?.toLocaleString() ?? 0}
                         </span>
                       </td>
                       {/* 注册时间 */}
@@ -238,6 +282,40 @@ export default function Accounts() {
                             : new Date(account.createdAt).toLocaleString("zh-CN")}
                         </span>
                       </td>
+                      {/* 操作列（固定右侧） */}
+                      <td
+                        className="px-3 py-3 bg-card"
+                        style={{ position: "sticky", right: 0, zIndex: 9, boxShadow: "-2px 0 4px rgba(0,0,0,0.15)" }}
+                      >
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>确认删除账号</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                将永久删除账号 <strong>{account.email}</strong>，此操作不可撤销。
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>取消</AlertDialogCancel>
+                              <AlertDialogAction
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                onClick={() => deleteAccount.mutate({ id: account.id })}
+                              >
+                                确认删除
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </td>
                     </tr>
                   ))
                 )}
@@ -246,12 +324,23 @@ export default function Accounts() {
           </div>
 
           {/* 分页 */}
-          {totalPages > 1 && (
+          {total > 0 && (
             <div className="flex items-center justify-between px-4 py-3 border-t border-border/50">
               <span className="text-xs text-muted-foreground">
-                第 {page} / {totalPages} 页，共 {data?.total} 条
+                共 <strong className="text-foreground">{total}</strong> 条，
+                第 <strong className="text-foreground">{page}</strong> / <strong className="text-foreground">{totalPages}</strong> 页，
+                每页 {pageSize} 条
               </span>
-              <div className="flex gap-2">
+              <div className="flex items-center gap-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={page <= 1}
+                  onClick={() => setPage(1)}
+                  className="h-7 px-2 text-xs"
+                >
+                  首页
+                </Button>
                 <Button
                   size="sm"
                   variant="outline"
@@ -261,6 +350,24 @@ export default function Accounts() {
                 >
                   <ChevronLeft className="w-4 h-4" />
                 </Button>
+                {/* 页码按钮 */}
+                {getPageNumbers().map((p, idx) =>
+                  p === "..." ? (
+                    <span key={`ellipsis-${idx}`} className="text-xs text-muted-foreground px-1">
+                      …
+                    </span>
+                  ) : (
+                    <Button
+                      key={p}
+                      size="sm"
+                      variant={p === page ? "default" : "outline"}
+                      onClick={() => setPage(p as number)}
+                      className="h-7 w-7 p-0 text-xs"
+                    >
+                      {p}
+                    </Button>
+                  )
+                )}
                 <Button
                   size="sm"
                   variant="outline"
@@ -269,6 +376,15 @@ export default function Accounts() {
                   className="h-7 w-7 p-0"
                 >
                   <ChevronRight className="w-4 h-4" />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={page >= totalPages}
+                  onClick={() => setPage(totalPages)}
+                  className="h-7 px-2 text-xs"
+                >
+                  末页
                 </Button>
               </div>
             </div>

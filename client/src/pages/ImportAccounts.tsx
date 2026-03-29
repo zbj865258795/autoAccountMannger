@@ -59,12 +59,13 @@ export default function ImportAccounts() {
   const [jsonText, setJsonText] = useState("");
   const [preview, setPreview] = useState<any[]>([]);
   const [parseError, setParseError] = useState("");
-  const [result, setResult] = useState<{ successCount: number; failCount: number; errors: string[] } | null>(null);
+  const [result, setResult] = useState<{ successCount: number; skipCount: number; failCount: number; errors: string[]; skipped: string[] } | null>(null);
 
   const bulkImport = trpc.accounts.bulkImport.useMutation({
     onSuccess: (data) => {
       setResult(data);
       if (data.successCount > 0) toast.success(`成功导入 ${data.successCount} 个账号`);
+      if (data.skipCount > 0) toast.info(`跳过 ${data.skipCount} 个重复账号`);
       if (data.failCount > 0) toast.error(`${data.failCount} 个账号导入失败`);
     },
     onError: (err) => toast.error(`导入失败：${err.message}`),
@@ -155,12 +156,22 @@ export default function ImportAccounts() {
                     : <AlertCircle className="w-4 h-4 text-yellow-400" />}
                   <span className="text-sm font-medium text-foreground">导入完成</span>
                 </div>
-                <div className="flex gap-4 text-sm">
+                <div className="flex gap-4 text-sm flex-wrap">
                   <span className="text-green-400">成功：{result.successCount}</span>
+                  {(result as any).skipCount > 0 && <span className="text-yellow-400">跳过重复：{(result as any).skipCount}</span>}
                   {result.failCount > 0 && <span className="text-red-400">失败：{result.failCount}</span>}
                 </div>
+                {(result as any).skipped?.length > 0 && (
+                  <div className="space-y-1 mt-1">
+                    <p className="text-xs text-muted-foreground">重复账号（已跳过）：</p>
+                    {(result as any).skipped.map((email: string, i: number) => (
+                      <p key={i} className="text-xs text-yellow-400 font-mono">{email}</p>
+                    ))}
+                  </div>
+                )}
                 {result.errors.length > 0 && (
                   <div className="space-y-1 mt-2">
+                    <p className="text-xs text-muted-foreground">失败原因：</p>
                     {result.errors.map((err, i) => (
                       <p key={i} className="text-xs text-red-400 font-mono">{err}</p>
                     ))}

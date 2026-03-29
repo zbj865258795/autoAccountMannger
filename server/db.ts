@@ -170,6 +170,12 @@ export async function updateAccount(id: number, data: Partial<InsertAccount>) {
   await db.update(accounts).set(data).where(eq(accounts.id, id));
 }
 
+export async function deleteAccount(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(accounts).where(eq(accounts.id, id));
+}
+
 export async function updateInviteStatus(
   inviteCode: string,
   status: "unused" | "in_progress" | "used"

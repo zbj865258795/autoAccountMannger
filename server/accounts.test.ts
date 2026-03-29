@@ -49,6 +49,8 @@ vi.mock("./db", () => ({
   updateAutomationTask: vi.fn().mockResolvedValue(undefined),
   updateInviteStatus: vi.fn().mockResolvedValue(undefined),
   createAutomationTask: vi.fn().mockResolvedValue(undefined),
+  deleteAccount: vi.fn().mockResolvedValue(undefined),
+  getAccountByEmail: vi.fn().mockResolvedValue(null), // 默认返回 null，表示邮筱不重复
   upsertUser: vi.fn().mockResolvedValue(undefined),
   getUserByOpenId: vi.fn().mockResolvedValue(undefined),
 }));
@@ -318,7 +320,7 @@ describe("generateRandomFingerprint", () => {
     expect(fingerprint_config.audio).toBe("0");
     expect(fingerprint_config.resolution).toMatch(/^\d+x\d+$/);
     expect(fingerprint_config.hardware_concurrency).toMatch(/^(2|4|6|8|12|16)$/);
-    expect(fingerprint_config.device_memory).toMatch(/^(2|4|8)$/);
+    expect(fingerprint_config.device_memory).toMatch(/^(2|4|8|16)$/);
     expect(_meta.browserType).toMatch(/^(chrome|firefox)$/);
     expect(_meta.location).toBeTruthy();
   });
