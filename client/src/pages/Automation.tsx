@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,7 +34,6 @@ import {
   Square,
   Wifi,
   WifiOff,
-  Zap,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -211,109 +210,6 @@ function AdsPowerStatus({ apiUrl }: { apiUrl: string }) {
   );
 }
 
-// 并发启动面板：选择同时启动几个任务
-function ConcurrentLaunchPanel() {
-  const utils = trpc.useUtils();
-  const { data: unusedData } = trpc.accounts.unusedCodes.useQuery();
-  const [concurrentCount, setConcurrentCount] = useState(1);
-  const [launching, setLaunching] = useState(false);
-
-  const unusedCodes = unusedData ?? [];
-  const maxConcurrent = unusedCodes.length;
-
-  const updateStatus = trpc.accounts.updateInviteStatus.useMutation();
-
-  const handleLaunch = async () => {
-    if (concurrentCount === 0 || unusedCodes.length === 0) return;
-    setLaunching(true);
-
-    const selected = unusedCodes.slice(0, concurrentCount);
-    let successCount = 0;
-
-    for (const account of selected) {
-      if (!account.inviteCode) continue;
-      try {
-        await updateStatus.mutateAsync({ inviteCode: account.inviteCode, status: "in_progress" });
-        successCount++;
-      } catch {
-        // ignore
-      }
-    }
-
-    await utils.accounts.unusedCodes.invalidate();
-    await utils.dashboard.stats.invalidate();
-    setLaunching(false);
-    toast.success(`已标记 ${successCount} 个邀请码为「邀请中」，请在 AdsPower 中手动启动对应浏览器`);
-  };
-
-  return (
-    <Card className="bg-card border-border/50">
-      <CardHeader className="pb-3">
-        <CardTitle className="text-sm font-medium text-foreground flex items-center gap-2">
-          <Zap className="w-4 h-4 text-yellow-400" />
-          并发任务控制
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
-          <div>
-            <p className="text-sm font-medium text-foreground">可用邀请码</p>
-            <p className="text-xs text-muted-foreground mt-0.5">当前未使用的邀请码数量</p>
-          </div>
-          <span className="text-2xl font-bold text-primary">{maxConcurrent}</span>
-        </div>
-
-        {maxConcurrent === 0 ? (
-          <div className="text-center py-4 text-muted-foreground text-sm">
-            暂无可用邀请码，请先导入账号
-          </div>
-        ) : (
-          <>
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs text-muted-foreground">同时启动数量</Label>
-                <span className="text-lg font-bold text-primary">{concurrentCount}</span>
-              </div>
-              <Slider
-                value={[concurrentCount]}
-                onValueChange={([v]) => setConcurrentCount(v)}
-                min={1}
-                max={maxConcurrent}
-                step={1}
-                className="w-full"
-              />
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span>1 个</span>
-                <span>全部 {maxConcurrent} 个</span>
-              </div>
-            </div>
-
-            <div className="p-3 rounded-lg bg-primary/5 border border-primary/20 text-xs text-muted-foreground space-y-1">
-              <p className="text-foreground font-medium">将要执行：</p>
-              <p>· 选取前 {concurrentCount} 个未使用邀请码</p>
-              <p>· 状态改为「邀请中」</p>
-              <p>· 调用 AdsPower API 创建 {concurrentCount} 个指纹浏览器</p>
-              <p>· 插件自动在每个浏览器中执行注册流程</p>
-            </div>
-
-            <Button
-              className="w-full"
-              onClick={handleLaunch}
-              disabled={launching || concurrentCount === 0}
-            >
-              {launching ? (
-                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />启动中...</>
-              ) : (
-                <><Play className="w-4 h-4 mr-2" />同时启动 {concurrentCount} 个任务</>
-              )}
-            </Button>
-          </>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
 export default function Automation() {
   const utils = trpc.useUtils();
   const [showCreate, setShowCreate] = useState(false);
@@ -353,115 +249,108 @@ export default function Automation() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        {/* 并发控制面板 */}
-        <div className="lg:col-span-1">
-          <ConcurrentLaunchPanel />
-        </div>
-
-        {/* 任务列表 */}
-        <div className="lg:col-span-2 space-y-3">
-          {isLoading ? (
-            <Card className="bg-card border-border/50">
-              <CardContent className="p-6 text-center text-muted-foreground">
-                <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
-                <p className="text-sm">加载中...</p>
-              </CardContent>
-            </Card>
-          ) : tasks?.length === 0 ? (
-            <Card className="bg-card border-border/50">
-              <CardContent className="p-12 text-center text-muted-foreground">
-                <Bot className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                <p className="text-sm font-medium">暂无自动化任务</p>
-                <p className="text-xs mt-1">点击「新建任务」创建第一个自动化任务</p>
-              </CardContent>
-            </Card>
-          ) : (
-            tasks?.map((task) => {
-              const sc = statusConfig[task.status as TaskStatus] ?? statusConfig.idle;
-              const StatusIcon = sc.icon;
-              return (
-                <Card key={task.id} className="bg-card border-border/50">
-                  <CardContent className="p-4">
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-sm font-medium text-foreground">{task.name}</span>
-                          <Badge variant="outline" className={`text-xs ${sc.class}`}>
-                            <StatusIcon className="w-3 h-3 mr-1" />
-                            {sc.label}
-                          </Badge>
-                        </div>
-                        <AdsPowerStatus apiUrl={task.adspowerApiUrl ?? "http://host.docker.internal:50325"} />
+      {/* 任务列表 */}
+      <div className="space-y-3">
+        {isLoading ? (
+          <Card className="bg-card border-border/50">
+            <CardContent className="p-6 text-center text-muted-foreground">
+              <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
+              <p className="text-sm">加载中...</p>
+            </CardContent>
+          </Card>
+        ) : tasks?.length === 0 ? (
+          <Card className="bg-card border-border/50">
+            <CardContent className="p-12 text-center text-muted-foreground">
+              <Bot className="w-10 h-10 mx-auto mb-3 opacity-30" />
+              <p className="text-sm font-medium">暂无自动化任务</p>
+              <p className="text-xs mt-1">点击「新建任务」创建第一个自动化任务</p>
+            </CardContent>
+          </Card>
+        ) : (
+          tasks?.map((task) => {
+            const sc = statusConfig[task.status as TaskStatus] ?? statusConfig.idle;
+            const StatusIcon = sc.icon;
+            return (
+              <Card key={task.id} className="bg-card border-border/50">
+                <CardContent className="p-4">
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-sm font-medium text-foreground">{task.name}</span>
+                        <Badge variant="outline" className={`text-xs ${sc.class}`}>
+                          <StatusIcon className="w-3 h-3 mr-1" />
+                          {sc.label}
+                        </Badge>
                       </div>
-                      <div className="flex gap-2 ml-3">
-                        {(task.status === "idle" || task.status === "paused" || task.status === "stopped") && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-8 text-green-400 border-green-500/30 hover:bg-green-500/10"
-                            onClick={() => startTask.mutate({ id: task.id })}
-                            disabled={startTask.isPending}
-                          >
-                            <Play className="w-3 h-3 mr-1" />启动
-                          </Button>
-                        )}
-                        {task.status === "running" && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-8 text-yellow-400 border-yellow-500/30 hover:bg-yellow-500/10"
-                            onClick={() => pauseTask.mutate({ id: task.id })}
-                            disabled={pauseTask.isPending}
-                          >
-                            <Pause className="w-3 h-3 mr-1" />暂停
-                          </Button>
-                        )}
-                        {task.status !== "stopped" && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-8 text-red-400 border-red-500/30 hover:bg-red-500/10"
-                            onClick={() => setConfirmStop(task.id)}
-                          >
-                            <Square className="w-3 h-3 mr-1" />停止
-                          </Button>
-                        )}
-                      </div>
+                      <AdsPowerStatus apiUrl={task.adspowerApiUrl ?? "http://host.docker.internal:50325"} />
                     </div>
-
-                    <div className="grid grid-cols-3 gap-3 mt-3 pt-3 border-t border-border/30">
-                      <div className="text-center">
-                        <p className="text-lg font-bold text-foreground">
-                          {task.totalAccountsCreated ?? 0}
-                          {(task as any).targetCount ? <span className="text-sm text-muted-foreground">/{(task as any).targetCount}</span> : null}
-                        </p>
-                        <p className="text-xs text-muted-foreground">已创建账号</p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-lg font-bold text-green-400">{task.totalSuccess ?? 0}</p>
-                        <p className="text-xs text-muted-foreground">成功次数</p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-lg font-bold text-red-400">{task.totalFailed ?? 0}</p>
-                        <p className="text-xs text-muted-foreground">失败次数</p>
-                      </div>
-                    </div>
-
-                    <div className="flex gap-4 mt-3 text-xs text-muted-foreground">
-                      <span>间隔：{task.scanIntervalSeconds}s</span>
-                      <span>并发：{task.maxConcurrent}</span>
-                      {(task as any).targetCount ? <span>目标：{(task as any).targetCount}</span> : null}
-                      {task.lastExecutedAt && (
-                        <span>最后执行：{new Date(task.lastExecutedAt).toLocaleString("zh-CN")}</span>
+                    <div className="flex gap-2 ml-3">
+                      {(task.status === "idle" || task.status === "paused" || task.status === "stopped") && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 text-green-400 border-green-500/30 hover:bg-green-500/10"
+                          onClick={() => startTask.mutate({ id: task.id })}
+                          disabled={startTask.isPending}
+                        >
+                          <Play className="w-3 h-3 mr-1" />启动
+                        </Button>
+                      )}
+                      {task.status === "running" && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 text-yellow-400 border-yellow-500/30 hover:bg-yellow-500/10"
+                          onClick={() => pauseTask.mutate({ id: task.id })}
+                          disabled={pauseTask.isPending}
+                        >
+                          <Pause className="w-3 h-3 mr-1" />暂停
+                        </Button>
+                      )}
+                      {task.status !== "stopped" && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 text-red-400 border-red-500/30 hover:bg-red-500/10"
+                          onClick={() => setConfirmStop(task.id)}
+                        >
+                          <Square className="w-3 h-3 mr-1" />停止
+                        </Button>
                       )}
                     </div>
-                  </CardContent>
-                </Card>
-              );
-            })
-          )}
-        </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3 mt-3 pt-3 border-t border-border/30">
+                    <div className="text-center">
+                      <p className="text-lg font-bold text-foreground">
+                        {task.totalAccountsCreated ?? 0}
+                        {(task as any).targetCount ? <span className="text-sm text-muted-foreground">/{(task as any).targetCount}</span> : null}
+                      </p>
+                      <p className="text-xs text-muted-foreground">已创建账号</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-lg font-bold text-green-400">{task.totalSuccess ?? 0}</p>
+                      <p className="text-xs text-muted-foreground">成功次数</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-lg font-bold text-red-400">{task.totalFailed ?? 0}</p>
+                      <p className="text-xs text-muted-foreground">失败次数</p>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-4 mt-3 text-xs text-muted-foreground">
+                    <span>间隔：{task.scanIntervalSeconds}s</span>
+                    <span>并发：{task.maxConcurrent}</span>
+                    {(task as any).targetCount ? <span>目标：{(task as any).targetCount}</span> : null}
+                    {task.lastExecutedAt && (
+                      <span>最后执行：{new Date(task.lastExecutedAt).toLocaleString("zh-CN")}</span>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })
+        )}
       </div>
 
       <CreateTaskDialog
