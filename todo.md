@@ -126,3 +126,11 @@
 - [x] 账号列表：批量删除按钮（选中后出现）
 - [x] 账号列表：批量复制按钮，格式为「账号----密码」每行一个
 - [x] 运行测试并保存 Checkpoint（17 个测试全部通过）
+
+## 移除跨域限制（2026-03-29 第十一轮）
+- [ ] 移除服务器端 CORS 限制，允许所有来源访问
+
+## 接口修复（2026-03-29 第十二轮）
+- [x] get-phone 接口返回値加上 id 字段
+- [x] mark-phone-used 改为只传 id（不需要 phone 和 usedByEmail）
+- [x] register 接口修复 invitedByCode/referrerCode 字段重复写入导致 SQL 报错
