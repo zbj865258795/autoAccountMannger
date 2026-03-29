@@ -139,3 +139,10 @@
 - [x] 更新 get-phone 返回値说明（加入 id 字段）
 - [x] 更新 mark-phone-used 示例代码（只传 id，不传 phone/usedByEmail）
 - [x] 更新 API 端点列表中 mark-phone-used 的说明
+
+## 接口修复 + 文档完善（2026-03-29 第十四轮）
+- [x] 修复 register 接口：邮箱重复时前置检查返回 409 + 友好错误（EMAIL_EXISTS）
+- [x] 修复 register 接口：inviteCode/email unique 冲突时捕获并返回友好错误码
+- [x] 完善 ApiDocs 页面：每个接口补充完整参数表格（字段名、类型、是否必填、说明）
+- [x] 完善 ApiDocs 页面：每个接口补充完整返回值表格（字段名、类型、说明）
+- [ ] 保存 Checkpoint 并推送 GitHub

@@ -141,6 +141,17 @@ export function registerCallbackRoutes(app: Express): void {
         }
       }
 
+      // ── 检查邮箱是否已存在 ──
+      const { getAccountByEmail } = await import("./db");
+      const existingByEmail = await getAccountByEmail(email);
+      if (existingByEmail) {
+        return res.status(409).json({
+          success: false,
+          error: `邮箱 ${email} 已存在，跳过注册`,
+          code: "EMAIL_EXISTS",
+        });
+      }
+
       // ── 創建新賬號 ──
       await createAccount({
         email,
@@ -205,6 +216,16 @@ export function registerCallbackRoutes(app: Express): void {
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error("[Callback] Register error:", msg);
+      // 检测 unique 冲突（邮箱或 inviteCode 重复）
+      if (msg.includes("Duplicate entry") || msg.includes("unique") || msg.includes("UNIQUE")) {
+        if (msg.includes("email") || msg.toLowerCase().includes("email")) {
+          return res.status(409).json({ success: false, error: "邮箱已存在，跳过注册", code: "EMAIL_EXISTS" });
+        }
+        if (msg.includes("inviteCode") || msg.includes("invite_code")) {
+          return res.status(409).json({ success: false, error: "该邀请码已被其他账号使用，请检查 inviteCode 是否重复", code: "INVITE_CODE_EXISTS" });
+        }
+        return res.status(409).json({ success: false, error: "数据重复，请检查 email 和 inviteCode 是否已存在", code: "DUPLICATE" });
+      }
       return res.status(500).json({ success: false, error: msg });
     }
   });
