@@ -43,6 +43,10 @@ services:
       OWNER_OPEN_ID: ""
       BUILT_IN_FORGE_API_URL: ""
       BUILT_IN_FORGE_API_KEY: ""
+      # AdsPower 本地 API 地址（Docker 容器通过 host.docker.internal 访问宿主机）
+      ADSPOWER_API_URL: ${ADSPOWER_API_URL:-http://host.docker.internal:50325}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - app_logs:/app/logs
 
