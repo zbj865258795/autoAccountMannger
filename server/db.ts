@@ -181,6 +181,15 @@ export async function updateInviteStatus(
   await db.update(accounts).set({ inviteStatus: status }).where(eq(accounts.inviteCode, inviteCode));
 }
 
+export async function updateInviteStatusById(
+  accountId: number,
+  status: "unused" | "in_progress" | "used"
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(accounts).set({ inviteStatus: status }).where(eq(accounts.id, accountId));
+}
+
 export async function getUnusedInviteCodes() {
   const db = await getDb();
   if (!db) return [];

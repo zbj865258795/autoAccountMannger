@@ -1,30 +1,38 @@
 /**
  * Chrome 插件回調 REST 端點
  *
- * 插件完成注冊後，調用此端點將新賬號信息保存到數據庫。
+ * ─── 插件调用流程 ───
  *
- * ─── 插件需要調用的接口 ───
- *
- * 1. 注冊開始前，獲取邀請碼：
+ * 1. 注册开始前，获取邀请码（同时自动标记为「邀请中」）：
  *    GET /api/callback/next-invite-code
+ *    → 返回 { id, inviteCode, sourceEmail }，保存 id 备用
  *
- * 2. 注冊成功後，上報完整賬號數據：
+ * 2. 注册开始前，获取手机号：
+ *    POST /api/callback/get-phone
+ *    → 返回 { id, phone, smsUrl }
+ *
+ * 3. 获取到验证码后，标记手机号已使用：
+ *    POST /api/callback/mark-phone-used
+ *    Body: { id }
+ *
+ * 4. 注册成功后，上报账号数据（同时自动将邀请人邀请码标记为「已使用」）：
  *    POST /api/callback/register
- *    Body: { email, password, phone, token, clientId,
- *            membershipVersion, totalCredits, freeCredits, refreshCredits,
- *            inviteCode, invitedByCode, registeredAt }
+ *    Body: { email, password, ..., inviterAccountId }
  *
- * 3. 健康檢查：
+ * 5. 注册失败时，重置邀请码为「未使用」：
+ *    POST /api/callback/reset-invite-code
+ *    Body: { id }
+ *
+ * 6. 健康检查：
  *    GET /api/callback/health
  */
 
 import type { Express, Request, Response } from "express";
 import {
   createAccount,
-  getAccountByInviteCode,
   getNextAvailablePhone,
   markPhoneUsedById,
-  updateInviteStatus,
+  updateInviteStatusById,
   updateAutomationTask,
   getAutomationTasks,
   getTaskLogs,
@@ -34,16 +42,18 @@ import {
 export function registerCallbackRoutes(app: Express): void {
 
   // ─────────────────────────────────────────────
-  // 健康檢查
+  // 健康检查
   // ─────────────────────────────────────────────
   app.get("/api/callback/health", (_req: Request, res: Response) => {
     res.json({ success: true, status: "ok", timestamp: new Date().toISOString() });
   });
 
   // ─────────────────────────────────────────────
-  // 獲取下一個可用邀請碼（插件主動拉取）
+  // 获取下一个可用邀请码
+  // 获取时直接将邀请码状态标记为「邀请中」，防止并发重复分配
+  // 返回 id（用于后续 reset-invite-code 或 register 时使用）
   // ─────────────────────────────────────────────
-  app.get("/api/callback/next-invite-code", async (req: Request, res: Response) => {
+  app.get("/api/callback/next-invite-code", async (_req: Request, res: Response) => {
     try {
       const { getUnusedInviteCodes } = await import("./db");
       const unusedCodes = await getUnusedInviteCodes();
@@ -52,16 +62,21 @@ export function registerCallbackRoutes(app: Express): void {
         return res.json({
           success: true,
           inviteCode: null,
-          message: "No unused invite codes available",
+          message: "暂无可用邀请码",
         });
       }
 
       const next = unusedCodes[0];
+
+      // 立即标记为「邀请中」，防止并发重复分配
+      await updateInviteStatusById(next.id, "in_progress");
+      console.log(`[Callback] Invite code ${next.inviteCode} (id=${next.id}) marked as in_progress`);
+
       return res.json({
         success: true,
+        id: next.id,
         inviteCode: next.inviteCode,
         sourceEmail: next.email,
-        sourceAccountId: next.id,
       });
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -70,30 +85,49 @@ export function registerCallbackRoutes(app: Express): void {
   });
 
   // ─────────────────────────────────────────────
-  // 主要回調：插件注冊成功後上報賬號數據
-  // 兼容兩種格式：
-  //   (A) 簡化格式：直接字段
-  //   (B) 完整格式：包含 user_info / credits_info / invitation_info 嵌套對象
+  // 重置邀请码为「未使用」（注册失败时调用）
+  // 传入 next-invite-code 返回的 id
+  // ─────────────────────────────────────────────
+  app.post("/api/callback/reset-invite-code", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.body;
+      if (!id) {
+        return res.status(400).json({ success: false, error: "id is required" });
+      }
+      await updateInviteStatusById(Number(id), "unused");
+      console.log(`[Callback] Invite code id=${id} reset to unused`);
+      return res.json({ success: true, message: "邀请码已重置为未使用" });
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ success: false, error: msg });
+    }
+  });
+
+  // ─────────────────────────────────────────────
+  // 主要回调：注册成功后上报账号数据
+  // 传入 inviterAccountId（next-invite-code 返回的 id），
+  // 系统自动将该邀请人的邀请码状态改为「已使用」
   // ─────────────────────────────────────────────
   app.post("/api/callback/register", async (req: Request, res: Response) => {
     try {
       const body = req.body;
 
-      // ── 解析字段（兼容兩種格式）──
+      // ── 必填字段校验 ──
       const email: string = body.email;
       const password: string = body.password;
+      if (!email || !password) {
+        return res.status(400).json({
+          success: false,
+          error: "email 和 password 为必填字段",
+        });
+      }
+
+      // ── 解析字段 ──
       const phone: string | undefined = body.phone;
       const token: string | undefined = body.token;
       const clientId: string | undefined = body.clientId;
 
-      if (!email || !password) {
-        return res.status(400).json({
-          success: false,
-          error: "email and password are required",
-        });
-      }
-
-      // 嵌套格式兼容
+      // 兼容嵌套格式
       const userInfo = body.user_info || {};
       const creditsInfo = body.credits_info || {};
       const invitationInfo = body.invitation_info || {};
@@ -103,14 +137,11 @@ export function registerCallbackRoutes(app: Express): void {
         body.displayname || userInfo.displayname || userInfo.nickname;
       const membershipVersion: string =
         body.membershipVersion || userInfo.membershipVersion || creditsInfo.membershipVersion || "free";
-      const totalCredits: number =
-        body.totalCredits ?? creditsInfo.totalCredits ?? 0;
-      const freeCredits: number =
-        body.freeCredits ?? creditsInfo.freeCredits ?? 0;
-      const refreshCredits: number =
-        body.refreshCredits ?? creditsInfo.refreshCredits ?? 0;
+      const totalCredits: number = body.totalCredits ?? creditsInfo.totalCredits ?? 0;
+      const freeCredits: number = body.freeCredits ?? creditsInfo.freeCredits ?? 0;
+      const refreshCredits: number = body.refreshCredits ?? creditsInfo.refreshCredits ?? 0;
 
-      // 邀請碼（此賬號持有的邀請碼）
+      // 新账号自己的邀请码
       let inviteCode: string | undefined = body.inviteCode;
       let inviteCodeId: string | undefined = body.inviteCodeId;
       if (!inviteCode && invitationInfo.invitationCodes?.length > 0) {
@@ -119,8 +150,12 @@ export function registerCallbackRoutes(app: Express): void {
         inviteCodeId = primary.id;
       }
 
-      // 邀請者邀請碼（此賬號是被誰邀請的）
-      // 兼容两种字段名：invitedByCode（旧格式）和 referrerCode（新格式），统一存入 referrerCode 字段
+      // 邀请人账号 ID（来自 next-invite-code 返回的 id）
+      const inviterAccountId: number | undefined = body.inviterAccountId
+        ? Number(body.inviterAccountId)
+        : undefined;
+
+      // 兼容旧字段：referrerCode / invitedByCode（仅用于存储，不再用于查找邀请人）
       const referrerCode: string | undefined = body.referrerCode || body.invitedByCode;
 
       const registeredAt: Date =
@@ -129,17 +164,6 @@ export function registerCallbackRoutes(app: Express): void {
           : userInfo.registeredAt
           ? new Date(userInfo.registeredAt)
           : new Date();
-
-      // ── 查找邀請者 ──
-      let invitedById: number | undefined;
-      if (referrerCode) {
-        const inviter = await getAccountByInviteCode(referrerCode);
-        if (inviter) {
-          invitedById = inviter.id;
-          // 將邀請者的邀請碼狀態改為「已使用」
-          await updateInviteStatus(referrerCode, "used");
-        }
-      }
 
       // ── 检查邮箱是否已存在 ──
       const { getAccountByEmail } = await import("./db");
@@ -152,7 +176,33 @@ export function registerCallbackRoutes(app: Express): void {
         });
       }
 
-      // ── 創建新賬號 ──
+      // ── 查找邀请人信息（通过 inviterAccountId 或 referrerCode 兼容旧逻辑）──
+      let invitedById: number | undefined = inviterAccountId;
+      let resolvedReferrerCode: string | undefined = referrerCode;
+
+      if (inviterAccountId) {
+        // 新逻辑：直接通过 id 查找邀请人
+        const { getAccountById } = await import("./db");
+        const inviter = await getAccountById(inviterAccountId);
+        if (inviter) {
+          invitedById = inviter.id;
+          resolvedReferrerCode = inviter.inviteCode ?? referrerCode;
+          // 通过 id 直接将邀请人邀请码标记为「已使用」
+          await updateInviteStatusById(inviterAccountId, "used");
+          console.log(`[Callback] Inviter account id=${inviterAccountId} invite code marked as used`);
+        }
+      } else if (referrerCode) {
+        // 旧逻辑兼容：通过 referrerCode 查找邀请人
+        const { getAccountByInviteCode, updateInviteStatus } = await import("./db");
+        const inviter = await getAccountByInviteCode(referrerCode);
+        if (inviter) {
+          invitedById = inviter.id;
+          await updateInviteStatus(referrerCode, "used");
+          console.log(`[Callback] Inviter ${referrerCode} marked as used (legacy mode)`);
+        }
+      }
+
+      // ── 创建新账号 ──
       await createAccount({
         email,
         password,
@@ -167,13 +217,13 @@ export function registerCallbackRoutes(app: Express): void {
         refreshCredits,
         inviteCode,
         inviteCodeId,
-        referrerCode,
+        referrerCode: resolvedReferrerCode,
         invitedById,
         registeredAt,
         inviteStatus: "unused",
       });
 
-      // ── 更新運行中的任務統計 ──
+      // ── 更新运行中的任务统计 ──
       const allTasks = await getAutomationTasks();
       for (const task of allTasks) {
         if (task.status === "running") {
@@ -182,15 +232,14 @@ export function registerCallbackRoutes(app: Express): void {
             totalSuccess: (task.totalSuccess || 0) + 1,
           });
 
-          // 找到對應的任務日誌並標記成功
-          if (referrerCode) {
+          if (resolvedReferrerCode) {
             const logs = await getTaskLogs({
               taskId: task.id,
               status: "running",
               pageSize: 20,
             });
             const matchingLog = logs.items.find(
-              (l) => l.usedInviteCode === referrerCode
+              (l) => l.usedInviteCode === resolvedReferrerCode
             );
             if (matchingLog) {
               await updateTaskLog(matchingLog.id, {
@@ -204,19 +253,19 @@ export function registerCallbackRoutes(app: Express): void {
       }
 
       console.log(
-        `[Callback] New account registered: ${email} | inviteCode: ${inviteCode ?? "none"} | invitedBy: ${referrerCode ?? "none"}`
+        `[Callback] New account registered: ${email} | inviteCode: ${inviteCode ?? "none"} | inviterAccountId: ${inviterAccountId ?? "none"}`
       );
 
       return res.json({
         success: true,
-        message: "Account registered successfully",
+        message: "账号注册成功",
         email,
         inviteCode: inviteCode ?? null,
       });
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error("[Callback] Register error:", msg);
-      // 检测 unique 冲突（邮箱或 inviteCode 重复）
+      // 检测 unique 冲突
       if (msg.includes("Duplicate entry") || msg.includes("unique") || msg.includes("UNIQUE")) {
         if (msg.includes("email") || msg.toLowerCase().includes("email")) {
           return res.status(409).json({ success: false, error: "邮箱已存在，跳过注册", code: "EMAIL_EXISTS" });
@@ -231,7 +280,7 @@ export function registerCallbackRoutes(app: Express): void {
   });
 
   // ─────────────────────────────────────────────
-  // 获取手机号接口（插件调用，返回一条未使用的手机号，调用后自动标记为使用中）
+  // 获取手机号（自动标记为「使用中」）
   // ─────────────────────────────────────────────
   app.post("/api/callback/get-phone", async (_req: Request, res: Response) => {
     try {
@@ -252,46 +301,23 @@ export function registerCallbackRoutes(app: Express): void {
   });
 
   // ─────────────────────────────────────────────
-  // 标记手机号为已使用（插件获取验证码后调用）
-  // 传入 id（推荐）或 phone（兼容）
+  // 标记手机号为已使用（获取到验证码后调用）
   // ─────────────────────────────────────────────
   app.post("/api/callback/mark-phone-used", async (req: Request, res: Response) => {
     try {
       const { id, phone } = req.body;
       if (!id && !phone) {
-        return res.status(400).json({ success: false, error: "id or phone is required" });
+        return res.status(400).json({ success: false, error: "id is required" });
       }
       if (id) {
-        // 推荐：按 id 标记
         await markPhoneUsedById(Number(id));
         console.log(`[Callback] Phone id=${id} marked as used`);
       } else {
-        // 兼容：按 phone 标记
         const { markPhoneUsed } = await import("./db");
         await markPhoneUsed(phone);
         console.log(`[Callback] Phone ${phone} marked as used`);
       }
       return res.json({ success: true, message: "手机号已标记为已使用" });
-    } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : String(error);
-      return res.status(500).json({ success: false, error: msg });
-    }
-  });
-
-  // ─────────────────────────────────────────────
-  // 通知邀请码开始被使用（注册流程开始时调用，可选）
-  // ─────────────────────────────────────────────
-  app.post("/api/callback/invite-used", async (req: Request, res: Response) => {
-    try {
-      const { inviteCode } = req.body;
-      if (!inviteCode) {
-        return res.status(400).json({ success: false, error: "inviteCode is required" });
-      }
-
-      await updateInviteStatus(inviteCode, "in_progress");
-      console.log(`[Callback] Invite code marked as in_progress: ${inviteCode}`);
-
-      return res.json({ success: true });
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ success: false, error: msg });

@@ -106,15 +106,14 @@ export default function ApiDocs() {
       </div>
 
       {/* 流程概览 */}
-      <Section title="完整自动化流程" icon={GitBranch}>
+      <Section title="完整自动化流程（5步）" icon={GitBranch}>
         <div className="space-y-3">
           {[
-            { step: 1, title: "系统扫描邀请码", desc: "本系统定时扫描数据库中「未使用」状态的邀请码，有可用邀请码时调用 AdsPower 创建指纹浏览器", color: "bg-blue-500/15 text-blue-400 border-blue-500/30" },
-            { step: 2, title: "插件获取手机号", desc: "插件启动后调用 /api/callback/get-phone 获取一条「未使用」手机号，系统自动将其标记为「使用中」", color: "bg-purple-500/15 text-purple-400 border-purple-500/30" },
-            { step: 3, title: "插件执行注册", desc: "插件使用获取到的邀请码和手机号完成注册流程（你现有的逻辑）", color: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30" },
-            { step: 4, title: "插件标记手机号已用", desc: "获取到验证码后，调用 /api/callback/mark-phone-used 将手机号标记为「已使用」", color: "bg-orange-500/15 text-orange-400 border-orange-500/30" },
-            { step: 5, title: "插件上报账号数据", desc: "注册成功后，调用 /api/callback/register 将完整账号数据上报到本系统", color: "bg-green-500/15 text-green-400 border-green-500/30" },
-            { step: 6, title: "系统更新状态", desc: "系统保存新账号，更新邀请码状态为「已使用」，新账号的邀请码状态为「未使用」，循环继续", color: "bg-teal-500/15 text-teal-400 border-teal-500/30" },
+            { step: 1, title: "获取邀请码（自动标记为「邀请中」）", desc: "调用 GET /api/callback/next-invite-code，返回 id 和 inviteCode，同时自动将该邀请码标记为「邀请中」，防止并发重复分配。保存返回的 id，后续步骤需要用到。", color: "bg-blue-500/15 text-blue-400 border-blue-500/30" },
+            { step: 2, title: "获取手机号（自动标记为「使用中」）", desc: "调用 POST /api/callback/get-phone，返回 id、phone、smsUrl，同时自动标记为「使用中」。保存返回的 id。", color: "bg-purple-500/15 text-purple-400 border-purple-500/30" },
+            { step: 3, title: "执行注册流程", desc: "使用获取到的邀请码和手机号完成注册。如果注册失败，调用 POST /api/callback/reset-invite-code（传入 id）将邀请码重置为「未使用」。", color: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30" },
+            { step: 4, title: "获取到验证码后标记手机号已用", desc: "调用 POST /api/callback/mark-phone-used，Body 传入 { id }（来自 get-phone 返回的 id）。", color: "bg-orange-500/15 text-orange-400 border-orange-500/30" },
+            { step: 5, title: "注册成功后上报账号数据", desc: "调用 POST /api/callback/register，传入完整账号数据和 inviterAccountId（来自 next-invite-code 返回的 id）。系统自动将邀请人邀请码标记为「已使用」，新账号邀请码状态为「未使用」，循环继续。", color: "bg-green-500/15 text-green-400 border-green-500/30" },
           ].map((item) => (
             <div key={item.step} className="flex items-start gap-3">
               <Badge variant="outline" className={`text-xs shrink-0 mt-0.5 ${item.color}`}>
@@ -127,31 +126,110 @@ export default function ApiDocs() {
             </div>
           ))}
         </div>
-      </Section>
-
-      {/* 插件需要做的修改 */}
-      <Section title="插件需要做的修改（核心）" icon={Code2}>
-        <div className="space-y-1 p-3 rounded-lg bg-yellow-500/5 border border-yellow-500/20">
-          <div className="flex items-center gap-2 mb-2">
-            <AlertCircle className="w-4 h-4 text-yellow-400" />
-            <span className="text-sm font-medium text-yellow-400">需要在插件中添加以下 4 个 API 调用</span>
+        <div className="p-3 rounded-lg bg-green-500/5 border border-green-500/20 text-xs text-muted-foreground">
+          <div className="flex items-center gap-2 mb-1">
+            <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />
+            <span className="font-medium text-green-400">设计原则</span>
           </div>
-          {[
-            "注册开始前：调用 /api/callback/get-phone 获取手机号（自动标记为「使用中」）",
-            "注册开始前：调用 /api/callback/next-invite-code 获取邀请码（或从 URL 参数读取）",
-            "获取到验证码后：调用 /api/callback/mark-phone-used 标记手机号为「已使用」",
-            "注册成功后：调用 /api/callback/register 上报完整账号数据",
-          ].map((item, i) => (
-            <div key={i} className="flex items-center gap-2 text-xs text-muted-foreground">
-              <CheckCircle2 className="w-3 h-3 text-green-400 shrink-0" />
-              {item}
-            </div>
-          ))}
+          每个接口只需传一个 <code className="text-primary">id</code>，不需要传邀请码字符串。获取即标记，失败即重置，成功即完成——状态机由系统自动维护。
         </div>
       </Section>
 
-      {/* ── 接口1：获取手机号 ── */}
-      <Section title="接口 1：获取手机号" icon={Phone}>
+      {/* ── 接口1：获取邀请码 ── */}
+      <Section title="接口 1：获取邀请码（自动标记为邀请中）" icon={Zap}>
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="font-mono text-xs border-blue-500/30 text-blue-400 bg-blue-500/10">GET</Badge>
+            <code className="text-xs text-primary font-mono">/api/callback/next-invite-code</code>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            返回下一个「未使用」邀请码，<strong>同时自动将其标记为「邀请中」</strong>，防止并发重复分配。
+            请保存返回的 <code className="text-primary">id</code>，后续 <code className="text-primary">reset-invite-code</code> 和 <code className="text-primary">register</code> 接口都需要用到。
+          </p>
+
+          <p className="text-xs font-semibold text-foreground">请求参数</p>
+          <p className="text-xs text-muted-foreground">无需传入任何参数（GET 请求）。</p>
+
+          <p className="text-xs font-semibold text-foreground">返回值（成功）</p>
+          <ReturnTable rows={[
+            { name: "success", type: "boolean", desc: "始终为 true" },
+            { name: "id", type: "number", desc: "邀请码所属账号的数据库 ID，后续接口需要用到此值" },
+            { name: "inviteCode", type: "string", desc: "邀请码字符串，用于注册流程" },
+            { name: "sourceEmail", type: "string", desc: "该邀请码所属账号的邮箱（仅供参考）" },
+          ]} />
+
+          <p className="text-xs font-semibold text-foreground">返回值（无可用邀请码）</p>
+          <ReturnTable rows={[
+            { name: "success", type: "boolean", desc: "true" },
+            { name: "inviteCode", type: "null", desc: "null，表示暂无可用邀请码" },
+            { name: "message", type: "string", desc: "\"暂无可用邀请码\"" },
+          ]} />
+
+          <p className="text-xs font-semibold text-foreground">示例</p>
+          <CodeBlock code={`// 有可用邀请码（邀请码已自动标记为「邀请中」）
+{ "success": true, "id": 30001, "inviteCode": "DNTT7V7WJAS6ABI", "sourceEmail": "user@example.com" }
+
+// 无可用邀请码
+{ "success": true, "inviteCode": null, "message": "暂无可用邀请码" }`} />
+
+          <CodeBlock code={`// 插件代码示例
+async function getInviteCode() {
+  const res = await fetch('${BASE_URL}/api/callback/next-invite-code');
+  const data = await res.json();
+  if (!data.inviteCode) {
+    console.log('❌ 暂无可用邀请码');
+    return null;
+  }
+  // 保存 id 和 inviteCode，后续步骤需要
+  return { id: data.id, inviteCode: data.inviteCode };
+}`} />
+        </div>
+      </Section>
+
+      {/* ── 接口2：重置邀请码 ── */}
+      <Section title="接口 2：重置邀请码（注册失败时调用）" icon={Zap}>
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="font-mono text-xs border-red-500/30 text-red-400 bg-red-500/10">POST</Badge>
+            <code className="text-xs text-primary font-mono">/api/callback/reset-invite-code</code>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            注册流程中途失败时调用，将邀请码状态从「邀请中」重置回「未使用」，使其可被下次重新分配。
+            传入 <code className="text-primary">next-invite-code</code> 返回的 <code className="text-primary">id</code>。
+          </p>
+
+          <p className="text-xs font-semibold text-foreground">请求 Body</p>
+          <ParamTable rows={[
+            { name: "id", type: "number", required: true, desc: "邀请码账号 ID，来自 next-invite-code 返回的 id 字段" },
+          ]} />
+
+          <p className="text-xs font-semibold text-foreground">返回值</p>
+          <ReturnTable rows={[
+            { name: "success", type: "boolean", desc: "true=重置成功" },
+            { name: "message", type: "string", desc: "\"邀请码已重置为未使用\"" },
+          ]} />
+
+          <p className="text-xs font-semibold text-foreground">示例</p>
+          <CodeBlock code={`// 请求
+{ "id": 30001 }
+
+// 响应
+{ "success": true, "message": "邀请码已重置为未使用" }`} />
+
+          <CodeBlock code={`// 注册失败时调用
+async function resetInviteCode(inviterAccountId) {
+  await fetch('${BASE_URL}/api/callback/reset-invite-code', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: inviterAccountId })
+  });
+  console.log('邀请码已重置，可重新分配');
+}`} />
+        </div>
+      </Section>
+
+      {/* ── 接口3：获取手机号 ── */}
+      <Section title="接口 3：获取手机号（自动标记为使用中）" icon={Phone}>
         <div className="space-y-3">
           <div className="flex items-center gap-2">
             <Badge variant="outline" className="font-mono text-xs border-green-500/30 text-green-400 bg-green-500/10">POST</Badge>
@@ -164,13 +242,18 @@ export default function ApiDocs() {
           <p className="text-xs font-semibold text-foreground">请求 Body</p>
           <p className="text-xs text-muted-foreground">无需传入任何参数（空 Body 或不传均可）。</p>
 
-          <p className="text-xs font-semibold text-foreground">返回值</p>
+          <p className="text-xs font-semibold text-foreground">返回值（成功）</p>
           <ReturnTable rows={[
-            { name: "success", type: "boolean", desc: "true=获取成功，false=暂无可用手机号" },
+            { name: "success", type: "boolean", desc: "true=获取成功" },
             { name: "id", type: "number", desc: "手机号记录 ID，后续调用 mark-phone-used 时需要传入此值" },
             { name: "phone", type: "string", desc: "手机号（含国家代码，如 +12232263007）" },
             { name: "smsUrl", type: "string", desc: "接码平台 URL，用于获取短信验证码" },
-            { name: "message", type: "string", desc: "仅 success=false 时返回，说明原因（如「暂无可用手机号」）" },
+          ]} />
+
+          <p className="text-xs font-semibold text-foreground">返回值（无可用手机号）</p>
+          <ReturnTable rows={[
+            { name: "success", type: "boolean", desc: "false" },
+            { name: "message", type: "string", desc: "\"暂无可用手机号\"" },
           ]} />
 
           <p className="text-xs font-semibold text-foreground">示例</p>
@@ -185,26 +268,24 @@ export default function ApiDocs() {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' }
   });
-  const result = await res.json();
-  if (result.success) {
-    // 保存 id，后续标记已使用时需要
-    return { id: result.id, phone: result.phone, smsUrl: result.smsUrl };
-  }
-  console.log('暂无可用手机号');
-  return null;
+  const data = await res.json();
+  if (!data.success) { console.log('❌ 暂无可用手机号'); return null; }
+  // 保存 id，后续 mark-phone-used 需要
+  return { id: data.id, phone: data.phone, smsUrl: data.smsUrl };
 }`} />
         </div>
       </Section>
 
-      {/* ── 接口2：标记手机号已使用 ── */}
-      <Section title="接口 2：标记手机号已使用" icon={Phone}>
+      {/* ── 接口4：标记手机号已使用 ── */}
+      <Section title="接口 4：标记手机号已使用" icon={Phone}>
         <div className="space-y-3">
           <div className="flex items-center gap-2">
             <Badge variant="outline" className="font-mono text-xs border-green-500/30 text-green-400 bg-green-500/10">POST</Badge>
             <code className="text-xs text-primary font-mono">/api/callback/mark-phone-used</code>
           </div>
           <p className="text-xs text-muted-foreground">
-            插件通过接码 URL 获取到短信验证码后调用，将手机号状态从「使用中」改为「已使用」。
+            获取到短信验证码后调用，将手机号状态从「使用中」改为「已使用」。
+            传入 <code className="text-primary">get-phone</code> 返回的 <code className="text-primary">id</code>。
           </p>
 
           <p className="text-xs font-semibold text-foreground">请求 Body</p>
@@ -215,87 +296,15 @@ export default function ApiDocs() {
           <p className="text-xs font-semibold text-foreground">返回值</p>
           <ReturnTable rows={[
             { name: "success", type: "boolean", desc: "true=标记成功" },
-            { name: "message", type: "string", desc: "操作结果描述（如「手机号已标记为已使用」）" },
+            { name: "message", type: "string", desc: "\"手机号已标记为已使用\"" },
           ]} />
 
           <p className="text-xs font-semibold text-foreground">示例</p>
           <CodeBlock code={`// 请求
 { "id": 5 }
 
-// 成功响应
-{ "success": true, "message": "手机号已标记为已使用" }`} />
-
-          <CodeBlock code={`async function markPhoneUsed(phoneId) {
-  const res = await fetch('${BASE_URL}/api/callback/mark-phone-used', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: phoneId })   // 传入 get-phone 返回的 id
-  });
-  const result = await res.json();
-  console.log('标记结果:', result.success);
-}`} />
-        </div>
-      </Section>
-
-      {/* ── 接口3：获取邀请码 ── */}
-      <Section title="接口 3：获取下一个可用邀请码" icon={Zap}>
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <Badge variant="outline" className="font-mono text-xs border-blue-500/30 text-blue-400 bg-blue-500/10">GET</Badge>
-            <code className="text-xs text-primary font-mono">/api/callback/next-invite-code</code>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            查询数据库中下一个「未使用」状态的邀请码。此接口只查询，不改变状态。
-          </p>
-
-          <p className="text-xs font-semibold text-foreground">请求参数</p>
-          <p className="text-xs text-muted-foreground">无需传入任何参数（GET 请求）。</p>
-
-          <p className="text-xs font-semibold text-foreground">返回值</p>
-          <ReturnTable rows={[
-            { name: "success", type: "boolean", desc: "始终为 true" },
-            { name: "inviteCode", type: "string | null", desc: "下一个可用邀请码，无可用时为 null" },
-            { name: "sourceEmail", type: "string", desc: "该邀请码所属账号的邮箱" },
-            { name: "sourceAccountId", type: "number", desc: "该邀请码所属账号的 ID" },
-            { name: "message", type: "string", desc: "仅 inviteCode=null 时返回，说明原因" },
-          ]} />
-
-          <p className="text-xs font-semibold text-foreground">示例</p>
-          <CodeBlock code={`// 有可用邀请码
-{ "success": true, "inviteCode": "DNTT7V7WJAS6ABI", "sourceEmail": "user@example.com", "sourceAccountId": 1 }
-
-// 无可用邀请码
-{ "success": true, "inviteCode": null, "message": "No unused invite codes available" }`} />
-        </div>
-      </Section>
-
-      {/* ── 接口4：通知邀请码使用中 ── */}
-      <Section title="接口 4：通知邀请码使用中（可选）" icon={Zap}>
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <Badge variant="outline" className="font-mono text-xs border-green-500/30 text-green-400 bg-green-500/10">POST</Badge>
-            <code className="text-xs text-primary font-mono">/api/callback/invite-used</code>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            注册流程开始时调用，将邀请码状态改为「邀请中」，避免并发时同一邀请码被重复分配。
-          </p>
-
-          <p className="text-xs font-semibold text-foreground">请求 Body</p>
-          <ParamTable rows={[
-            { name: "inviteCode", type: "string", required: true, desc: "正在使用的邀请码" },
-          ]} />
-
-          <p className="text-xs font-semibold text-foreground">返回值</p>
-          <ReturnTable rows={[
-            { name: "success", type: "boolean", desc: "true=操作成功" },
-          ]} />
-
-          <p className="text-xs font-semibold text-foreground">示例</p>
-          <CodeBlock code={`// 请求
-{ "inviteCode": "DNTT7V7WJAS6ABI" }
-
 // 响应
-{ "success": true }`} />
+{ "success": true, "message": "手机号已标记为已使用" }`} />
         </div>
       </Section>
 
@@ -307,37 +316,39 @@ export default function ApiDocs() {
             <code className="text-xs text-primary font-mono">/api/callback/register</code>
           </div>
           <p className="text-xs text-muted-foreground">
-            注册成功后调用，将新账号完整数据保存到系统。系统会自动关联邀请关系、更新邀请码状态、统计任务数据。
+            注册成功后调用，将新账号完整数据保存到系统。
+            传入 <code className="text-primary">inviterAccountId</code>（来自 <code className="text-primary">next-invite-code</code> 返回的 <code className="text-primary">id</code>），
+            系统自动将该邀请人的邀请码标记为「已使用」，新账号邀请码状态自动设为「未使用」（可被下一轮使用）。
           </p>
 
-          <div className="p-3 rounded-lg bg-blue-500/5 border border-blue-500/20 text-xs text-blue-300 space-y-1">
-            <p className="font-medium">⚠️ 注意：inviteCode 字段说明</p>
+          <div className="p-3 rounded-lg bg-blue-500/5 border border-blue-500/20 text-xs space-y-1">
+            <p className="font-medium text-blue-400">⚠️ 关键字段说明</p>
             <p className="text-muted-foreground">
-              <code className="text-primary">inviteCode</code> 是<strong>新账号自己的邀请码</strong>（注册后平台分配给该账号的），每个账号唯一，不可重复。
+              <code className="text-primary">inviterAccountId</code>：<strong>邀请人的账号 ID</strong>（来自 next-invite-code 返回的 <code className="text-primary">id</code>），系统通过此 ID 直接更新邀请码状态。
               <br />
-              <code className="text-primary">referrerCode</code> 才是<strong>本次注册使用的邀请码</strong>（即上一个账号的 inviteCode），用于建立邀请关系链。
+              <code className="text-primary">inviteCode</code>：<strong>新账号自己的邀请码</strong>（注册后平台分配给该账号的），每个账号唯一，不可重复。
             </p>
           </div>
 
           <p className="text-xs font-semibold text-foreground">请求 Body</p>
           <ParamTable rows={[
-            { name: "email", type: "string", required: true, desc: "账号邮箱，全局唯一，重复则返回 409 错误" },
-            { name: "password", type: "string", required: true, desc: "账号密码（明文存储，请确保安全）" },
+            { name: "email", type: "string", required: true, desc: "账号邮箱，全局唯一，重复则返回 409 错误（EMAIL_EXISTS）" },
+            { name: "password", type: "string", required: true, desc: "账号密码" },
+            { name: "inviterAccountId", type: "number", required: true, desc: "邀请人账号 ID，来自 next-invite-code 返回的 id，系统通过此 ID 将邀请码标记为「已使用」" },
+            { name: "inviteCode", type: "string", required: false, desc: "新账号自己的邀请码（平台分配，每个账号唯一）" },
             { name: "phone", type: "string", required: false, desc: "注册使用的手机号（含国家代码，如 +17699335914）" },
             { name: "token", type: "string", required: false, desc: "平台返回的 JWT token（用于后续 API 调用）" },
             { name: "clientId", type: "string", required: false, desc: "平台分配的 clientId" },
             { name: "membershipVersion", type: "string", required: false, desc: "会员版本，如 free / pro，默认 free" },
             { name: "totalCredits", type: "number", required: false, desc: "账号总积分，默认 0" },
             { name: "freeCredits", type: "number", required: false, desc: "免费积分，默认 0" },
-            { name: "inviteCode", type: "string", required: false, desc: "新账号自己的邀请码（平台分配，每个账号唯一）" },
-            { name: "referrerCode", type: "string", required: false, desc: "本次注册使用的邀请码（即上一个账号的 inviteCode），用于建立邀请链" },
-            { name: "registeredAt", type: "string", required: false, desc: "注册时间（ISO 8601 格式），不传则默认当前时间" },
+            { name: "referrerCode", type: "string", required: false, desc: "兼容旧格式：邀请人的邀请码字符串（新接口推荐用 inviterAccountId 替代）" },
           ]} />
 
           <p className="text-xs font-semibold text-foreground">返回值（成功）</p>
           <ReturnTable rows={[
             { name: "success", type: "boolean", desc: "true=注册成功" },
-            { name: "message", type: "string", desc: "固定值 \"Account registered successfully\"" },
+            { name: "message", type: "string", desc: "\"账号注册成功\"" },
             { name: "email", type: "string", desc: "已保存的账号邮箱" },
             { name: "inviteCode", type: "string | null", desc: "已保存的账号邀请码" },
           ]} />
@@ -350,44 +361,33 @@ export default function ApiDocs() {
           ]} />
 
           <p className="text-xs font-semibold text-foreground">示例</p>
-          <CodeBlock code={`// 请求 Body
+          <CodeBlock code={`// 请求 Body（推荐格式）
 {
   "email": "stevenpetersen1175@outlook.com",
   "password": "aB3#kLm9xPq2$Yw",
+  "inviterAccountId": 30001,              // next-invite-code 返回的 id
+  "inviteCode": "DNTT7V7WJAS6ABI",        // 新账号自己的邀请码（唯一）
   "phone": "+17699335914",
   "token": "eyJhbGciOiJSUzI1NiIs...",
   "clientId": "c4QzUWRnJKGQ6QJEsUXUWV",
   "membershipVersion": "free",
   "totalCredits": 2800,
-  "freeCredits": 2500,
-  "inviteCode": "DNTT7V7WJAS6ABI",       // 新账号自己的邀请码（唯一）
-  "referrerCode": "DNTT7V7WJAS6ABI12"    // 本次使用的邀请码（上一个账号的）
+  "freeCredits": 2500
 }
 
 // 成功响应
-{ "success": true, "message": "Account registered successfully", "email": "stevenpetersen1175@outlook.com", "inviteCode": "DNTT7V7WJAS6ABI" }
+{ "success": true, "message": "账号注册成功", "email": "stevenpetersen1175@outlook.com", "inviteCode": "DNTT7V7WJAS6ABI" }
 
 // 邮箱已存在（409）
-{ "success": false, "error": "邮箱已存在，跳过注册", "code": "EMAIL_EXISTS" }
+{ "success": false, "error": "邮箱 xxx@outlook.com 已存在，跳过注册", "code": "EMAIL_EXISTS" }`} />
 
-// inviteCode 重复（409）
-{ "success": false, "error": "该邀请码已被其他账号使用，请检查 inviteCode 是否重复", "code": "INVITE_CODE_EXISTS" }`} />
-
-          <CodeBlock code={`async function reportSuccess(accountData, usedInviteCode) {
+          <CodeBlock code={`async function reportSuccess(accountData, inviterAccountId) {
   const res = await fetch('${BASE_URL}/api/callback/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      email: accountData.email,
-      password: accountData.password,
-      phone: accountData.phone,
-      token: accountData.token,
-      clientId: accountData.clientId,
-      membershipVersion: accountData.membershipVersion,
-      totalCredits: accountData.totalCredits,
-      freeCredits: accountData.freeCredits,
-      inviteCode: accountData.inviteCode,   // 新账号自己的邀请码
-      referrerCode: usedInviteCode,         // 本次使用的邀请码
+      ...accountData,
+      inviterAccountId,   // next-invite-code 返回的 id
     })
   });
   const result = await res.json();
@@ -403,45 +403,44 @@ export default function ApiDocs() {
         </div>
       </Section>
 
-      {/* ── 接口6：健康检查 ── */}
-      <Section title="接口 6：健康检查" icon={Zap}>
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <Badge variant="outline" className="font-mono text-xs border-blue-500/30 text-blue-400 bg-blue-500/10">GET</Badge>
-            <code className="text-xs text-primary font-mono">/api/callback/health</code>
-          </div>
-          <p className="text-xs text-muted-foreground">确认系统正常运行。</p>
-
-          <p className="text-xs font-semibold text-foreground">返回值</p>
-          <ReturnTable rows={[
-            { name: "success", type: "boolean", desc: "true=系统正常" },
-            { name: "status", type: "string", desc: "固定值 \"ok\"" },
-            { name: "timestamp", type: "string", desc: "当前服务器时间（ISO 8601 格式）" },
-          ]} />
-
-          <CodeBlock code={`{ "success": true, "status": "ok", "timestamp": "2026-03-29T12:00:00.000Z" }`} />
-        </div>
-      </Section>
-
       {/* 完整插件集成示例 */}
       <Section title="完整插件集成示例" icon={Code2}>
-        <CodeBlock code={`// ============================================================
-// 在你的 Chrome 插件 background.js 或 content.js 中添加
-// ============================================================
+        <div className="p-3 rounded-lg bg-yellow-500/5 border border-yellow-500/20 mb-3">
+          <div className="flex items-center gap-2 mb-1">
+            <AlertCircle className="w-3.5 h-3.5 text-yellow-400" />
+            <span className="text-xs font-medium text-yellow-400">在你的插件中添加以下代码，替换现有的注册逻辑</span>
+          </div>
+        </div>
+        <CodeBlock code={`const SYSTEM_API = '${BASE_URL}';
 
-const SYSTEM_API = '${BASE_URL}';
+// ── 接口1：获取邀请码（自动标记为邀请中）──
+async function getInviteCode() {
+  const res = await fetch(\`\${SYSTEM_API}/api/callback/next-invite-code\`);
+  const data = await res.json();
+  if (!data.inviteCode) return null;
+  return { id: data.id, inviteCode: data.inviteCode };  // 保存 id！
+}
 
-// 接口1：获取手机号
+// ── 接口2：注册失败时重置邀请码 ──
+async function resetInviteCode(id) {
+  await fetch(\`\${SYSTEM_API}/api/callback/reset-invite-code\`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id })
+  });
+}
+
+// ── 接口3：获取手机号（自动标记为使用中）──
 async function getPhone() {
   const res = await fetch(\`\${SYSTEM_API}/api/callback/get-phone\`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }
   });
   const data = await res.json();
   if (!data.success) return null;
-  return { id: data.id, phone: data.phone, smsUrl: data.smsUrl };
+  return { id: data.id, phone: data.phone, smsUrl: data.smsUrl };  // 保存 id！
 }
 
-// 接口2：标记手机号已使用
+// ── 接口4：标记手机号已使用 ──
 async function markPhoneUsed(phoneId) {
   await fetch(\`\${SYSTEM_API}/api/callback/mark-phone-used\`, {
     method: 'POST',
@@ -450,47 +449,48 @@ async function markPhoneUsed(phoneId) {
   });
 }
 
-// 接口3：获取邀请码
-async function getInviteCode() {
-  const urlCode = new URL(window.location.href).searchParams.get('invite_code');
-  if (urlCode) return urlCode;
-  const res = await fetch(\`\${SYSTEM_API}/api/callback/next-invite-code\`);
-  const data = await res.json();
-  return data.inviteCode || null;
-}
-
-// 接口5：上报账号数据
-async function reportSuccess(accountData, usedInviteCode) {
+// ── 接口5：上报账号数据 ──
+async function reportSuccess(accountData, inviterAccountId) {
   const res = await fetch(\`\${SYSTEM_API}/api/callback/register\`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...accountData, referrerCode: usedInviteCode })
+    body: JSON.stringify({ ...accountData, inviterAccountId })
   });
   return await res.json();
 }
 
 // ============================================================
-// 在你现有的注册流程中插入以下调用：
+// 主流程（在你现有的注册逻辑中替换/插入）
 // ============================================================
 async function autoRegister() {
-  // Step 1: 获取手机号
+  // Step 1: 获取邀请码（自动标记为邀请中）
+  const inviteInfo = await getInviteCode();
+  if (!inviteInfo) { console.log('❌ 无可用邀请码'); return; }
+  const { id: inviterAccountId, inviteCode } = inviteInfo;
+
+  // Step 2: 获取手机号
   const phoneInfo = await getPhone();
-  if (!phoneInfo) { console.log('❌ 无可用手机号'); return; }
+  if (!phoneInfo) {
+    await resetInviteCode(inviterAccountId);  // 归还邀请码
+    console.log('❌ 无可用手机号');
+    return;
+  }
 
-  // Step 2: 获取邀请码
-  const inviteCode = await getInviteCode();
-  if (!inviteCode) { console.log('❌ 无可用邀请码'); return; }
+  try {
+    // Step 3: 执行你现有的注册逻辑
+    const accountData = await yourExistingRegisterFunction(inviteCode, phoneInfo.phone, phoneInfo.smsUrl);
 
-  // Step 3: 执行你现有的注册逻辑（使用 phoneInfo.phone 和 phoneInfo.smsUrl）
-  const accountData = await yourExistingRegisterFunction(inviteCode, phoneInfo);
+    // Step 4: 获取到验证码后标记手机号已使用
+    await markPhoneUsed(phoneInfo.id);
 
-  // Step 4: 获取到验证码后，标记手机号已使用
-  await markPhoneUsed(phoneInfo.id);
+    // Step 5: 注册成功后上报（传入 inviterAccountId）
+    const result = await reportSuccess(accountData, inviterAccountId);
+    console.log('✅ 上报结果:', result);
 
-  // Step 5: 注册成功后上报
-  if (accountData) {
-    const result = await reportSuccess(accountData, inviteCode);
-    console.log('上报结果:', result);
+  } catch (err) {
+    // 注册失败：重置邀请码，使其可被下次重新分配
+    await resetInviteCode(inviterAccountId);
+    console.error('❌ 注册失败，邀请码已重置:', err);
   }
 }`} />
       </Section>
@@ -499,11 +499,11 @@ async function autoRegister() {
       <Section title="API 端点汇总" icon={Webhook}>
         <div className="space-y-2">
           {[
-            { method: "POST", path: "/api/callback/get-phone", desc: "获取一条未使用手机号（自动标记为「使用中」）" },
+            { method: "GET",  path: "/api/callback/next-invite-code", desc: "获取邀请码（自动标记为「邀请中」），返回 id 和 inviteCode" },
+            { method: "POST", path: "/api/callback/reset-invite-code", desc: "注册失败时重置邀请码为「未使用」，Body: { id }" },
+            { method: "POST", path: "/api/callback/get-phone", desc: "获取手机号（自动标记为「使用中」），返回 id、phone、smsUrl" },
             { method: "POST", path: "/api/callback/mark-phone-used", desc: "标记手机号为「已使用」，Body: { id }" },
-            { method: "GET",  path: "/api/callback/next-invite-code", desc: "获取下一个可用邀请码（只查询，不改变状态）" },
-            { method: "POST", path: "/api/callback/invite-used", desc: "通知邀请码正在使用中（状态→邀请中），Body: { inviteCode }" },
-            { method: "POST", path: "/api/callback/register", desc: "上报账号数据，Body: { email*, password*, phone, token, clientId, inviteCode, referrerCode, ... }" },
+            { method: "POST", path: "/api/callback/register", desc: "上报账号数据，Body: { email*, password*, inviterAccountId*, inviteCode, phone, token, ... }" },
             { method: "GET",  path: "/api/callback/health", desc: "健康检查" },
           ].map((api) => (
             <div key={api.path} className="flex items-start gap-3 p-3 rounded-lg bg-muted/20 border border-border/30">

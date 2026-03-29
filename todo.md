@@ -146,3 +146,11 @@
 - [x] 完善 ApiDocs 页面：每个接口补充完整参数表格（字段名、类型、是否必填、说明）
 - [x] 完善 ApiDocs 页面：每个接口补充完整返回值表格（字段名、类型、说明）
 - [ ] 保存 Checkpoint 并推送 GitHub
+
+## 邀请码接口重设计（2026-03-29 第十五轮）
+- [x] get-next-invite-code：获取邀请码时直接标记为「邀请中」，同时返回 id 和 inviteCode
+- [x] 新增 reset-invite-code 接口：注册失败时通过 id 将邀请码重置为「未使用」
+- [x] register 接口：新增 inviterAccountId 参数，通过 id 直接将邀请人邀请码标记为「已使用」
+- [x] 删除多余的 invite-used 接口（功能已合并到 get-next-invite-code）
+- [x] 更新 ApiDocs 文档，反映新的接口设计
+- [ ] 保存 Checkpoint 并推送 GitHub
