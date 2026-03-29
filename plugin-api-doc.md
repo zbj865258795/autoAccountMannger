@@ -124,46 +124,38 @@
 
 **请求 Body：**
 
+只有 `email`、`password`、`inviterAccountId` 是必填，其余字段**有什么传什么**，没有的直接不传。
+
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `email` | string | **是** | 新账号邮箱，重复则返回 409 |
 | `password` | string | **是** | 新账号密码 |
-| `inviterAccountId` | number | **是** | 来自 `next-invite-code` 返回的 `id`，系统通过此 ID 将邀请人邀请码标记为「已使用」 |
-| `inviteCode` | string | 否 | 新账号自己的邀请码（平台注册后分配，每账号唯一） |
-| `inviteCodeId` | string | 否 | 邀请码的平台内部 ID |
+| `inviterAccountId` | number | **是** | 来自 `next-invite-code` 返回的 `id`，后端通过此 ID 将邀请人邀请码标记为「已使用」 |
+| `inviteCode` | string | 否 | 新账号自己的邀请码（平台注册后返回，每账号唯一） |
+| `referrerCode` | string | 否 | 邀请人邀请码字符串（兼容旧格式） |
 | `phone` | string | 否 | 注册使用的手机号（含国家代码） |
 | `token` | string | 否 | 平台返回的 JWT Token |
 | `clientId` | string | 否 | 平台分配的 Client ID |
-| `userId` | string | 否 | 平台内部用户 ID |
-| `displayname` | string | 否 | 账号昵称 |
 | `membershipVersion` | string | 否 | 会员版本，如 `free` / `pro`，默认 `free` |
 | `totalCredits` | number | 否 | 账号总积分，默认 `0` |
 | `freeCredits` | number | 否 | 免费积分，默认 `0` |
 | `refreshCredits` | number | 否 | 刷新积分，默认 `0` |
-| `registeredAt` | string | 否 | 注册时间（ISO 8601），不传则取当前时间 |
-| `referrerCode` | string | 否 | 邀请人邀请码字符串（兼容旧格式，推荐用 `inviterAccountId` 替代） |
 
-> **嵌套格式兼容：** 以下字段也可以嵌套传入，系统会自动解析。
->
-> - `user_info`: `{ userId, displayname, nickname, membershipVersion, registeredAt }`
-> - `credits_info`: `{ membershipVersion, totalCredits, freeCredits, refreshCredits }`
-> - `invitation_info`: `{ invitationCodes: [{ inviteCode, id }] }`
-
-**请求示例：**
+**请求示例（在你现有数据结构上加 `inviterAccountId` 即可）：**
 
 ```json
 {
   "email": "stevenpetersen1175@outlook.com",
   "password": "aB3#kLm9xPq2$Yw",
-  "inviterAccountId": 30001,
-  "inviteCode": "DNTT7V7WJAS6ABI",
   "phone": "+17699335914",
   "token": "eyJhbGciOiJSUzI1NiIs...",
   "clientId": "c4QzUWRnJKGQ6QJEsUXUWV",
   "membershipVersion": "free",
   "totalCredits": 2800,
   "freeCredits": 2500,
-  "refreshCredits": 0
+  "inviteCode": "DNTT7V7WJAS6ABI",
+  "referrerCode": "XXXXXXXXX",
+  "inviterAccountId": 30001
 }
 ```
 
