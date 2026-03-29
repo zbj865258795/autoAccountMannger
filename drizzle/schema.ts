@@ -93,6 +93,7 @@ export const automationTasks = mysqlTable("automation_tasks", {
   adspowerGroupId: varchar("adspowerGroupId", { length: 64 }),
   targetUrl: varchar("targetUrl", { length: 512 }),              // 注冊目標 URL（插件打開的頁面）
   maxConcurrent: int("maxConcurrent").default(1),  // 最大並發數
+  targetCount: int("targetCount"),  // 注冊目標總數（達到後自動停止），NULL 表示不限制
 
   // 統計
   totalAccountsCreated: int("totalAccountsCreated").default(0),

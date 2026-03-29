@@ -508,11 +508,12 @@ export async function startAdsPowerBrowser(
 // ─────────────────────────────────────────────
 
 export async function closeAdsPowerBrowser(
-  apiUrl: string,
+  config: AdsPowerConfig,
   browserId: string
 ): Promise<boolean> {
+  const client = createAxiosClient(config);
   try {
-    const response = await axios.get(`${apiUrl}/api/v1/browser/stop`, {
+    const response = await client.get("/api/v1/browser/stop", {
       params: { user_id: browserId },
       timeout: 10000,
     });
@@ -568,7 +569,7 @@ export async function stopAndDeleteAdsPowerBrowser(
   profileId: string
 ): Promise<{ success: boolean; error?: string }> {
   // 先尝试关闭（可能已关闭，忽略错误）
-  await closeAdsPowerBrowser(config.apiUrl, profileId).catch(() => {});
+  await closeAdsPowerBrowser(config, profileId).catch(() => {});
   // 再删除
   return deleteAdsPowerBrowsers(config, [profileId]);
 }

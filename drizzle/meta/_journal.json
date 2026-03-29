@@ -43,6 +43,13 @@
       "when": 1774768595727,
       "tag": "0005_good_tarantula",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1774800000000,
+      "tag": "0006_add_target_count",
+      "breakpoints": true
     }
   ]
 }

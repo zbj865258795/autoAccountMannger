@@ -209,6 +209,7 @@ const automationRouter = router({
       adspowerGroupId: z.string().optional(),
       targetUrl: z.string().optional(),
       maxConcurrent: z.number().min(1).max(50).default(1),
+      targetCount: z.number().min(1).optional(),
     }))
     .mutation(async ({ input }) => {
       await createAutomationTask(input);
@@ -225,6 +226,7 @@ const automationRouter = router({
         adspowerGroupId: z.string().optional(),
         targetUrl: z.string().optional(),
         maxConcurrent: z.number().min(1).max(50).optional(),
+        targetCount: z.number().min(1).nullish(),
       }),
     }))
     .mutation(async ({ input }) => {

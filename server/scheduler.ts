@@ -20,6 +20,7 @@ import {
 import {
   createAdsPowerBrowser,
   startAdsPowerBrowser,
+  stopAndDeleteAdsPowerBrowser,
 } from "./adspower";
 import { ADSPOWER_CONFIG } from "./config";
 
@@ -101,6 +102,16 @@ async function executeTask(taskId: number): Promise<void> {
   if (!task) return;
 
   const maxConcurrent = task.maxConcurrent || 1;
+
+  // 检查是否已达到注册目标总数
+  if (task.targetCount && (task.totalAccountsCreated ?? 0) >= task.targetCount) {
+    console.log(
+      `[Scheduler] Task ${taskId}: Target count reached (${task.totalAccountsCreated}/${task.targetCount}), auto-stopping`
+    );
+    await stopScheduler(taskId);
+    return;
+  }
+
   // API Key 从配置文件读取（固定写死，不依赖数据库字段）
   const adspowerConfig = {
     apiUrl: task.adspowerApiUrl || ADSPOWER_CONFIG.apiUrl,
@@ -206,12 +217,17 @@ async function processOneInviteCode(
         });
       }
 
-      await incrementTaskCounters(taskId, { totalSuccess: 1 });
+      // 注意：此處不計 totalSuccess，因為注冊尚未完成
+      // totalSuccess 和 totalAccountsCreated 由插件回調 register 成功後原子自增
 
       console.log(
         `[Scheduler] Task ${taskId}: Browser started successfully | profile: ${profileId} | inviteCode: ${inviteCode}`
       );
     } else {
+      // 啟動失敗，清理已創建的瀏覽器環境
+      await stopAndDeleteAdsPowerBrowser(adspowerConfig, profileId).catch((e) =>
+        console.error(`[Scheduler] Task ${taskId}: Failed to cleanup browser ${profileId}: ${e}`)
+      );
       throw new Error(startResult.error || "Failed to start browser");
     }
   } catch (error: unknown) {

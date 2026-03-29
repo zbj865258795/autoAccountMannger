@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS `automation_tasks` (
   `adspowerGroupId` varchar(64),
   `targetUrl` varchar(512),
   `maxConcurrent` int DEFAULT 1,
+  `targetCount` int,
   `totalAccountsCreated` int DEFAULT 0,
   `totalSuccess` int DEFAULT 0,
   `totalFailed` int DEFAULT 0,

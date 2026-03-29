@@ -54,6 +54,7 @@ function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose
   const [groupId, setGroupId] = useState("");
   const [targetUrl, setTargetUrl] = useState("");
   const [maxConcurrent, setMaxConcurrent] = useState(1);
+  const [targetCount, setTargetCount] = useState<string>("");
 
   const createTask = trpc.automation.create.useMutation({
     onSuccess: () => {
@@ -141,6 +142,20 @@ function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose
               每次扫描最多同时启动 {maxConcurrent} 个 AdsPower 浏览器实例
             </p>
           </div>
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">注册目标总数（可选）</Label>
+            <Input
+              type="number"
+              value={targetCount}
+              onChange={(e) => setTargetCount(e.target.value)}
+              placeholder="不填则不限制，直到邀请码用完"
+              min={1}
+              className="bg-muted/50 border-border/50 text-foreground"
+            />
+            <p className="text-xs text-muted-foreground">
+              达到此数量后调度器自动停止，留空表示不限制
+            </p>
+          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>取消</Button>
@@ -152,6 +167,7 @@ function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose
               adspowerGroupId: groupId || undefined,
               targetUrl: targetUrl || undefined,
               maxConcurrent,
+              targetCount: targetCount ? Number(targetCount) : undefined,
             })}
             disabled={createTask.isPending || !name.trim()}
           >
@@ -416,7 +432,10 @@ export default function Automation() {
 
                     <div className="grid grid-cols-3 gap-3 mt-3 pt-3 border-t border-border/30">
                       <div className="text-center">
-                        <p className="text-lg font-bold text-foreground">{task.totalAccountsCreated ?? 0}</p>
+                        <p className="text-lg font-bold text-foreground">
+                          {task.totalAccountsCreated ?? 0}
+                          {(task as any).targetCount ? <span className="text-sm text-muted-foreground">/{(task as any).targetCount}</span> : null}
+                        </p>
                         <p className="text-xs text-muted-foreground">已创建账号</p>
                       </div>
                       <div className="text-center">
@@ -432,6 +451,7 @@ export default function Automation() {
                     <div className="flex gap-4 mt-3 text-xs text-muted-foreground">
                       <span>间隔：{task.scanIntervalSeconds}s</span>
                       <span>并发：{task.maxConcurrent}</span>
+                      {(task as any).targetCount ? <span>目标：{(task as any).targetCount}</span> : null}
                       {task.lastExecutedAt && (
                         <span>最后执行：{new Date(task.lastExecutedAt).toLocaleString("zh-CN")}</span>
                       )}

@@ -40,6 +40,8 @@ import {
   getTaskLogs,
   updateTaskLog,
 } from "./db";
+import { stopAndDeleteAdsPowerBrowser } from "./adspower";
+import { ADSPOWER_CONFIG } from "./config";
 
 export function registerCallbackRoutes(app: Express): void {
 
@@ -243,6 +245,23 @@ export function registerCallbackRoutes(app: Express): void {
                 completedAt: new Date(),
                 durationMs: Date.now() - (matchingLog.startedAt?.getTime() ?? Date.now()),
               });
+
+              // 注册成功后，关闭并删除 AdsPower 浏览器环境
+              if (matchingLog.adspowerBrowserId) {
+                const adspowerConfig = {
+                  apiUrl: task.adspowerApiUrl || ADSPOWER_CONFIG.apiUrl,
+                  apiKey: ADSPOWER_CONFIG.apiKey,
+                };
+                stopAndDeleteAdsPowerBrowser(adspowerConfig, matchingLog.adspowerBrowserId)
+                  .then((result) => {
+                    if (result.success) {
+                      console.log(`[Callback] Browser ${matchingLog.adspowerBrowserId} destroyed after successful registration`);
+                    } else {
+                      console.error(`[Callback] Failed to destroy browser ${matchingLog.adspowerBrowserId}: ${result.error}`);
+                    }
+                  })
+                  .catch((e) => console.error(`[Callback] Error destroying browser: ${e}`));
+              }
             }
           }
         }
