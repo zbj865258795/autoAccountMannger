@@ -137,11 +137,11 @@ export default function PhoneNumbers() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6">
+      <div className="space-y-5">
         {/* 页面标题 */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-foreground">手机号管理</h1>
+            <h1 className="text-xl font-semibold text-foreground">手机号管理</h1>
             <p className="text-sm text-muted-foreground mt-1">
               管理注册用手机号，格式：手机号|接码URL
             </p>
@@ -418,32 +418,6 @@ export default function PhoneNumbers() {
           </CardContent>
         </Card>
 
-        {/* API 接口说明 */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">插件调用接口</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground mb-3">
-              插件每次需要手机号时，调用以下接口获取一条未使用的手机号（调用后自动标记为已使用）：
-            </p>
-            <div className="bg-muted rounded-md p-3 font-mono text-sm space-y-2">
-              <div>
-                <span className="text-green-500 font-bold">POST</span>
-                <span className="ml-2">/api/callback/get-phone</span>
-              </div>
-              <div className="text-muted-foreground text-xs">无需请求体，直接调用即可</div>
-              <div className="text-muted-foreground text-xs mt-2">返回示例：</div>
-              <pre className="text-xs bg-background p-2 rounded overflow-auto">{`{
-  "success": true,
-  "data": "+12232263007|https://sms-555.com/cacgadbjbbcccf6mmg3tv4frasfup3bn"
-}`}</pre>
-              <div className="text-muted-foreground text-xs mt-2">
-                若无可用手机号，返回：<code className="bg-background px-1 rounded">{`{"success": false, "message": "暂无可用手机号"}`}</code>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
       </div>
     </DashboardLayout>
   );
