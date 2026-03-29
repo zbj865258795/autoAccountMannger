@@ -57,9 +57,11 @@ export const accounts = mysqlTable("accounts", {
   // 邀請碼狀態：unused=未使用, in_progress=邀請中, used=已使用
   inviteStatus: mysqlEnum("inviteStatus", ["unused", "in_progress", "used"]).default("unused").notNull(),
 
-  // 邀請關係：此賬號是被誰邀請的（存儲邀請者的 inviteCode）
+  // 邀请关系：此账号是被谁邀请的（存储邀请者的 inviteCode）
   invitedByCode: varchar("invitedByCode", { length: 64 }),
-  // 邀請者賬號 ID（外鍵，自引用）
+  // referrerCode：注册时填写的邀请人邀请码（与 invitedByCode 同义，直接来自插件上报）
+  referrerCode: varchar("referrerCode", { length: 64 }),
+  // 邀请者账号 ID（外键，自引用）
   invitedById: int("invitedById"),
 
   // 時間戳

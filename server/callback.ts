@@ -119,7 +119,9 @@ export function registerCallbackRoutes(app: Express): void {
       }
 
       // 邀請者邀請碼（此賬號是被誰邀請的）
-      const invitedByCode: string | undefined = body.invitedByCode;
+      // 兼容两种字段名：invitedByCode（旧格式）和 referrerCode（新格式）
+      const invitedByCode: string | undefined = body.invitedByCode || body.referrerCode;
+      const referrerCode: string | undefined = invitedByCode;
 
       const registeredAt: Date =
         body.registeredAt
@@ -155,6 +157,7 @@ export function registerCallbackRoutes(app: Express): void {
         inviteCode,
         inviteCodeId,
         invitedByCode,
+        referrerCode,
         invitedById,
         registeredAt,
         inviteStatus: "unused",
@@ -228,7 +231,26 @@ export function registerCallbackRoutes(app: Express): void {
   });
 
   // ─────────────────────────────────────────────
-  // 通知邀請碼開始被使用（注册流程開始時調用，可選）
+  // 标记手机号为已使用（插件获取验证码后调用）
+  // ─────────────────────────────────────────────
+  app.post("/api/callback/mark-phone-used", async (req: Request, res: Response) => {
+    try {
+      const { phone, usedByEmail } = req.body;
+      if (!phone) {
+        return res.status(400).json({ success: false, error: "phone is required" });
+      }
+      const { markPhoneUsed } = await import("./db");
+      await markPhoneUsed(phone, usedByEmail);
+      console.log(`[Callback] Phone marked as used: ${phone}`);
+      return res.json({ success: true, message: "手机号已标记为已使用" });
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ success: false, error: msg });
+    }
+  });
+
+  // ─────────────────────────────────────────────
+  // 通知邀请码开始被使用（注册流程开始时调用，可选）
   // ─────────────────────────────────────────────
   app.post("/api/callback/invite-used", async (req: Request, res: Response) => {
     try {

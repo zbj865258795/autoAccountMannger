@@ -9,7 +9,6 @@ import Dashboard from "./pages/Dashboard";
 import Accounts from "./pages/Accounts";
 import ImportAccounts from "./pages/ImportAccounts";
 import InvitationTree from "./pages/InvitationTree";
-import Credits from "./pages/Credits";
 import Automation from "./pages/Automation";
 import TaskLogs from "./pages/TaskLogs";
 import ApiDocs from "./pages/ApiDocs";
@@ -22,9 +21,8 @@ function Router() {
         <Route path="/" component={Dashboard} />
         <Route path="/accounts" component={Accounts} />
         <Route path="/import" component={ImportAccounts} />
-        <Route path="/phone-numbers" component={PhoneNumbers} />
+        <Route path="/phones" component={PhoneNumbers} />
         <Route path="/invitation-tree" component={InvitationTree} />
-        <Route path="/credits" component={Credits} />
         <Route path="/automation" component={Automation} />
         <Route path="/logs" component={TaskLogs} />
         <Route path="/api-docs" component={ApiDocs} />

@@ -356,22 +356,24 @@ export default function PhoneNumbers() {
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex gap-1 justify-end">
+                            {/* 任何状态都可以重置为未使用 */}
                             {item.status !== "unused" && (
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                className="h-7 px-2 text-xs"
+                                className="h-7 px-2 text-xs text-muted-foreground"
                                 onClick={() => reset.mutate({ phone: item.phone })}
                               >
                                 <RefreshCw className="h-3 w-3 mr-1" />
                                 重置
                               </Button>
                             )}
-                            {item.status === "unused" && (
+                            {/* 未使用或使用中，可手动标记已使用 */}
+                            {item.status !== "used" && (
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                className="h-7 px-2 text-xs"
+                                className="h-7 px-2 text-xs text-green-600"
                                 onClick={() => markUsed.mutate({ phone: item.phone })}
                               >
                                 <CheckCircle className="h-3 w-3 mr-1" />

@@ -3,58 +3,60 @@ import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { CheckCircle2, AlertCircle, Upload, FileJson, Loader2, Plus } from "lucide-react";
+import { CheckCircle2, AlertCircle, Upload, FileJson, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 
-// 解析插件输出的完整 JSON 格式
-function parsePluginJson(raw: string): any[] {
+/**
+ * 只支持一种格式（插件直接输出的扁平 JSON）：
+ * {
+ *   email, password, phone, token, clientId,
+ *   membershipVersion, totalCredits, freeCredits,
+ *   inviteCode,       ← 自己的邀请码
+ *   referrerCode      ← 邀请人的邀请码（可选）
+ * }
+ * 支持单个对象或数组
+ */
+function parseAndTransform(raw: string): { items: any[]; error: string } {
+  let parsed: any;
   try {
-    const parsed = JSON.parse(raw);
-    // 支持数组格式
-    if (Array.isArray(parsed)) return parsed;
-    // 支持单个对象格式
-    if (typeof parsed === "object") return [parsed];
-    return [];
+    parsed = JSON.parse(raw);
   } catch {
-    return [];
+    return { items: [], error: "JSON 格式错误，请检查括号和引号是否完整" };
   }
-}
 
-function transformPluginData(item: any, invitedByCode?: string) {
-  const userInfo = item.user_info || {};
-  const creditsInfo = item.credits_info || {};
-  const invitationInfo = item.invitation_info || {};
-  const inviteCodes = invitationInfo.invitationCodes || [];
-  const primaryCode = inviteCodes[0];
+  const arr: any[] = Array.isArray(parsed) ? parsed : [parsed];
+  if (arr.length === 0) return { items: [], error: "未解析到任何账号数据" };
 
-  return {
-    email: item.email || userInfo.email,
+  const items = arr.map((item: any) => ({
+    email: item.email,
     password: item.password,
-    phone: item.phone,
-    token: item.token,
-    clientId: item.clientId,
-    userId: userInfo.userId,
-    displayname: userInfo.displayname || userInfo.nickname,
-    membershipVersion: userInfo.membershipVersion || creditsInfo.membershipVersion || "free",
-    totalCredits: creditsInfo.totalCredits || 0,
-    freeCredits: creditsInfo.freeCredits || 0,
-    refreshCredits: creditsInfo.refreshCredits || 0,
-    inviteCode: primaryCode?.inviteCode,
-    inviteCodeId: primaryCode?.id,
-    invitedByCode: invitedByCode || item.invitedByCode,
-    registeredAt: userInfo.registeredAt,
-  };
+    phone: item.phone || null,
+    token: item.token || null,
+    clientId: item.clientId || null,
+    membershipVersion: item.membershipVersion || "free",
+    totalCredits: item.totalCredits ?? 0,
+    freeCredits: item.freeCredits ?? 0,
+    refreshCredits: item.refreshCredits ?? 0,
+    inviteCode: item.inviteCode || null,
+    invitedByCode: item.referrerCode || item.invitedByCode || null,
+    referrerCode: item.referrerCode || item.invitedByCode || null,
+  }));
+
+  const invalid = items.filter((i) => !i.email || !i.password);
+  if (invalid.length > 0) {
+    return { items: [], error: `有 ${invalid.length} 条数据缺少 email 或 password 字段` };
+  }
+
+  return { items, error: "" };
 }
 
 export default function ImportAccounts() {
   const [, setLocation] = useLocation();
   const [jsonText, setJsonText] = useState("");
-  const [invitedByCode, setInvitedByCode] = useState("");
   const [preview, setPreview] = useState<any[]>([]);
   const [parseError, setParseError] = useState("");
   const [result, setResult] = useState<{ successCount: number; failCount: number; errors: string[] } | null>(null);
@@ -62,29 +64,19 @@ export default function ImportAccounts() {
   const bulkImport = trpc.accounts.bulkImport.useMutation({
     onSuccess: (data) => {
       setResult(data);
-      if (data.successCount > 0) {
-        toast.success(`成功导入 ${data.successCount} 个账号`);
-      }
-      if (data.failCount > 0) {
-        toast.error(`${data.failCount} 个账号导入失败`);
-      }
+      if (data.successCount > 0) toast.success(`成功导入 ${data.successCount} 个账号`);
+      if (data.failCount > 0) toast.error(`${data.failCount} 个账号导入失败`);
     },
-    onError: (err) => {
-      toast.error(`导入失败：${err.message}`);
-    },
+    onError: (err) => toast.error(`导入失败：${err.message}`),
   });
 
   const handleParse = () => {
     setParseError("");
     setResult(null);
-    const items = parsePluginJson(jsonText);
-    if (items.length === 0) {
-      setParseError("无法解析 JSON，请确认格式正确");
-      setPreview([]);
-      return;
-    }
-    const transformed = items.map((item) => transformPluginData(item, invitedByCode || undefined));
-    setPreview(transformed);
+    if (!jsonText.trim()) return;
+    const { items, error } = parseAndTransform(jsonText);
+    if (error) { setParseError(error); setPreview([]); return; }
+    setPreview(items);
   };
 
   const handleImport = () => {
@@ -97,7 +89,7 @@ export default function ImportAccounts() {
       <div>
         <h1 className="text-xl font-semibold text-foreground">导入账号</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          粘贴插件输出的 JSON 数据，支持单个或数组格式
+          粘贴插件注册成功后输出的 JSON 数据，支持单个或数组格式
         </p>
       </div>
 
@@ -113,25 +105,12 @@ export default function ImportAccounts() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label className="text-xs text-muted-foreground">邀请者邀请码（可选）</Label>
-                <Input
-                  placeholder="输入此批账号的邀请者邀请码..."
-                  value={invitedByCode}
-                  onChange={(e) => setInvitedByCode(e.target.value)}
-                  className="bg-muted/50 border-border/50 text-foreground placeholder:text-muted-foreground font-mono text-sm"
-                />
-                <p className="text-xs text-muted-foreground">
-                  如果这批账号是用同一个邀请码注册的，在此填写邀请者的邀请码
-                </p>
-              </div>
-
-              <div className="space-y-2">
                 <Label className="text-xs text-muted-foreground">JSON 数据</Label>
                 <Textarea
-                  placeholder={`粘贴插件输出的 JSON，例如：\n{\n  "email": "xxx@outlook.com",\n  "password": "...",\n  "token": "...",\n  "user_info": {...},\n  "credits_info": {...},\n  "invitation_info": {...}\n}`}
+                  placeholder={`粘贴插件输出的 JSON，例如：\n{\n  "email": "JuanParsons4398@outlook.com",\n  "password": "zus5BDWfs!#b8%*",\n  "phone": "+15056282762",\n  "token": "eyJ...",\n  "clientId": "PHIRey9hFG5EkZagZFh912",\n  "membershipVersion": "free",\n  "totalCredits": 2800,\n  "freeCredits": 2500,\n  "inviteCode": "RFZ73T7OTTBICT4",\n  "referrerCode": "XXXXXXXX"\n}`}
                   value={jsonText}
                   onChange={(e) => setJsonText(e.target.value)}
-                  className="font-mono text-xs bg-muted/50 border-border/50 text-foreground placeholder:text-muted-foreground min-h-[280px] resize-none"
+                  className="font-mono text-xs bg-muted/50 border-border/50 text-foreground placeholder:text-muted-foreground min-h-[320px] resize-none"
                 />
               </div>
 
@@ -159,7 +138,7 @@ export default function ImportAccounts() {
                   {bulkImport.isPending ? (
                     <><Loader2 className="w-4 h-4 mr-2 animate-spin" />导入中...</>
                   ) : (
-                    <><Upload className="w-4 h-4 mr-2" />确认导入 {preview.length > 0 ? `(${preview.length})` : ""}</>
+                    <><Upload className="w-4 h-4 mr-2" />确认导入{preview.length > 0 ? ` (${preview.length})` : ""}</>
                   )}
                 </Button>
               </div>
@@ -171,11 +150,9 @@ export default function ImportAccounts() {
             <Card className={`border-border/50 ${result.failCount === 0 ? "bg-green-500/5" : "bg-yellow-500/5"}`}>
               <CardContent className="p-4 space-y-2">
                 <div className="flex items-center gap-2">
-                  {result.failCount === 0 ? (
-                    <CheckCircle2 className="w-4 h-4 text-green-400" />
-                  ) : (
-                    <AlertCircle className="w-4 h-4 text-yellow-400" />
-                  )}
+                  {result.failCount === 0
+                    ? <CheckCircle2 className="w-4 h-4 text-green-400" />
+                    : <AlertCircle className="w-4 h-4 text-yellow-400" />}
                   <span className="text-sm font-medium text-foreground">导入完成</span>
                 </div>
                 <div className="flex gap-4 text-sm">
@@ -190,12 +167,7 @@ export default function ImportAccounts() {
                   </div>
                 )}
                 {result.successCount > 0 && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setLocation("/accounts")}
-                    className="mt-2"
-                  >
+                  <Button size="sm" variant="outline" onClick={() => setLocation("/accounts")} className="mt-2">
                     查看账号列表
                   </Button>
                 )}
@@ -204,17 +176,14 @@ export default function ImportAccounts() {
           )}
         </div>
 
-        {/* 预览区域 */}
+        {/* 预览 + 格式说明 */}
         <div className="space-y-4">
           <Card className="bg-card border-border/50">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium text-foreground flex items-center gap-2">
-                <Plus className="w-4 h-4 text-primary" />
                 解析预览
                 {preview.length > 0 && (
-                  <Badge variant="secondary" className="ml-auto text-xs">
-                    {preview.length} 个账号
-                  </Badge>
+                  <Badge variant="secondary" className="ml-auto text-xs">{preview.length} 个账号</Badge>
                 )}
               </CardTitle>
             </CardHeader>
@@ -235,13 +204,16 @@ export default function ImportAccounts() {
                         </Badge>
                       </div>
                       <div className="grid grid-cols-2 gap-1 text-xs text-muted-foreground">
-                        <span>邀请码：<code className="text-primary font-mono">{item.inviteCode || "—"}</code></span>
-                        <span>积分：{item.totalCredits?.toLocaleString()}</span>
-                        <span>会员：{item.membershipVersion}</span>
+                        <span>密码：<code className="text-foreground font-mono">{item.password}</code></span>
                         {item.phone && <span>手机：{item.phone}</span>}
-                        {item.clientId && <span className="col-span-2">ClientID：<code className="text-muted-foreground font-mono text-xs">{item.clientId}</code></span>}
-                        {item.invitedByCode && (
-                          <span>邀请者：<code className="text-yellow-400 font-mono">{item.invitedByCode}</code></span>
+                        <span>邀请码：<code className="text-primary font-mono">{item.inviteCode || "—"}</code></span>
+                        {item.referrerCode && (
+                          <span>邀请人：<code className="text-yellow-400 font-mono">{item.referrerCode}</code></span>
+                        )}
+                        <span>会员：{item.membershipVersion}</span>
+                        <span>积分：{item.totalCredits?.toLocaleString()}</span>
+                        {item.clientId && (
+                          <span className="col-span-2 truncate">ClientID：<code className="text-muted-foreground font-mono">{item.clientId}</code></span>
                         )}
                       </div>
                     </div>
@@ -254,41 +226,24 @@ export default function ImportAccounts() {
           {/* 格式说明 */}
           <Card className="bg-card border-border/50">
             <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-medium text-muted-foreground">支持的 JSON 格式</CardTitle>
+              <CardTitle className="text-xs font-medium text-muted-foreground">JSON 字段说明</CardTitle>
             </CardHeader>
             <CardContent>
-              <pre className="text-xs text-muted-foreground font-mono bg-muted/30 p-3 rounded-lg overflow-x-auto">
-{`// 插件完整输出格式（推荐）
-{
-  "email": "xxx@outlook.com",
-  "password": "aB3#kLm9",
-  "phone": "+17699335914",
-  "token": "eyJ...",
-  "clientId": "c4QzUWRnJKGQ6...",
-  "user_info": {
-    "userId": "...",
-    "displayname": "...",
-    "membershipVersion": "free",
-    "registeredAt": "2026-03-26T..."
-  },
-  "credits_info": {
-    "totalCredits": 2800,
-    "freeCredits": 2500,
-    "refreshCredits": 300
-  },
-  "invitation_info": {
-    "invitationCodes": [{
-      "id": "...",
-      "inviteCode": "DNTT7V7WJAS6ABI"
-    }]
-  }
+              <pre className="text-xs text-muted-foreground font-mono bg-muted/30 p-3 rounded-lg overflow-x-auto leading-relaxed">
+{`{
+  "email":             必填，账号邮箱
+  "password":          必填，登录密码
+  "phone":             手机号（含国家码）
+  "token":             登录 JWT token
+  "clientId":          客户端 ID
+  "membershipVersion": 会员版本（free/pro...）
+  "totalCredits":      总积分
+  "freeCredits":       免费积分
+  "inviteCode":        自己的邀请码
+  "referrerCode":      邀请人的邀请码（可选）
 }
 
-// 也支持数组格式 [{ ... }, { ... }]
-// 也支持简化格式（直接字段）：
-// { email, password, phone, token, clientId,
-//   membershipVersion, totalCredits, freeCredits,
-//   refreshCredits, inviteCode, invitedByCode }`}
+// 支持单个对象或数组 [{...}, {...}]`}
               </pre>
             </CardContent>
           </Card>

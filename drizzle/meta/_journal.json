@@ -36,6 +36,13 @@
       "when": 1774765973048,
       "tag": "0004_lumpy_starbolt",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1774768595727,
+      "tag": "0005_good_tarantula",
+      "breakpoints": true
     }
   ]
 }

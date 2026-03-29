@@ -7,9 +7,9 @@ import {
   Bot,
   CheckCircle2,
   Clock,
-  Coins,
   GitBranch,
   Users,
+  Phone,
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -52,10 +52,10 @@ function StatCard({
 
 function InviteStatusBar({ unused, inProgress, used }: { unused: number; inProgress: number; used: number }) {
   const total = unused + inProgress + used;
-  if (total === 0) return null;
+  if (total === 0) return <p className="text-sm text-muted-foreground">暂无邀请码数据</p>;
   return (
-    <div className="space-y-2">
-      <div className="flex h-2 rounded-full overflow-hidden bg-muted">
+    <div className="space-y-3">
+      <div className="flex h-3 rounded-full overflow-hidden bg-muted">
         {used > 0 && (
           <div className="bg-green-500 transition-all" style={{ width: `${(used / total) * 100}%` }} />
         )}
@@ -66,18 +66,18 @@ function InviteStatusBar({ unused, inProgress, used }: { unused: number; inProgr
           <div className="bg-blue-500 transition-all" style={{ width: `${(unused / total) * 100}%` }} />
         )}
       </div>
-      <div className="flex gap-4 text-xs text-muted-foreground">
+      <div className="flex gap-6 text-xs text-muted-foreground">
         <span className="flex items-center gap-1.5">
           <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
-          已使用 {used}
+          已使用 <strong className="text-foreground">{used}</strong>
         </span>
         <span className="flex items-center gap-1.5">
           <span className="w-2 h-2 rounded-full bg-yellow-500 inline-block" />
-          邀请中 {inProgress}
+          邀请中 <strong className="text-foreground">{inProgress}</strong>
         </span>
         <span className="flex items-center gap-1.5">
           <span className="w-2 h-2 rounded-full bg-blue-500 inline-block" />
-          未使用 {unused}
+          未使用 <strong className="text-foreground">{unused}</strong>
         </span>
       </div>
     </div>
@@ -99,7 +99,7 @@ export default function Dashboard() {
         <p className="text-sm text-muted-foreground mt-1">账号管理与自动化任务总览</p>
       </div>
 
-      {/* 统计卡片 */}
+      {/* 统计卡片：只展示账号数量相关 */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           title="总账号数"
@@ -107,14 +107,6 @@ export default function Dashboard() {
           icon={Users}
           color="bg-blue-500/15 text-blue-400"
           sub={`共 ${totalCodes} 个邀请码`}
-          loading={isLoading}
-        />
-        <StatCard
-          title="总积分"
-          value={stats?.totalCredits?.toLocaleString() ?? 0}
-          icon={Coins}
-          color="bg-yellow-500/15 text-yellow-400"
-          sub="所有账号积分合计"
           loading={isLoading}
         />
         <StatCard
@@ -126,11 +118,19 @@ export default function Dashboard() {
           loading={isLoading}
         />
         <StatCard
+          title="邀请中"
+          value={stats?.inProgressCodes ?? 0}
+          icon={Activity}
+          color="bg-yellow-500/15 text-yellow-400"
+          sub="正在进行中的邀请"
+          loading={isLoading}
+        />
+        <StatCard
           title="已完成邀请"
           value={stats?.usedCodes ?? 0}
           icon={CheckCircle2}
           color="bg-green-500/15 text-green-400"
-          sub={`邀请中 ${stats?.inProgressCodes ?? 0} 个`}
+          sub={`共 ${totalCodes} 个邀请码`}
           loading={isLoading}
         />
       </div>
@@ -189,13 +189,15 @@ export default function Dashboard() {
               {stats?.recentAccounts?.map((account) => (
                 <div
                   key={account.id}
-                  className="flex items-center justify-between p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors cursor-pointer"
-                  onClick={() => setLocation(`/accounts/${account.id}`)}
+                  className="flex items-center justify-between p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors"
                 >
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-foreground truncate">{account.email}</p>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      邀请码：{account.inviteCode || "—"} · {account.totalCredits?.toLocaleString()} 积分
+                      邀请码：<code className="font-mono text-primary">{account.inviteCode || "—"}</code>
+                      {(account as any).referrerCode && (
+                        <span> · 邀请人：<code className="font-mono text-yellow-400">{(account as any).referrerCode}</code></span>
+                      )}
                     </p>
                   </div>
                   <Badge
@@ -208,10 +210,8 @@ export default function Dashboard() {
                         : "border-green-500/30 text-green-400 bg-green-500/10"
                     }`}
                   >
-                    {account.inviteStatus === "unused"
-                      ? "未使用"
-                      : account.inviteStatus === "in_progress"
-                      ? "邀请中"
+                    {account.inviteStatus === "unused" ? "未使用"
+                      : account.inviteStatus === "in_progress" ? "邀请中"
                       : "已使用"}
                   </Badge>
                 </div>
@@ -225,8 +225,8 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
           { label: "导入账号", path: "/import", icon: Users, desc: "批量导入 JSON 数据" },
+          { label: "手机号管理", path: "/phones", icon: Phone, desc: "管理接码手机号" },
           { label: "启动自动化", path: "/automation", icon: Bot, desc: "创建并启动任务" },
-          { label: "查看邀请链", path: "/invitation-tree", icon: GitBranch, desc: "可视化邀请关系" },
           { label: "查看日志", path: "/logs", icon: Activity, desc: "任务执行记录" },
         ].map((item) => (
           <button
