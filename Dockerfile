@@ -8,8 +8,6 @@ WORKDIR /app
 
 # 先复制依赖文件，利用 Docker 层缓存
 COPY package.json pnpm-lock.yaml* ./
-
-# 如果有 patches 目录则复制（可选）
 COPY patches/ ./patches/
 
 # 安装所有依赖（含 devDependencies，构建时需要）
@@ -30,10 +28,13 @@ RUN corepack enable && corepack prepare pnpm@10.4.1 --activate
 
 WORKDIR /app
 
-# 只安装生产依赖
+# 复制依赖文件和 patches
 COPY package.json pnpm-lock.yaml* ./
 COPY patches/ ./patches/
-RUN pnpm install --frozen-lockfile --prod
+
+# 安装全量依赖（含 devDependencies）
+# 原因：esbuild 以 --packages=external 编译后端，vite 等包在运行时仍需存在
+RUN pnpm install --frozen-lockfile
 
 # 复制构建产物（dist/ 包含 index.js 和 public/ 两部分）
 COPY --from=builder /app/dist ./dist

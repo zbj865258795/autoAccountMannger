@@ -5,7 +5,7 @@ import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
-import { serveStatic, setupVite } from "./vite";
+import { serveStatic } from "./vite";
 import { registerCallbackRoutes } from "../callback";
 
 function isPortAvailable(port: number): Promise<boolean> {
@@ -47,8 +47,10 @@ async function startServer() {
     })
   );
 
-  // 开发模式使用 Vite，生产模式使用静态文件
+  // 开发模式使用 Vite（动态 import，避免生产构建时打包 vite）
+  // 生产模式使用静态文件
   if (process.env.NODE_ENV === "development") {
+    const { setupVite } = await import("./vite");
     await setupVite(app, server);
   } else {
     serveStatic(app);
