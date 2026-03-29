@@ -99,10 +99,10 @@ export default function ApiDocs() {
         <div className="space-y-2">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">1. 获取手机号（注册开始前调用）</p>
           <p className="text-xs text-muted-foreground">
-            调用后返回一条「未使用」的手机号，并自动将其标记为「使用中」，原样返回你录入的格式。
+            调用后返回一条「未使用」的手机号，并自动将其标记为「使用中」。返回 id（用于后续标记已使用）、手机号和接码 URL。
           </p>
           <CodeBlock code={`// POST /api/callback/get-phone
-// 返回格式：{ success: true, data: "+12232263007|https://sms-555.com/xxx" }
+// 返回格式：{ success: true, id: 1, phone: "+12232263007", smsUrl: "https://sms-555.com/xxx" }
 
 async function getPhone() {
   const res = await fetch('${BASE_URL}/api/callback/get-phone', {
@@ -112,11 +112,10 @@ async function getPhone() {
   const result = await res.json();
   
   if (result.success) {
-    // 原样返回你录入的格式：手机号|接码URL
-    const [phone, smsUrl] = result.data.split('|');
-    console.log('手机号:', phone);
-    console.log('接码URL:', smsUrl);
-    return { phone, smsUrl };
+    console.log('手机号 ID:', result.id);   // 保存此 id，后续标记已使用时需要
+    console.log('手机号:', result.phone);
+    console.log('接码URL:', result.smsUrl);
+    return { id: result.id, phone: result.phone, smsUrl: result.smsUrl };
   }
   
   console.log('暂无可用手机号');
@@ -127,19 +126,16 @@ async function getPhone() {
         <div className="space-y-2">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">2. 标记手机号已使用（获取到验证码后调用）</p>
           <p className="text-xs text-muted-foreground">
-            插件通过接码 URL 获取到验证码后，调用此接口将手机号标记为「已使用」。
+            插件通过接码 URL 获取到验证码后，调用此接口将手机号标记为「已使用」。只需传入 get-phone 返回的 id 即可。
           </p>
           <CodeBlock code={`// POST /api/callback/mark-phone-used
-// Body: { phone: "+12232263007", usedByEmail: "xxx@outlook.com" }
+// Body: { id: 1 }  ← 使用 get-phone 返回的 id
 
-async function markPhoneUsed(phone, email) {
+async function markPhoneUsed(phoneId) {
   const res = await fetch('${BASE_URL}/api/callback/mark-phone-used', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ 
-      phone: phone,
-      usedByEmail: email  // 可选，记录是哪个账号使用的
-    })
+    body: JSON.stringify({ id: phoneId })
   });
   const result = await res.json();
   console.log('手机号已标记为已使用:', result.success);
@@ -204,8 +200,7 @@ async function getPhone() {
   });
   const data = await res.json();
   if (!data.success) return null;
-  const [phone, smsUrl] = data.data.split('|');
-  return { phone, smsUrl };
+  return { id: data.id, phone: data.phone, smsUrl: data.smsUrl };
 }
 
 // 2. 获取邀请码（优先从 URL 参数读取，备选从系统获取）
@@ -219,11 +214,11 @@ async function getInviteCode() {
 }
 
 // 3. 标记手机号已使用（获取到验证码后调用）
-async function markPhoneUsed(phone, email) {
+async function markPhoneUsed(phoneId) {
   await fetch(\`\${SYSTEM_API}/api/callback/mark-phone-used\`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ phone, usedByEmail: email })
+    body: JSON.stringify({ id: phoneId })  // 传入 get-phone 返回的 id
   });
 }
 
@@ -267,7 +262,7 @@ async function autoRegister() {
   const accountData = await yourExistingRegisterFunction(inviteCode, phoneInfo);
   
   // Step 4: 获取到验证码后，标记手机号已使用
-  await markPhoneUsed(phoneInfo.phone, accountData?.email);
+  await markPhoneUsed(phoneInfo.id);  // 传入 get-phone 返回的 id
   
   // Step 5: 注册成功后上报
   if (accountData) {
@@ -298,7 +293,7 @@ async function notifyInviteCodeInUse(inviteCode) {
         <div className="space-y-3">
           {[
             { method: "POST", path: "/api/callback/get-phone", desc: "获取一条未使用手机号（自动标记为「使用中」），返回原始格式 手机号|接码URL" },
-            { method: "POST", path: "/api/callback/mark-phone-used", desc: "标记手机号为「已使用」，Body: { phone, usedByEmail? }" },
+            { method: "POST", path: "/api/callback/mark-phone-used", desc: "标记手机号为「已使用」，Body: { id }（使用 get-phone 返回的 id）" },
             { method: "GET",  path: "/api/callback/next-invite-code", desc: "获取下一个可用邀请码（不改变状态，仅查询）" },
             { method: "POST", path: "/api/callback/invite-used", desc: "通知邀请码正在使用中（状态→邀请中），Body: { inviteCode }" },
             { method: "POST", path: "/api/callback/register", desc: "上报账号数据，Body: { email, password, phone, token, clientId, inviteCode, referrerCode, ... }" },

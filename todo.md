@@ -134,3 +134,8 @@
 - [x] get-phone 接口返回値加上 id 字段
 - [x] mark-phone-used 改为只传 id（不需要 phone 和 usedByEmail）
 - [x] register 接口修复 invitedByCode/referrerCode 字段重复写入导致 SQL 报错
+
+## API 文档更新（2026-03-29 第十三轮）
+- [x] 更新 get-phone 返回値说明（加入 id 字段）
+- [x] 更新 mark-phone-used 示例代码（只传 id，不传 phone/usedByEmail）
+- [x] 更新 API 端点列表中 mark-phone-used 的说明
