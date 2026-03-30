@@ -96,8 +96,9 @@ export default function Accounts() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   // 批量删除确认弹窗
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
-  // 导出确认弹窗
-  const [exportConfirmOpen, setExportConfirmOpen] = useState(false);
+  // 独立导出弹窗
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportCount, setExportCount] = useState(10);
 
   const utils = trpc.useUtils();
 
@@ -137,17 +138,23 @@ export default function Accounts() {
     },
   });
 
+  // 实时查询可导出总数（弹窗打开时触发）
+  const { data: exportableData, isLoading: exportableLoading } = trpc.export.exportableCount.useQuery(
+    undefined,
+    { enabled: exportDialogOpen, refetchOnWindowFocus: false }
+  );
+  const exportableTotal = exportableData?.count ?? 0;
+
   const exportMutation = trpc.export.doExport.useMutation({
     onSuccess: (result) => {
       toast.success(`成功导出 ${result.exported} 个账号，批次号：${result.batchId}`);
-      setSelectedIds(new Set());
-      setExportConfirmOpen(false);
+      setExportDialogOpen(false);
+      setExportCount(10);
       utils.accounts.list.invalidate();
       utils.dashboard.stats.invalidate();
     },
     onError: (err) => {
       toast.error(`导出失败：${err.message}`);
-      setExportConfirmOpen(false);
     },
   });
 
@@ -155,31 +162,11 @@ export default function Accounts() {
   const totalPages = Math.ceil((data?.total ?? 0) / pageSize);
   const total = data?.total ?? 0;
 
-  // 计算选中账号中满足导出条件的数量（用于弹窗提示）
-  const exportableSelectedCount = useMemo(() => {
-    return items.filter(
-      (a) =>
-        selectedIds.has(a.id) &&
-        a.inviteStatus === "used" &&
-        !!(a as any).referrerCode
-    ).length;
-  }, [items, selectedIds]);
-
-  // 执行导出（只导出当前选中且满足条件的账号）
-  const handleBulkExport = () => {
-    const ids = items
-      .filter(
-        (a) =>
-          selectedIds.has(a.id) &&
-          a.inviteStatus === "used" &&
-          !!(a as any).referrerCode
-      )
-      .map((a) => a.id);
-    if (ids.length === 0) {
-      toast.warning("选中的账号中没有满足导出条件的（需被邀请注册且自己邀请码已被使用）");
-      return;
-    }
-    exportMutation.mutate({ accountIds: ids });
+  // 执行导出
+  const handleDoExport = () => {
+    const n = Math.min(exportCount, exportableTotal);
+    if (n <= 0) return;
+    exportMutation.mutate({ count: n });
   };
 
   // 当前页所有 id
@@ -297,10 +284,21 @@ export default function Accounts() {
           <h1 className="text-xl font-semibold text-foreground">账号管理</h1>
           <p className="text-sm text-muted-foreground mt-1">共 {total} 个账号</p>
         </div>
-        <Button onClick={() => setLocation("/import")} size="sm">
-          <Users className="w-4 h-4 mr-2" />
-          导入账号
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10"
+            onClick={() => { setExportCount(10); setExportDialogOpen(true); }}
+          >
+            <Download className="w-4 h-4 mr-2" />
+            导出账号
+          </Button>
+          <Button onClick={() => setLocation("/import")} size="sm">
+            <Users className="w-4 h-4 mr-2" />
+            导入账号
+          </Button>
+        </div>
       </div>
 
       {/* 搜索和筛选 */}
@@ -364,48 +362,6 @@ export default function Accounts() {
               <ClipboardCopy className="w-3.5 h-3.5" />
               复制账号密码
             </Button>
-            {/* 导出确认弹窗 */}
-            <AlertDialog open={exportConfirmOpen} onOpenChange={setExportConfirmOpen}>
-              <AlertDialogTrigger asChild>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-xs gap-1.5 border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  导出账号
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>确认导出账号</AlertDialogTitle>
-                  <AlertDialogDescription asChild>
-                    <div className="space-y-2 text-sm text-muted-foreground">
-                      <p>
-                        当前共选中{" "}<strong className="text-foreground">{selectedCount}</strong>{" "}个账号，其中满足导出条件的有{" "}
-                        <strong className="text-emerald-400">{exportableSelectedCount}</strong>{" "}个。
-                      </p>
-                      <p className="text-xs">
-                        导出条件：被邀请注册（邀请人邀请码不为空）且自己的邀请码已被使用。
-                      </p>
-                      <p className="text-xs text-destructive">
-                        ⚠️ 导出后这些账号将从账号列表中移除，并记录到「导出记录」模块。此操作不可撤销。
-                      </p>
-                    </div>
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel disabled={exportMutation.isPending}>取消</AlertDialogCancel>
-                  <AlertDialogAction
-                    className="bg-emerald-600 text-white hover:bg-emerald-700"
-                    onClick={handleBulkExport}
-                    disabled={exportableSelectedCount === 0 || exportMutation.isPending}
-                  >
-                    {exportMutation.isPending ? "导出中…" : `确认导出 ${exportableSelectedCount} 个`}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
 
             <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
               <AlertDialogTrigger asChild>
@@ -739,6 +695,68 @@ export default function Accounts() {
           )}
         </CardContent>
       </Card>
+
+      {/* 独立导出弹窗 */}
+      {exportDialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60" onClick={() => !exportMutation.isPending && setExportDialogOpen(false)} />
+          <div className="relative z-10 w-full max-w-md rounded-xl bg-card border border-border/60 shadow-2xl p-6 space-y-5">
+            <div>
+              <h2 className="text-base font-semibold text-foreground">导出账号</h2>
+              <p className="text-xs text-muted-foreground mt-1">按数量导出满足条件的账号（已被邀请注册 + 自己邀请码已被使用），按注册时间升序先进先出。</p>
+            </div>
+
+            <div className="rounded-lg bg-muted/40 border border-border/40 px-4 py-3 flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">当前可导出账号</span>
+              {exportableLoading ? (
+                <span className="text-sm text-muted-foreground">查询中…</span>
+              ) : (
+                <span className="text-lg font-bold text-emerald-400">{exportableTotal} 个</span>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">导出数量</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  max={exportableTotal || 1}
+                  value={exportCount}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value, 10);
+                    if (!isNaN(v)) setExportCount(Math.max(1, Math.min(v, exportableTotal || 1)));
+                  }}
+                  disabled={exportableLoading || exportableTotal === 0}
+                  className="w-28 h-9 rounded-md border border-border/60 bg-muted/50 px-3 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+                />
+                <span className="text-xs text-muted-foreground">最多 {exportableTotal} 个</span>
+              </div>
+            </div>
+
+            <p className="text-xs text-destructive">
+              ⚠️ 导出后这些账号将从账号列表移除，记录到「导出记录」模块。此操作不可撤销。
+            </p>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                onClick={() => setExportDialogOpen(false)}
+                disabled={exportMutation.isPending}
+                className="px-4 py-2 text-sm rounded-md border border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/50 disabled:opacity-50 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleDoExport}
+                disabled={exportableLoading || exportableTotal === 0 || exportMutation.isPending}
+                className="px-4 py-2 text-sm rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+              >
+                {exportMutation.isPending ? "导出中…" : `确认导出 ${Math.min(exportCount, exportableTotal)} 个`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -814,30 +814,49 @@ export async function getExportableAccounts(filter: {
 }
 
 /**
- * 执行导出：
- *   1. 将指定账号的完整信息写入 export_logs 表
- *   2. 从 accounts 表物理删除这些账号
+ * 查询满足导出条件的账号总数（用于弹窗实时展示）
+ */
+export async function getExportableCount(): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const result = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(accounts)
+    .where(
+      and(
+        eq(accounts.inviteStatus, "used"),
+        sql`${accounts.referrerCode} IS NOT NULL AND ${accounts.referrerCode} != ''`
+      )
+    );
+  return Number(result[0]?.count ?? 0);
+}
+
+/**
+ * 执行导出：按数量取前 N 条满足条件的账号（按 registeredAt 升序，先注册先导出）
+ *   1. 将账号完整信息写入 export_logs 表
+ *   2. 从 accounts 表物理删除这些账号（事务保证原子性）
  *   返回批次号和实际导出数量
  */
 export async function exportAccounts(
-  accountIds: number[]
+  count: number
 ): Promise<{ batchId: string; exported: number }> {
-  if (accountIds.length === 0) return { batchId: "", exported: 0 };
+  if (count <= 0) return { batchId: "", exported: 0 };
 
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  // 1. 查询这些账号的完整信息（只导出满足条件的账号，防止误操作）
+  // 1. 查询满足条件的前 N 条账号（按 registeredAt 升序，先注册先导出）
   const rows = await db
     .select()
     .from(accounts)
     .where(
       and(
-        inArray(accounts.id, accountIds),
         eq(accounts.inviteStatus, "used"),
         sql`${accounts.referrerCode} IS NOT NULL AND ${accounts.referrerCode} != ''`
       )
-    );
+    )
+    .orderBy(asc(accounts.registeredAt))
+    .limit(count);
 
   if (rows.length === 0) return { batchId: "", exported: 0 };
 

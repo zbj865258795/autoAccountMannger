@@ -31,6 +31,7 @@ import {
   getExportableAccounts,
   getExportBatches,
   getExportBatchDetail,
+  getExportableCount,
 } from "./db";
 import { checkAdsPowerConnection, getActiveBrowsers } from "./adspower";
 import { ADSPOWER_CONFIG } from "./config";
@@ -365,20 +366,35 @@ const exportRouter = router({
       return getExportableAccounts(input);
     }),
 
-  // 执行导出（二次确认由前端弹窗保证，后端只负责执行）
+  // 实时查询可导出账号总数（弹窗打开时调用）
+  exportableCount: publicProcedure
+    .query(async () => {
+      return { count: await getExportableCount() };
+    }),
+
+  // 执行导出：按数量取前 N 条满足条件的账号（先注册先导出）
   doExport: publicProcedure
     .input(z.object({
-      accountIds: z.array(z.number()).min(1, "请至少选择一个账号"),
+      count: z.number().int().min(1, "至少导出 1 个").max(10000, "单次最多导出 10000 个"),
     }))
     .mutation(async ({ input }) => {
-      const result = await exportAccounts(input.accountIds);
+      // 后端二次校验：不超过实际可导出数量
+      const available = await getExportableCount();
+      if (available === 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "当前没有满足导出条件的账号（需被邀请注册且自己的邀请码已被使用）",
+        });
+      }
+      const actualCount = Math.min(input.count, available);
+      const result = await exportAccounts(actualCount);
       if (result.exported === 0) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "没有满足导出条件的账号（需被邀请注册且自己的邀请码已被使用）",
+          message: "导出失败，请重试",
         });
       }
-      return result;
+      return { ...result, available };
     }),
 
   // 查询导出批次列表

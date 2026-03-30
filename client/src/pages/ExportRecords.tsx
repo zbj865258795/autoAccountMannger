@@ -23,6 +23,7 @@ import {
 import {
   ChevronLeft,
   ChevronRight,
+  ClipboardCopy,
   Download,
   Eye,
   Search,
@@ -90,7 +91,7 @@ function BatchDetailDialog({
 
   const handleDownload = () => {
     if (!data?.items?.length) return;
-    const headers = ["邮箱", "密码", "Token", "邀请码", "邀请人邀请码", "会员版本", "积分", "手机号", "注册时间", "导出时间"];
+    const headers = ["邮筱", "密码", "Token", "邀请码", "邀请人邀请码", "会员版本", "积分", "手机号", "注册时间", "导出时间"];
     const rows = data.items.map((r) => [
       r.email,
       r.password,
@@ -105,6 +106,16 @@ function BatchDetailDialog({
     ]);
     downloadCsv(`${batchId}.csv`, rows, headers);
     toast.success("CSV 已下载");
+  };
+
+  const handleCopyCredentials = () => {
+    if (!data?.items?.length) return;
+    const text = data.items.map((r) => `${r.email}----${r.password}`).join("\n");
+    navigator.clipboard.writeText(text).then(() => {
+      toast.success(`已复制 ${data.items.length} 条账号密码`);
+    }).catch(() => {
+      toast.error("复制失败，请手动复制");
+    });
   };
 
   return (
@@ -130,6 +141,11 @@ function BatchDetailDialog({
           <Button size="sm" variant="outline" onClick={handleDownload} disabled={!data?.items?.length}>
             <Download className="h-3.5 w-3.5 mr-1" />
             下载 CSV
+          </Button>
+          <Button size="sm" variant="outline" onClick={handleCopyCredentials} disabled={!data?.items?.length}
+            className="border-primary/30 text-primary hover:bg-primary/10">
+            <ClipboardCopy className="h-3.5 w-3.5 mr-1" />
+            复制账号密码
           </Button>
         </div>
 
