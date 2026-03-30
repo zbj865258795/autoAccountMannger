@@ -1,6 +1,6 @@
 /**
  * AdsPower API 集成服务
- * 文档：https://documenter.getpostman.com/view/45822952/2sB2x5JDXn
+ * 文档：https://localapi-doc-zh.adspower.net/
  *
  * 核心功能：
  * 1. 每次创建浏览器时生成完全不同的随机指纹（覆盖所有关键维度）
@@ -19,7 +19,6 @@
  * - MAC 地址（随机生成）
  * - Do Not Track
  * - GPU 渲染模式
- * - 平台（platform）
  */
 
 import axios from "axios";
@@ -95,12 +94,12 @@ const FIREFOX_VERSIONS = [
   "121", "122", "123", "124", "125",
 ];
 
-/** Windows 版本池 */
-const WINDOWS_VERSIONS = ["10.0", "11.0"];
+/** Windows 版本池（AdsPower random_ua 合法值） */
+const WINDOWS_UA_VERSIONS = ["Windows 10", "Windows 11"];
 
-/** Mac OS 版本池 */
-const MAC_VERSIONS = [
-  "10_15_7", "11_0", "12_0", "12_6", "13_0", "13_3", "13_5", "14_0",
+/** Mac OS X 版本池（AdsPower random_ua 合法值） */
+const MAC_UA_VERSIONS = [
+  "Mac OS X 10", "Mac OS X 11", "Mac OS X 12", "Mac OS X 13",
 ];
 
 /** 常见时区池（30个） */
@@ -118,15 +117,12 @@ const TIMEZONES = [
   "Pacific/Auckland",
 ];
 
-/** 语言（固定为台湾地区繁体中文） */
-const LANGUAGE_TW = "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7";
-
-/** 屏幕分辨率池 */
+/** 屏幕分辨率池（AdsPower 格式：宽_高） */
 const RESOLUTIONS = [
-  "1920x1080", "1366x768", "1440x900", "1536x864",
-  "1280x800", "1680x1050", "2560x1440", "1600x900",
-  "1280x1024", "1920x1200", "2560x1080", "3840x2160",
-  "1360x768", "1024x768", "1280x720", "1400x1050",
+  "1920_1080", "1366_768", "1440_900", "1536_864",
+  "1280_800", "1680_1050", "2560_1440", "1600_900",
+  "1280_1024", "1920_1200", "1360_768", "1024_768",
+  "1280_720", "1400_1050",
 ];
 
 /** 城市坐标池（含经纬度范围，用于微小随机偏移） */
@@ -196,28 +192,25 @@ const FONT_POOL = [
 
 export function generateRandomFingerprint() {
   // ── 1. 浏览器类型和版本 ──────────────────────
-  const browserType = randomPick(["chrome", "chrome"]) as "chrome" | "firefox"; // 以 chrome 为主（更常见）
+  // 以 chrome 为主（更常见）
+  const browserType = "chrome" as "chrome" | "firefox";
   const chromeVersion = randomPick(CHROME_VERSIONS);
   const firefoxVersion = randomPick(FIREFOX_VERSIONS);
   const browserVersion = browserType === "chrome" ? chromeVersion : firefoxVersion;
 
   // ── 2. 操作系统 ──────────────────────────────
-  const osType = randomPick(["windows", "windows", "mac", "linux"]); // Windows 权重更高
-  const windowsVersion = randomPick(WINDOWS_VERSIONS);
-  const macVersion = randomPick(MAC_VERSIONS);
+  // Windows 权重更高，Mac 次之，Linux 较少
+  const osType = randomPick(["windows", "windows", "windows", "mac", "linux"]);
 
-  // 根据 OS 确定 UA 系统版本数组（AdsPower 格式）
+  // 根据 OS 确定 random_ua.ua_system_version（AdsPower 合法值）
+  // 文档要求：Windows 10 / Windows 11 / Mac OS X 10~13 / Linux
   let uaSystemVersion: string[];
-  let platform: string;
   if (osType === "windows") {
-    uaSystemVersion = ["Windows"];
-    platform = "Win32";
+    uaSystemVersion = [randomPick(WINDOWS_UA_VERSIONS)];
   } else if (osType === "mac") {
-    uaSystemVersion = ["Mac"];
-    platform = "MacIntel";
+    uaSystemVersion = [randomPick(MAC_UA_VERSIONS)];
   } else {
     uaSystemVersion = ["Linux"];
-    platform = "Linux x86_64";
   }
 
   // ── 3. 城市/时区/地理坐标 ────────────────────
@@ -229,17 +222,18 @@ export function generateRandomFingerprint() {
   const finalLon = (cityInfo.lon + lonOffset).toFixed(6);
   const timezone = cityInfo.tz;
 
-   // ── 4. 语言（固定台湾地区）──────────────────────
-  const language = LANGUAGE_TW;
+  // ── 4. 语言（固定台湾地区繁体中文）──────────────────────
+  // 文档要求 language 为字符串数组格式
+  const language = ["zh-TW", "zh", "en-US", "en"];
 
-  // ── 5. 屏幕参数 ──────────────────────────────
+  // ── 5. 屏幕分辨率（AdsPower 格式：宽_高）──────
   const resolution = randomPick(RESOLUTIONS);
-  const colorDepth = randomPick(["24", "30", "32"]); // 色深
-  const pixelRatio = randomPick(["1", "1.25", "1.5", "2"]); // 设备像素比
 
   // ── 6. 硬件参数 ──────────────────────────────
-  const hardwareConcurrency = randomPick(["2", "4", "6", "8", "12", "16"]);
-  const deviceMemory = randomPick(["2", "4", "8", "16"]);
+  // 文档支持：default, 2, 4, 6, 8, 16
+  const hardwareConcurrency = randomPick(["2", "4", "4", "6", "8", "16"]);
+  // 文档支持：default, 2, 4, 6, 8
+  const deviceMemory = randomPick(["2", "4", "4", "8", "8"]);
 
   // ── 7. WebGL 厂商/渲染器 ─────────────────────
   const webglInfo = randomPick(WEBGL_VENDORS);
@@ -249,17 +243,12 @@ export function generateRandomFingerprint() {
   const fonts = randomSample(FONT_POOL, fontCount);
 
   // ── 9. 其他随机参数 ──────────────────────────
-  const webrtc = randomPick(["local", "proxy", "disabled"]);
-  const gpu = randomPick(["0", "1", "2"]);
+  // 文档支持：forward, proxy, local, disabled, disableUDP
+  const webrtc = randomPick(["disabled", "disabled", "proxy", "local"]);
+  // 文档支持：0=使用本地设置, 1=开启硬件加速, 2=关闭硬件加速
+  const gpu = randomPick(["0", "1"]);
+  // 文档支持：default, true, false
   const doNotTrack = randomPick(["default", "true", "false"]);
-
-  // ── 10. Canvas/WebGL/Audio 噪音种子 ──────────
-  // 使用随机整数作为噪音种子，确保每次指纹不同
-  // AdsPower 中 "0" = 噪音模式（每次渲染结果略有不同）
-  // 这里保持噪音模式，但通过其他维度的差异确保唯一性
-  const canvasMode = "0";    // 噪音模式
-  const webglMode = "0";     // 噪音模式
-  const audioMode = "0";     // 噪音模式
 
   return {
     fingerprint_config: {
@@ -274,22 +263,21 @@ export function generateRandomFingerprint() {
 
       // ── 地理位置 ──
       location: "ask",
-      location_switch: "1",
+      location_switch: "0",      // 0 = 手动指定位置
       accuracy: String(randomInt(10, 1000)),  // 精度随机（10-1000米）
       longitude: finalLon,
       latitude: finalLat,
 
       // ── 指纹噪音 ──
-      canvas: canvasMode,
-      webgl: webglMode,
-      webgl_image: webglMode,
-      audio: audioMode,
+      // 文档：1=添加噪音(默认)，0=电脑默认 → 使用1增加指纹随机性
+      canvas: "1",
+      webgl_image: "1",
+      audio: "1",
 
-      // ── WebGL 厂商/渲染器（关键指纹维度） ──
-      webgl_config: {
-        unmasked_vendor: webglInfo.vendor,
-        unmasked_renderer: webglInfo.renderer,
-      },
+      // ── WebGL 元数据 ──
+      // 文档：3=随机匹配(仅新建接口支持)，2=自定义，0=电脑默认
+      // 使用 3 = 随机匹配，AdsPower 自动随机 WebGL 厂商/渲染器
+      webgl: "3",
 
       // ── WebRTC ──
       webrtc,
@@ -299,37 +287,37 @@ export function generateRandomFingerprint() {
       device_memory: deviceMemory,
       gpu,
 
-      // ── 屏幕参数 ──
-      resolution,
-      color_depth: colorDepth,
-      device_pixel_ratio: pixelRatio,
+      // ── 屏幕分辨率（文档格式：宽_高，如 1920_1080）──
+      screen_resolution: resolution,
 
       // ── MAC 地址：随机生成 ──
       mac_address_config: {
-        model: "1",   // 1 = 随机生成
+        model: "1",   // 1 = 匹配合适的值代替真实的MAC地址
         address: "",
       },
 
       // ── 浏览器内核 ──
+      // 文档：version 支持 "92","99","102","105","108","111","ua_auto"
+      // "ua_auto" = 智能匹配（根据 UA 自动选择内核版本）
       browser_kernel_config: {
-        version: "latest",
+        version: "ua_auto",
         type: browserType,
       },
 
       // ── User-Agent（随机系统版本） ──
+      // 文档 random_ua.ua_system_version 合法值：
+      //   "Windows 10", "Windows 11", "Mac OS X 10"~"Mac OS X 13", "Linux"
       random_ua: {
+        ua_browser: [browserType],
         ua_system_version: uaSystemVersion,
       },
 
-      // ── 语言 ──
-      language_switch: "1",
-      languages: language,
+      // ── 语言（文档要求字符串数组格式）──
+      language_switch: "0",      // 0 = 不基于IP自动设置语言，使用自定义
+      language: language,
 
       // ── 字体（随机子集） ──
       fonts,
-
-      // ── 平台 ──
-      platform,
     },
     _meta: {
       timezone,
@@ -337,13 +325,10 @@ export function generateRandomFingerprint() {
       browserType,
       browserVersion,
       osType,
-      windowsVersion: osType === "windows" ? windowsVersion : undefined,
-      macVersion: osType === "mac" ? macVersion : undefined,
+      uaSystemVersion: uaSystemVersion[0],
       hardwareConcurrency,
       deviceMemory,
       resolution,
-      colorDepth,
-      pixelRatio,
       webglVendor: webglInfo.vendor,
       fontCount,
     },
@@ -370,6 +355,7 @@ function createAxiosClient(config: AdsPowerConfig) {
 
 // ─────────────────────────────────────────────
 // 创建浏览器环境（随机指纹，使用 v2 API）
+// POST /api/v2/browser-profile/create
 // ─────────────────────────────────────────────
 
 export async function createAdsPowerBrowser(
@@ -390,7 +376,7 @@ export async function createAdsPowerBrowser(
   const { fingerprint_config, _meta } = generateRandomFingerprint();
 
   const profileName = `AutoReg_${inviteCode}_${randomHex(8)}`;
-  const remark = `邀请码: ${inviteCode} | ${_meta.browserType} v${_meta.browserVersion} | ${_meta.osType} | ${_meta.location} | ${_meta.resolution} | ${new Date().toISOString()}`;
+  const remark = `邀请码: ${inviteCode} | ${_meta.browserType} | ${_meta.osType} | ${_meta.location} | ${_meta.resolution} | ${new Date().toISOString()}`;
 
   // 目标 URL（带邀请码参数）
   const tabs: string[] = [];
@@ -415,22 +401,23 @@ export async function createAdsPowerBrowser(
     body.tabs = tabs;
   }
 
-  // 代理配置（AdsPower v2 API 要求必须提供 user_proxy_config）
+  // 代理配置
+  // 文档：user_proxy_config 和 proxyid 二选一必填
+  // proxy_soft 合法值：brightdata, brightauto, oxylabsauto, ipfoxyauto,
+  //                    kookauto, lumiproxyauto, ssh, other, no_proxy
   if (options.proxyConfig && options.proxyConfig.proxyType !== "noproxy") {
     body.user_proxy_config = {
       proxy_soft: "other",
-      proxy_type: options.proxyConfig.proxyType,
+      proxy_type: options.proxyConfig.proxyType,  // http / https / socks5
       proxy_host: options.proxyConfig.host ?? "",
       proxy_port: options.proxyConfig.port ?? "",
       proxy_user: options.proxyConfig.user ?? "",
       proxy_password: options.proxyConfig.password ?? "",
-      global_config: "1",
     };
   } else {
-    // 无代理时也必须传 user_proxy_config，否则 API 会报错
+    // 无代理：proxy_soft = "no_proxy"，不需要传 proxy_type
     body.user_proxy_config = {
       proxy_soft: "no_proxy",
-      proxy_type: "noproxy",
     };
   }
 
@@ -442,10 +429,10 @@ export async function createAdsPowerBrowser(
     const data = response.data;
     console.log(`[AdsPower] 创建浏览器响应: ${JSON.stringify(data)}`);
 
-    // v2 API 返回的是 profile_id，不是 id
+    // v2 API 返回 profile_id
     const profileId = data.data?.profile_id || data.data?.id;
     if (data.code === 0 && profileId) {
-      console.log(`[AdsPower] 创建浏览器成功: ${profileId} | ${_meta.browserType} | ${_meta.osType} | ${_meta.location} | ${_meta.resolution} | WebGL: ${_meta.webglVendor}`);
+      console.log(`[AdsPower] 创建浏览器成功: ${profileId} | ${_meta.browserType} | ${_meta.osType} | ${_meta.uaSystemVersion} | ${_meta.location} | ${_meta.resolution}`);
       return { success: true, profileId };
     } else {
       const errMsg = data.msg ?? `API 返回错误码: ${data.code}`;
@@ -460,7 +447,8 @@ export async function createAdsPowerBrowser(
 }
 
 // ─────────────────────────────────────────────
-// 启动浏览器
+// 启动浏览器（v2 API）
+// POST /api/v2/browser-profile/start
 // ─────────────────────────────────────────────
 
 export async function startAdsPowerBrowser(
@@ -470,13 +458,13 @@ export async function startAdsPowerBrowser(
   const client = createAxiosClient(config);
 
   try {
-    const response = await client.get("/api/v1/browser/start", {
-      params: {
-        user_id: profileId,
-        open_tabs: 1,
-        ip_tab: 1,         // 1 = 打开 IP 检测页（即 start.adspower.net 启动页）
-        new_first_tab: 1,  // 1 = 使用新版 IP 检测页（与 AdsPower 客户端行为一致）
-      },
+    // v2 API 使用 POST + JSON body，参数名与 v1 不同：
+    //   v1: user_id / ip_tab / open_tabs / new_first_tab
+    //   v2: profile_id / proxy_detection / last_opened_tabs
+    const response = await client.post("/api/v2/browser-profile/start", {
+      profile_id: profileId,
+      last_opened_tabs: "0",    // 0 = 不继续上次标签，每次从头开始
+      proxy_detection: "1",     // 1 = 打开 IP 检测页（start.adspower.net 启动页）
     });
     const data = response.data;
 
@@ -500,7 +488,8 @@ export async function startAdsPowerBrowser(
 }
 
 // ─────────────────────────────────────────────
-// 关闭浏览器（不删除环境）
+// 关闭浏览器（v2 API，不删除环境）
+// POST /api/v2/browser-profile/stop
 // ─────────────────────────────────────────────
 
 export async function closeAdsPowerBrowser(
@@ -509,10 +498,10 @@ export async function closeAdsPowerBrowser(
 ): Promise<boolean> {
   const client = createAxiosClient(config);
   try {
-    const response = await client.get("/api/v1/browser/stop", {
-      params: { user_id: browserId },
-      timeout: 10000,
-    });
+    // v2 API 使用 POST + JSON body，参数名从 user_id 改为 profile_id
+    const response = await client.post("/api/v2/browser-profile/stop", {
+      profile_id: browserId,
+    }, { timeout: 10000 });
     return response.data?.code === 0;
   } catch {
     return false;
@@ -521,6 +510,7 @@ export async function closeAdsPowerBrowser(
 
 // ─────────────────────────────────────────────
 // 删除浏览器环境（v2 API，支持批量，单次最多 100 个）
+// POST /api/v2/browser-profile/delete
 // ─────────────────────────────────────────────
 
 export async function deleteAdsPowerBrowsers(
