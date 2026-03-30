@@ -32,20 +32,24 @@ function parseAndTransform(raw: string): { items: any[]; error: string } {
   if (arr.length === 0) return { items: [], error: "未解析到任何账号数据" };
 
   const items = arr.map((item: any) => ({
-    email: item.email,
-    password: item.password,
-    phone: item.phone || null,
-    token: item.token || null,
-    clientId: item.clientId || null,
-    membershipVersion: item.membershipVersion || "free",
-    totalCredits: item.totalCredits ?? 0,
-    freeCredits: item.freeCredits ?? 0,
-    refreshCredits: item.refreshCredits ?? 0,
-    inviteCode: item.inviteCode || null,
-    invitedByCode: item.referrerCode || item.invitedByCode || null,
-    referrerCode: item.referrerCode || item.invitedByCode || null,
+    email:             item.email,
+    password:          item.password,
+    // 以下均为可选，缺失时传 undefined（后端 Schema 允许 null/undefined）
+    phone:             item.phone             || undefined,
+    token:             item.token             || undefined,
+    clientId:          item.clientId          || undefined,
+    membershipVersion: item.membershipVersion  || "free",
+    totalCredits:      item.totalCredits  ?? 0,
+    freeCredits:       item.freeCredits   ?? 0,
+    refreshCredits:    item.refreshCredits ?? 0,
+    // 自己的邀请码（初始根账号可能没有）
+    inviteCode:        item.inviteCode    || undefined,
+    // 邀请人的邀请码（初始根账号没有邀请人）
+    invitedByCode:     item.referrerCode  || item.invitedByCode || undefined,
+    referrerCode:      item.referrerCode  || item.invitedByCode || undefined,
   }));
 
+  // 只校验必填字段： email 和 password
   const invalid = items.filter((i) => !i.email || !i.password);
   if (invalid.length > 0) {
     return { items: [], error: `有 ${invalid.length} 条数据缺少 email 或 password 字段` };
@@ -244,14 +248,16 @@ export default function ImportAccounts() {
 {`{
   "email":             必填，账号邮箱
   "password":          必填，登录密码
+
+  // 以下均为可选（初始根账号可不填）
+  "inviteCode":        自己的邀请码
+  "referrerCode":      邀请人的邀请码
   "phone":             手机号（含国家码）
   "token":             登录 JWT token
   "clientId":          客户端 ID
   "membershipVersion": 会员版本（free/pro...）
   "totalCredits":      总积分
   "freeCredits":       免费积分
-  "inviteCode":        自己的邀请码
-  "referrerCode":      邀请人的邀请码（可选）
 }
 
 // 支持单个对象或数组 [{...}, {...}]`}

@@ -39,23 +39,36 @@ import { startScheduler, pauseScheduler, stopScheduler, getRunningTaskIds } from
 
 // ─── Zod Schemas ─────────────────────────────────────────────────────────────
 
+// 辅助：将 null / undefined / 空字符串统一转为 undefined
+const optStr = z.string().nullish().transform(v => (v == null || v === "" ? undefined : v));
+const optNum = (def: number) =>
+  z.number().nullish().transform(v => v ?? def).default(def);
+
 const AccountImportSchema = z.object({
-  email: z.string().email(),
-  password: z.string(),
-  phone: z.string().nullish().transform(v => v ?? undefined),
-  token: z.string().nullish().transform(v => v ?? undefined),
-  clientId: z.string().nullish().transform(v => v ?? undefined),
-  userId: z.string().nullish().transform(v => v ?? undefined),
-  displayname: z.string().nullish().transform(v => v ?? undefined),
+  // ── 必填字段 ──────────────────────────────────────────────────────────────
+  email:    z.string().email(),
+  password: z.string().min(1),
+
+  // ── 可选字段（null / undefined / 空字符串均可） ────────────────────────────
+  phone:             optStr,
+  token:             optStr,
+  clientId:          optStr,
+  userId:            optStr,
+  displayname:       optStr,
   membershipVersion: z.string().nullish().transform(v => v ?? "free").default("free"),
-  totalCredits: z.number().nullish().transform(v => v ?? 0).default(0),
-  freeCredits: z.number().nullish().transform(v => v ?? 0).default(0),
-  refreshCredits: z.number().nullish().transform(v => v ?? 0).default(0),
-  inviteCode: z.string().nullish().transform(v => v ?? undefined),
-  inviteCodeId: z.string().nullish().transform(v => v ?? undefined),
-  invitedByCode: z.string().nullish().transform(v => v ?? undefined),
-  registeredAt: z.string().nullish().transform(v => v ?? undefined),
-  notes: z.string().nullish().transform(v => v ?? undefined),
+  totalCredits:      optNum(0),
+  freeCredits:       optNum(0),
+  refreshCredits:    optNum(0),
+
+  // 自己的邀请码（可选，初始根账号可能没有）
+  inviteCode:   optStr,
+  inviteCodeId: optStr,
+
+  // 邀请人的邀请码（可选，初始根账号没有邀请人）
+  invitedByCode: optStr,
+
+  registeredAt: optStr,
+  notes:        optStr,
 });
 
 const AccountFilterSchema = z.object({
