@@ -21,7 +21,9 @@ import {
   updateTaskLog,
 } from "./db";
 import {
+  closeAdsPowerBrowser,
   createAdsPowerBrowser,
+  deleteAdsPowerBrowsers,
   getActiveBrowsers,
   startAdsPowerBrowser,
   stopAndDeleteAdsPowerBrowser,
@@ -135,23 +137,39 @@ async function cleanupTaskBrowsers(taskId: number, reason: string): Promise<void
   const apiUrl = taskApiUrls.get(taskId) || ADSPOWER_CONFIG.apiUrl;
   const adspowerConfig = { apiUrl, apiKey: ADSPOWER_CONFIG.apiKey };
 
-  // 1. 先獲取所有 running 且有 browserId 的日誌
+  // 1. 先獲取「本任務」所有 running 且有 browserId 的日誌
+  //    getRunningLogsForTask 已按 taskId 過濾，不會取到其他任務的瀏覽器
   const runningLogs = await getRunningLogsForTask(taskId);
 
-  // 2. 批量標記所有 running 日誌為 failed
+  // 2. 批量標記「本任務」所有 running 日誌為 failed
   const affected = await failAllRunningLogsForTask(taskId, reason);
   if (affected > 0) {
     console.log(`[Scheduler] Task ${taskId}: marked ${affected} running log(s) as failed (${reason})`);
   }
 
-  // 3. 逐個關閉並刪除對應的 AdsPower 瀏覽器
-  for (const log of runningLogs) {
-    if (!log.adspowerBrowserId) continue;
-    console.log(`[Scheduler] Task ${taskId}: closing browser ${log.adspowerBrowserId}`);
-    await stopAndDeleteAdsPowerBrowser(adspowerConfig, log.adspowerBrowserId).catch((e) => {
-      console.error(`[Scheduler] Task ${taskId}: failed to close browser ${log.adspowerBrowserId}: ${e}`);
-    });
-  }
+  // 3. 收集「本任務」所有需要關閉的 browserId
+  const browserIds = runningLogs
+    .map((log) => log.adspowerBrowserId)
+    .filter((id): id is string => !!id);
+
+  if (browserIds.length === 0) return;
+
+  console.log(`[Scheduler] Task ${taskId}: closing ${browserIds.length} browser(s) concurrently: [${browserIds.join(", ")}]`);
+
+  // 4. 先並發關閉所有瀏覽器進程（stop），再批量刪除環境（delete）
+  //    兩步分開：stop 需要逐個調用，delete 支持批量一次性提交
+  await Promise.all(
+    browserIds.map((browserId) =>
+      closeAdsPowerBrowser(adspowerConfig, browserId).catch((e) =>
+        console.error(`[Scheduler] Task ${taskId}: failed to close browser ${browserId}: ${e}`)
+      )
+    )
+  );
+
+  // 批量刪除（AdsPower v2 API 支持一次傳入多個 profile_id，單次最多 100 個）
+  await deleteAdsPowerBrowsers(adspowerConfig, browserIds).catch((e) =>
+    console.error(`[Scheduler] Task ${taskId}: failed to batch-delete browsers [${browserIds.join(", ")}]: ${e}`)
+  );
 }
 
 // ─── 啟動調度器 ───────────────────────────────────────────────────────────────
