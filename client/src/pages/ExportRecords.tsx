@@ -91,7 +91,7 @@ function BatchDetailDialog({
 
   const handleDownload = () => {
     if (!data?.items?.length) return;
-    const headers = ["邮筱", "密码", "Token", "邀请码", "邀请人邀请码", "会员版本", "积分", "手机号", "注册时间", "导出时间"];
+    const headers = ["邮箱", "密码", "Token", "邀请码", "邀请人邀请码", "会员版本", "积分", "手机号", "注册时间", "导出时间"];
     const rows = data.items.map((r) => [
       r.email,
       r.password,

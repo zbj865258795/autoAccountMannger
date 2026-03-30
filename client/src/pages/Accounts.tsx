@@ -152,6 +152,7 @@ export default function Accounts() {
       setExportCount(10);
       utils.accounts.list.invalidate();
       utils.dashboard.stats.invalidate();
+      utils.export.exportableCount.invalidate();
     },
     onError: (err) => {
       toast.error(`导出失败：${err.message}`);
