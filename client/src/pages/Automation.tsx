@@ -30,10 +30,12 @@ import {
   Clock,
   Loader2,
   Pause,
+  Pencil,
   Play,
   Plus,
   RefreshCw,
   Square,
+  Trash2,
   Wifi,
   WifiOff,
 } from "lucide-react";
@@ -47,6 +49,8 @@ const statusConfig: Record<TaskStatus, { label: string; class: string; icon: Rea
   paused: { label: "已暂停", class: "border-yellow-500/30 text-yellow-400 bg-yellow-500/10", icon: Pause },
   stopped: { label: "已停止", class: "border-red-500/30 text-red-400 bg-red-500/10", icon: Square },
 };
+
+// ─── 创建任务弹窗 ─────────────────────────────────────────────────────────────
 
 function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: () => void }) {
   const [name, setName] = useState("自动注册任务");
@@ -181,6 +185,163 @@ function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose
   );
 }
 
+// ─── 编辑任务弹窗 ─────────────────────────────────────────────────────────────
+
+type TaskItem = {
+  id: number;
+  name: string;
+  scanIntervalSeconds: number | null;
+  adspowerApiUrl: string | null;
+  adspowerGroupId: string | null;
+  targetUrl: string | null;
+  maxConcurrent: number | null;
+  targetCount: number | null;
+  status: string;
+  [key: string]: unknown;
+};
+
+function EditTaskDialog({
+  task,
+  onClose,
+  onUpdated,
+}: {
+  task: TaskItem;
+  onClose: () => void;
+  onUpdated: () => void;
+}) {
+  const [name, setName] = useState(task.name);
+  const [interval, setInterval] = useState(task.scanIntervalSeconds ?? 60);
+  const [apiUrl, setApiUrl] = useState(task.adspowerApiUrl ?? "http://host.docker.internal:50325");
+  const [groupId, setGroupId] = useState(task.adspowerGroupId ?? "");
+  const [targetUrl, setTargetUrl] = useState(task.targetUrl ?? "");
+  const [maxConcurrent, setMaxConcurrent] = useState(task.maxConcurrent ?? 1);
+  const [targetCount, setTargetCount] = useState<string>(
+    task.targetCount != null ? String(task.targetCount) : ""
+  );
+
+  const updateTask = trpc.automation.update.useMutation({
+    onSuccess: () => {
+      toast.success("任务已更新");
+      onUpdated();
+      onClose();
+    },
+    onError: (err) => toast.error(`更新失败：${err.message}`),
+  });
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="bg-card border-border/50 text-foreground max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-foreground">编辑任务：{task.name}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">任务名称</Label>
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="bg-muted/50 border-border/50 text-foreground"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">AdsPower API 地址</Label>
+            <Input
+              value={apiUrl}
+              onChange={(e) => setApiUrl(e.target.value)}
+              className="bg-muted/50 border-border/50 text-foreground font-mono text-sm"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">注册目标 URL（可选）</Label>
+            <Input
+              value={targetUrl}
+              onChange={(e) => setTargetUrl(e.target.value)}
+              placeholder="https://example.com/register"
+              className="bg-muted/50 border-border/50 text-foreground font-mono text-sm"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">分组 ID（可选）</Label>
+            <Input
+              value={groupId}
+              onChange={(e) => setGroupId(e.target.value)}
+              placeholder="AdsPower 浏览器分组 ID"
+              className="bg-muted/50 border-border/50 text-foreground"
+            />
+          </div>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs text-muted-foreground">扫描间隔</Label>
+              <span className="text-sm font-medium text-foreground">{interval} 秒</span>
+            </div>
+            <Slider
+              value={[interval]}
+              onValueChange={([v]) => setInterval(v)}
+              min={10}
+              max={300}
+              step={10}
+              className="w-full"
+            />
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>10s</span><span>5分钟</span>
+            </div>
+          </div>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs text-muted-foreground">最大并发数</Label>
+              <span className="text-sm font-medium text-foreground">{maxConcurrent} 个</span>
+            </div>
+            <Slider
+              value={[maxConcurrent]}
+              onValueChange={([v]) => setMaxConcurrent(v)}
+              min={1}
+              max={50}
+              step={1}
+              className="w-full"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">注册目标总数（可选）</Label>
+            <Input
+              type="number"
+              value={targetCount}
+              onChange={(e) => setTargetCount(e.target.value)}
+              placeholder="不填则不限制"
+              min={1}
+              className="bg-muted/50 border-border/50 text-foreground"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>取消</Button>
+          <Button
+            onClick={() =>
+              updateTask.mutate({
+                id: task.id,
+                data: {
+                  name,
+                  scanIntervalSeconds: interval,
+                  adspowerApiUrl: apiUrl,
+                  adspowerGroupId: groupId || undefined,
+                  targetUrl: targetUrl || undefined,
+                  maxConcurrent,
+                  targetCount: targetCount ? Number(targetCount) : null,
+                },
+              })
+            }
+            disabled={updateTask.isPending || !name.trim()}
+          >
+            {updateTask.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+            保存修改
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── AdsPower 连接状态 ────────────────────────────────────────────────────────
+
 function AdsPowerStatus({ apiUrl }: { apiUrl: string }) {
   const { data, isLoading, refetch } = trpc.automation.checkAdspower.useQuery(
     { apiUrl },
@@ -211,6 +372,8 @@ function AdsPowerStatus({ apiUrl }: { apiUrl: string }) {
     </div>
   );
 }
+
+// ─── 最近失败日志 ─────────────────────────────────────────────────────────────
 
 function RecentErrors({ taskId }: { taskId: number }) {
   const { data } = trpc.taskLogs.list.useQuery(
@@ -247,10 +410,14 @@ function RecentErrors({ taskId }: { taskId: number }) {
   );
 }
 
+// ─── 主页面 ───────────────────────────────────────────────────────────────────
+
 export default function Automation() {
   const utils = trpc.useUtils();
   const [showCreate, setShowCreate] = useState(false);
   const [confirmStop, setConfirmStop] = useState<number | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<TaskItem | null>(null);
+  const [editTask, setEditTask] = useState<TaskItem | null>(null);
 
   const { data: tasks, isLoading, refetch } = trpc.automation.list.useQuery(undefined, {
     refetchInterval: 5000,
@@ -267,6 +434,10 @@ export default function Automation() {
   const stopTask = trpc.automation.stop.useMutation({
     onSuccess: () => { toast.success("任务已停止"); utils.automation.list.invalidate(); setConfirmStop(null); },
     onError: (err) => toast.error(`停止失败：${err.message}`),
+  });
+  const deleteTask = trpc.automation.delete.useMutation({
+    onSuccess: () => { toast.success("任务已删除"); utils.automation.list.invalidate(); setConfirmDelete(null); },
+    onError: (err) => toast.error(`删除失败：${err.message}`),
   });
 
   return (
@@ -321,7 +492,8 @@ export default function Automation() {
                       </div>
                       <AdsPowerStatus apiUrl={task.adspowerApiUrl ?? "http://host.docker.internal:50325"} />
                     </div>
-                    <div className="flex gap-2 ml-3">
+                    <div className="flex gap-1.5 ml-3 flex-wrap justify-end">
+                      {/* 启动按钮：空闲/已暂停/已停止时显示 */}
                       {(task.status === "idle" || task.status === "paused" || task.status === "stopped") && (
                         <Button
                           size="sm"
@@ -333,6 +505,7 @@ export default function Automation() {
                           <Play className="w-3 h-3 mr-1" />启动
                         </Button>
                       )}
+                      {/* 暂停按钮：运行中时显示 */}
                       {task.status === "running" && (
                         <Button
                           size="sm"
@@ -344,6 +517,7 @@ export default function Automation() {
                           <Pause className="w-3 h-3 mr-1" />暂停
                         </Button>
                       )}
+                      {/* 停止按钮：非已停止状态时显示 */}
                       {task.status !== "stopped" && (
                         <Button
                           size="sm"
@@ -354,6 +528,26 @@ export default function Automation() {
                           <Square className="w-3 h-3 mr-1" />停止
                         </Button>
                       )}
+                      {/* 编辑按钮：非运行中时可编辑 */}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 text-muted-foreground border-border/50 hover:bg-muted/30"
+                        onClick={() => setEditTask(task as TaskItem)}
+                        disabled={task.status === "running"}
+                        title={task.status === "running" ? "请先停止任务再编辑" : "编辑任务"}
+                      >
+                        <Pencil className="w-3 h-3 mr-1" />编辑
+                      </Button>
+                      {/* 删除按钮：始终可见 */}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 text-red-400 border-red-500/30 hover:bg-red-500/10"
+                        onClick={() => setConfirmDelete(task as TaskItem)}
+                      >
+                        <Trash2 className="w-3 h-3 mr-1" />删除
+                      </Button>
                     </div>
                   </div>
 
@@ -393,18 +587,29 @@ export default function Automation() {
         )}
       </div>
 
+      {/* 创建任务弹窗 */}
       <CreateTaskDialog
         open={showCreate}
         onClose={() => setShowCreate(false)}
         onCreated={() => utils.automation.list.invalidate()}
       />
 
+      {/* 编辑任务弹窗 */}
+      {editTask && (
+        <EditTaskDialog
+          task={editTask}
+          onClose={() => setEditTask(null)}
+          onUpdated={() => utils.automation.list.invalidate()}
+        />
+      )}
+
+      {/* 停止确认弹窗 */}
       <AlertDialog open={confirmStop !== null} onOpenChange={() => setConfirmStop(null)}>
         <AlertDialogContent className="bg-card border-border/50 text-foreground">
           <AlertDialogHeader>
             <AlertDialogTitle>确认停止任务</AlertDialogTitle>
             <AlertDialogDescription className="text-muted-foreground">
-              停止后任务将不再自动扫描邀请码，已在运行的浏览器实例不受影响。
+              停止后任务将不再自动扫描邀请码，所有正在运行的浏览器实例将被强制关闭，对应日志状态将标记为失败。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -414,6 +619,32 @@ export default function Automation() {
               className="bg-destructive hover:bg-destructive/90"
             >
               确认停止
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* 删除确认弹窗 */}
+      <AlertDialog open={confirmDelete !== null} onOpenChange={() => setConfirmDelete(null)}>
+        <AlertDialogContent className="bg-card border-border/50 text-foreground">
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认删除任务</AlertDialogTitle>
+            <AlertDialogDescription className="text-muted-foreground">
+              将永久删除任务 <strong className="text-foreground">{confirmDelete?.name}</strong> 及其所有执行日志，此操作不可撤销。
+              {(confirmDelete?.status === "running" || confirmDelete?.status === "paused") && (
+                <span className="block mt-1 text-yellow-400">该任务当前正在运行/暂停，删除前将自动停止。</span>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => confirmDelete !== null && deleteTask.mutate({ id: confirmDelete.id })}
+              className="bg-destructive hover:bg-destructive/90"
+              disabled={deleteTask.isPending}
+            >
+              {deleteTask.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+              确认删除
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

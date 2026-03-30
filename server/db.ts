@@ -381,6 +381,14 @@ export async function updateAutomationTask(id: number, data: Partial<InsertAutom
   await db.update(automationTasks).set(data).where(eq(automationTasks.id, id));
 }
 
+export async function deleteAutomationTask(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  // 先删除关联的任务日志，再删除任务本身
+  await db.delete(taskLogs).where(eq(taskLogs.taskId, id));
+  await db.delete(automationTasks).where(eq(automationTasks.id, id));
+}
+
 /**
  * 原子自增任务计数器，彻底避免并发 read-modify-write 竞态
  * 使用 SQL SET col = col + delta 而非先读后写

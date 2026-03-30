@@ -25,6 +25,7 @@ import {
   updateAccount,
   createAutomationTask,
   updateAutomationTask,
+  deleteAutomationTask,
   updateInviteStatus,
 } from "./db";
 import { checkAdsPowerConnection, getActiveBrowsers } from "./adspower";
@@ -252,6 +253,19 @@ const automationRouter = router({
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       await stopScheduler(input.id);
+      return { success: true };
+    }),
+
+  delete: publicProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      // 如果任务正在运行，先强制停止
+      const task = await getAutomationTaskById(input.id);
+      if (!task) throw new TRPCError({ code: "NOT_FOUND", message: "任务不存在" });
+      if (task.status === "running" || task.status === "paused") {
+        await stopScheduler(input.id);
+      }
+      await deleteAutomationTask(input.id);
       return { success: true };
     }),
 
