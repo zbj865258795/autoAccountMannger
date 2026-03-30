@@ -16,6 +16,6 @@ CREATE TABLE IF NOT EXISTS `export_logs` (
   `notes` text,
   CONSTRAINT `export_logs_id` PRIMARY KEY(`id`)
 );
-CREATE INDEX IF NOT EXISTS `export_logs_batchId_idx` ON `export_logs` (`exportBatchId`);
-CREATE INDEX IF NOT EXISTS `export_logs_email_idx` ON `export_logs` (`email`);
-CREATE INDEX IF NOT EXISTS `export_logs_exportedAt_idx` ON `export_logs` (`exportedAt`);
+CREATE INDEX `export_logs_batchId_idx` ON `export_logs` (`exportBatchId`);
+CREATE INDEX `export_logs_email_idx` ON `export_logs` (`email`);
+CREATE INDEX `export_logs_exportedAt_idx` ON `export_logs` (`exportedAt`);
