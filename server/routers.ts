@@ -45,9 +45,10 @@ const optNum = (def: number) =>
   z.number().nullish().transform(v => v ?? def).default(def);
 
 const AccountImportSchema = z.object({
-  // ── 必填字段 ──────────────────────────────────────────────────────────────
-  email:    z.string().email(),
-  password: z.string().min(1),
+  // ── 必填字段（三个）──────────────────────────────────────────────────────
+  email:      z.string().email(),
+  password:   z.string().min(1),
+  inviteCode: z.string().min(1),  // 自己的邀请码，必填
 
   // ── 可选字段（null / undefined / 空字符串均可） ────────────────────────────
   phone:             optStr,
@@ -60,11 +61,9 @@ const AccountImportSchema = z.object({
   freeCredits:       optNum(0),
   refreshCredits:    optNum(0),
 
-  // 自己的邀请码（可选，初始根账号可能没有）
-  inviteCode:   optStr,
   inviteCodeId: optStr,
 
-  // 邀请人的邀请码（可选，初始根账号没有邀请人）
+  // 邀请人的邀请码（可选，没有邀请人时不填）
   invitedByCode: optStr,
 
   registeredAt: optStr,

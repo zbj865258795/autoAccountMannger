@@ -42,17 +42,24 @@ function parseAndTransform(raw: string): { items: any[]; error: string } {
     totalCredits:      item.totalCredits  ?? 0,
     freeCredits:       item.freeCredits   ?? 0,
     refreshCredits:    item.refreshCredits ?? 0,
-    // 自己的邀请码（初始根账号可能没有）
+    // 自己的邀请码（必填）
     inviteCode:        item.inviteCode    || undefined,
     // 邀请人的邀请码（初始根账号没有邀请人）
     invitedByCode:     item.referrerCode  || item.invitedByCode || undefined,
     referrerCode:      item.referrerCode  || item.invitedByCode || undefined,
   }));
 
-  // 只校验必填字段： email 和 password
-  const invalid = items.filter((i) => !i.email || !i.password);
+  // 校验必填字段： email、password、inviteCode
+  const invalid = items.filter((i) => !i.email || !i.password || !i.inviteCode);
   if (invalid.length > 0) {
-    return { items: [], error: `有 ${invalid.length} 条数据缺少 email 或 password 字段` };
+    const missing = invalid.map((i) => {
+      const fields = [];
+      if (!i.email) fields.push("email");
+      if (!i.password) fields.push("password");
+      if (!i.inviteCode) fields.push("inviteCode");
+      return `${i.email || "未知邮箱"}: 缺少 ${fields.join("、")}`;
+    });
+    return { items: [], error: missing.join("\n") };
   }
 
   return { items, error: "" };
@@ -246,11 +253,12 @@ export default function ImportAccounts() {
             <CardContent>
               <pre className="text-xs text-muted-foreground font-mono bg-muted/30 p-3 rounded-lg overflow-x-auto leading-relaxed">
 {`{
-  "email":             必填，账号邮箱
-  "password":          必填，登录密码
-
-  // 以下均为可选（初始根账号可不填）
+  // ── 必填（缺少则报错）─────────────────────────────
+  "email":             账号邮箱
+  "password":          登录密码
   "inviteCode":        自己的邀请码
+
+  // ── 可选（不传、传 null 或空字符串均可）─────────────
   "referrerCode":      邀请人的邀请码
   "phone":             手机号（含国家码）
   "token":             登录 JWT token
