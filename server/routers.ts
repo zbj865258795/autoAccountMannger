@@ -27,6 +27,10 @@ import {
   updateAutomationTask,
   deleteAutomationTask,
   updateInviteStatus,
+  exportAccounts,
+  getExportableAccounts,
+  getExportBatches,
+  getExportBatchDetail,
 } from "./db";
 import { checkAdsPowerConnection, getActiveBrowsers } from "./adspower";
 import { ADSPOWER_CONFIG } from "./config";
@@ -347,6 +351,60 @@ const phoneNumbersRouter = router({
     }),
 });
 
+// ─── Export Router ───────────────────────────────────────────────────────────
+
+const exportRouter = router({
+  // 查询满足导出条件的账号列表
+  listExportable: publicProcedure
+    .input(z.object({
+      search: z.string().optional(),
+      page: z.number().min(1).default(1),
+      pageSize: z.number().min(1).max(200).default(50),
+    }))
+    .query(async ({ input }) => {
+      return getExportableAccounts(input);
+    }),
+
+  // 执行导出（二次确认由前端弹窗保证，后端只负责执行）
+  doExport: publicProcedure
+    .input(z.object({
+      accountIds: z.array(z.number()).min(1, "请至少选择一个账号"),
+    }))
+    .mutation(async ({ input }) => {
+      const result = await exportAccounts(input.accountIds);
+      if (result.exported === 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "没有满足导出条件的账号（需被邀请注册且自己的邀请码已被使用）",
+        });
+      }
+      return result;
+    }),
+
+  // 查询导出批次列表
+  listBatches: publicProcedure
+    .input(z.object({
+      search: z.string().optional(),
+      page: z.number().min(1).default(1),
+      pageSize: z.number().min(1).max(100).default(20),
+    }))
+    .query(async ({ input }) => {
+      return getExportBatches(input);
+    }),
+
+  // 查询某批次的账号明细
+  batchDetail: publicProcedure
+    .input(z.object({
+      batchId: z.string().min(1),
+      search: z.string().optional(),
+      page: z.number().min(1).default(1),
+      pageSize: z.number().min(1).max(200).default(50),
+    }))
+    .query(async ({ input }) => {
+      return getExportBatchDetail(input);
+    }),
+});
+
 // ─── App Router ───────────────────────────────────────────────────────────────
 
 export const appRouter = router({
@@ -355,6 +413,7 @@ export const appRouter = router({
   automation: automationRouter,
   taskLogs: taskLogsRouter,
   phoneNumbers: phoneNumbersRouter,
+  export: exportRouter,
 });
 
 export type AppRouter = typeof appRouter;

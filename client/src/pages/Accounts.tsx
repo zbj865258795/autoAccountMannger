@@ -29,6 +29,7 @@ import {
   ChevronRight,
   ClipboardCopy,
   Copy,
+  Download,
   Search,
   Trash2,
   Users,
@@ -95,6 +96,8 @@ export default function Accounts() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   // 批量删除确认弹窗
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  // 导出确认弹窗
+  const [exportConfirmOpen, setExportConfirmOpen] = useState(false);
 
   const utils = trpc.useUtils();
 
@@ -134,9 +137,50 @@ export default function Accounts() {
     },
   });
 
+  const exportMutation = trpc.export.doExport.useMutation({
+    onSuccess: (result) => {
+      toast.success(`成功导出 ${result.exported} 个账号，批次号：${result.batchId}`);
+      setSelectedIds(new Set());
+      setExportConfirmOpen(false);
+      utils.accounts.list.invalidate();
+      utils.dashboard.stats.invalidate();
+    },
+    onError: (err) => {
+      toast.error(`导出失败：${err.message}`);
+      setExportConfirmOpen(false);
+    },
+  });
+
   const items = data?.items ?? [];
   const totalPages = Math.ceil((data?.total ?? 0) / pageSize);
   const total = data?.total ?? 0;
+
+  // 计算选中账号中满足导出条件的数量（用于弹窗提示）
+  const exportableSelectedCount = useMemo(() => {
+    return items.filter(
+      (a) =>
+        selectedIds.has(a.id) &&
+        a.inviteStatus === "used" &&
+        !!(a as any).referrerCode
+    ).length;
+  }, [items, selectedIds]);
+
+  // 执行导出（只导出当前选中且满足条件的账号）
+  const handleBulkExport = () => {
+    const ids = items
+      .filter(
+        (a) =>
+          selectedIds.has(a.id) &&
+          a.inviteStatus === "used" &&
+          !!(a as any).referrerCode
+      )
+      .map((a) => a.id);
+    if (ids.length === 0) {
+      toast.warning("选中的账号中没有满足导出条件的（需被邀请注册且自己邀请码已被使用）");
+      return;
+    }
+    exportMutation.mutate({ accountIds: ids });
+  };
 
   // 当前页所有 id
   const currentPageIds = useMemo(() => items.map((a) => a.id), [items]);
@@ -320,6 +364,49 @@ export default function Accounts() {
               <ClipboardCopy className="w-3.5 h-3.5" />
               复制账号密码
             </Button>
+            {/* 导出确认弹窗 */}
+            <AlertDialog open={exportConfirmOpen} onOpenChange={setExportConfirmOpen}>
+              <AlertDialogTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs gap-1.5 border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  导出账号
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>确认导出账号</AlertDialogTitle>
+                  <AlertDialogDescription asChild>
+                    <div className="space-y-2 text-sm text-muted-foreground">
+                      <p>
+                        当前共选中{" "}<strong className="text-foreground">{selectedCount}</strong>{" "}个账号，其中满足导出条件的有{" "}
+                        <strong className="text-emerald-400">{exportableSelectedCount}</strong>{" "}个。
+                      </p>
+                      <p className="text-xs">
+                        导出条件：被邀请注册（邀请人邀请码不为空）且自己的邀请码已被使用。
+                      </p>
+                      <p className="text-xs text-destructive">
+                        ⚠️ 导出后这些账号将从账号列表中移除，并记录到「导出记录」模块。此操作不可撤销。
+                      </p>
+                    </div>
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={exportMutation.isPending}>取消</AlertDialogCancel>
+                  <AlertDialogAction
+                    className="bg-emerald-600 text-white hover:bg-emerald-700"
+                    onClick={handleBulkExport}
+                    disabled={exportableSelectedCount === 0 || exportMutation.isPending}
+                  >
+                    {exportMutation.isPending ? "导出中…" : `确认导出 ${exportableSelectedCount} 个`}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+
             <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
               <AlertDialogTrigger asChild>
                 <Button

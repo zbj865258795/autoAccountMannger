@@ -7,7 +7,9 @@ import {
   Bot,
   CheckCircle2,
   Clock,
+  Download,
   GitBranch,
+  Hourglass,
   Users,
   Phone,
 } from "lucide-react";
@@ -99,7 +101,7 @@ export default function Dashboard() {
         <p className="text-sm text-muted-foreground mt-1">账号管理与自动化任务总览</p>
       </div>
 
-      {/* 统计卡片：只展示账号数量相关 */}
+      {/* 统计卡片：账号数量相关 */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           title="总账号数"
@@ -131,6 +133,26 @@ export default function Dashboard() {
           icon={CheckCircle2}
           color="bg-green-500/15 text-green-400"
           sub={`共 ${totalCodes} 个邀请码`}
+          loading={isLoading}
+        />
+      </div>
+
+      {/* 统计卡片：导出相关 */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard
+          title="已导出账号"
+          value={stats?.totalExported ?? 0}
+          icon={Download}
+          color="bg-emerald-500/15 text-emerald-400"
+          sub="已导出并从库中移除"
+          loading={isLoading}
+        />
+        <StatCard
+          title="待导出账号"
+          value={stats?.pendingExport ?? 0}
+          icon={Hourglass}
+          color="bg-orange-500/15 text-orange-400"
+          sub="满足条件可立即导出"
           loading={isLoading}
         />
       </div>

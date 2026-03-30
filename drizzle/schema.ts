@@ -174,3 +174,38 @@ export const phoneNumbers = mysqlTable("phone_numbers", {
 
 export type PhoneNumber = typeof phoneNumbers.$inferSelect;
 export type InsertPhoneNumber = typeof phoneNumbers.$inferInsert;
+
+/**
+ * 导出日志表：记录每次导出操作的账号明细
+ * 每条记录对应一个被导出的账号，同一批次通过 exportBatchId 聚合
+ */
+export const exportLogs = mysqlTable("export_logs", {
+  id: int("id").autoincrement().primaryKey(),
+
+  // 批次号（同一次导出操作共享，格式如 EXPORT_20260330_143000_abc123）
+  exportBatchId: varchar("exportBatchId", { length: 64 }).notNull(),
+
+  // 账号信息（从 accounts 表复制，导出后 accounts 中该条记录会被删除）
+  email: varchar("email", { length: 320 }).notNull(),
+  password: varchar("password", { length: 255 }).notNull(),
+  token: text("token"),
+  userId: varchar("userId", { length: 64 }),
+  displayname: varchar("displayname", { length: 128 }),
+  phone: varchar("phone", { length: 32 }),
+  membershipVersion: varchar("membershipVersion", { length: 64 }),
+  totalCredits: int("totalCredits").default(0),
+
+  // 邀请关系
+  inviteCode: varchar("inviteCode", { length: 64 }),
+  referrerCode: varchar("referrerCode", { length: 64 }),
+
+  // 时间
+  registeredAt: timestamp("registeredAt"),
+  exportedAt: timestamp("exportedAt").defaultNow().notNull(),
+
+  // 备注
+  notes: text("notes"),
+});
+
+export type ExportLog = typeof exportLogs.$inferSelect;
+export type InsertExportLog = typeof exportLogs.$inferInsert;

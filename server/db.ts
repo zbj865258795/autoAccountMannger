@@ -1,7 +1,7 @@
 import { and, asc, count, desc, eq, gte, inArray, like, lte, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { accounts, automationTasks, phoneNumbers, taskLogs, users } from "../drizzle/schema";
-import type { InsertAccount, InsertAutomationTask, InsertPhoneNumber, InsertTaskLog } from "../drizzle/schema";
+import { accounts, automationTasks, exportLogs, phoneNumbers, taskLogs, users } from "../drizzle/schema";
+import type { InsertAccount, InsertAutomationTask, InsertExportLog, InsertPhoneNumber, InsertTaskLog } from "../drizzle/schema";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -299,6 +299,8 @@ export async function getDashboardStats() {
     inProgressCodesResult,
     usedCodesResult,
     recentAccountsResult,
+    totalExportedResult,
+    pendingExportResult,
   ] = await Promise.all([
     db.select({ count: sql<number>`count(*)` }).from(accounts),
     db.select({ sum: sql<number>`sum(totalCredits)` }).from(accounts),
@@ -307,6 +309,15 @@ export async function getDashboardStats() {
     db.select({ count: sql<number>`count(*)` }).from(accounts).where(eq(accounts.inviteStatus, "in_progress")),
     db.select({ count: sql<number>`count(*)` }).from(accounts).where(eq(accounts.inviteStatus, "used")),
     db.select().from(accounts).orderBy(desc(accounts.createdAt)).limit(5),
+    // 已导出总数：export_logs 表中的记录数
+    db.select({ count: sql<number>`count(*)` }).from(exportLogs),
+    // 待导出数：被邀请注册（referrerCode 不为空）且自己邀请码已被使用（inviteStatus=used）
+    db.select({ count: sql<number>`count(*)` }).from(accounts).where(
+      and(
+        eq(accounts.inviteStatus, "used"),
+        sql`${accounts.referrerCode} IS NOT NULL AND ${accounts.referrerCode} != ''`
+      )
+    ),
   ]);
 
   return {
@@ -318,6 +329,8 @@ export async function getDashboardStats() {
     inProgressCodes: Number(inProgressCodesResult[0]?.count ?? 0),
     usedCodes: Number(usedCodesResult[0]?.count ?? 0),
     recentAccounts: recentAccountsResult,
+    totalExported: Number(totalExportedResult[0]?.count ?? 0),
+    pendingExport: Number(pendingExportResult[0]?.count ?? 0),
   };
 }
 
@@ -737,4 +750,211 @@ export async function getRunningLogsForTask(taskId: number) {
         sql`${taskLogs.adspowerBrowserId} IS NOT NULL AND ${taskLogs.adspowerBrowserId} != ''`
       )
     );
+}
+
+// ─── Export Logs ──────────────────────────────────────────────────────────────
+
+/**
+ * 生成导出批次号
+ * 格式：EXPORT_YYYYMMDD_HHmmss_xxxx（xxxx 为随机 4 位十六进制）
+ */
+export function generateExportBatchId(): string {
+  const now = new Date();
+  const pad = (n: number, len = 2) => String(n).padStart(len, "0");
+  const date = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
+  const time = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  const rand = Math.floor(Math.random() * 0xffff).toString(16).padStart(4, "0");
+  return `EXPORT_${date}_${time}_${rand}`;
+}
+
+/**
+ * 查询满足导出条件的账号：
+ *   1. 自己是被邀请注册的（referrerCode 不为空）
+ *   2. 自己的邀请码已被使用（inviteStatus = 'used'）
+ */
+export async function getExportableAccounts(filter: {
+  search?: string;
+  page?: number;
+  pageSize?: number;
+} = {}) {
+  const db = await getDb();
+  if (!db) return { items: [], total: 0 };
+
+  const { search, page = 1, pageSize = 50 } = filter;
+
+  const baseConditions = [
+    eq(accounts.inviteStatus, "used"),
+    sql`${accounts.referrerCode} IS NOT NULL AND ${accounts.referrerCode} != ''`,
+  ];
+
+  if (search) {
+    baseConditions.push(
+      or(
+        like(accounts.email, `%${search}%`),
+        like(accounts.inviteCode, `%${search}%`),
+        like(accounts.referrerCode, `%${search}%`)
+      ) as any
+    );
+  }
+
+  const whereClause = and(...baseConditions);
+
+  const [items, countResult] = await Promise.all([
+    db
+      .select()
+      .from(accounts)
+      .where(whereClause)
+      .orderBy(desc(accounts.createdAt))
+      .limit(pageSize)
+      .offset((page - 1) * pageSize),
+    db.select({ count: sql<number>`count(*)` }).from(accounts).where(whereClause),
+  ]);
+
+  return { items, total: Number(countResult[0]?.count ?? 0) };
+}
+
+/**
+ * 执行导出：
+ *   1. 将指定账号的完整信息写入 export_logs 表
+ *   2. 从 accounts 表物理删除这些账号
+ *   返回批次号和实际导出数量
+ */
+export async function exportAccounts(
+  accountIds: number[]
+): Promise<{ batchId: string; exported: number }> {
+  if (accountIds.length === 0) return { batchId: "", exported: 0 };
+
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // 1. 查询这些账号的完整信息（只导出满足条件的账号，防止误操作）
+  const rows = await db
+    .select()
+    .from(accounts)
+    .where(
+      and(
+        inArray(accounts.id, accountIds),
+        eq(accounts.inviteStatus, "used"),
+        sql`${accounts.referrerCode} IS NOT NULL AND ${accounts.referrerCode} != ''`
+      )
+    );
+
+  if (rows.length === 0) return { batchId: "", exported: 0 };
+
+  const batchId = generateExportBatchId();
+  const exportedAt = new Date();
+
+  // 2. 批量写入 export_logs
+  const logRows: InsertExportLog[] = rows.map((row) => ({
+    exportBatchId: batchId,
+    email: row.email,
+    password: row.password,
+    token: row.token ?? undefined,
+    userId: row.userId ?? undefined,
+    displayname: row.displayname ?? undefined,
+    phone: row.phone ?? undefined,
+    membershipVersion: row.membershipVersion ?? undefined,
+    totalCredits: row.totalCredits ?? 0,
+    inviteCode: row.inviteCode ?? undefined,
+    referrerCode: row.referrerCode ?? undefined,
+    registeredAt: row.registeredAt ?? undefined,
+    exportedAt,
+  }));
+
+  await db.insert(exportLogs).values(logRows);
+
+  // 3. 从 accounts 表物理删除（只删除实际写入了日志的账号）
+  const exportedIds = rows.map((r) => r.id);
+  await db.delete(accounts).where(inArray(accounts.id, exportedIds));
+
+  return { batchId, exported: rows.length };
+}
+
+/**
+ * 查询导出批次列表（按批次号聚合）
+ */
+export async function getExportBatches(filter: {
+  search?: string;
+  page?: number;
+  pageSize?: number;
+} = {}) {
+  const db = await getDb();
+  if (!db) return { items: [], total: 0 };
+
+  const { search, page = 1, pageSize = 20 } = filter;
+
+  // 按批次聚合：批次号、导出时间、账号数量
+  const conditions = [];
+  if (search) {
+    conditions.push(
+      or(
+        like(exportLogs.exportBatchId, `%${search}%`),
+        like(exportLogs.email, `%${search}%`)
+      )
+    );
+  }
+
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+  const [items, countResult] = await Promise.all([
+    db
+      .select({
+        exportBatchId: exportLogs.exportBatchId,
+        exportedAt: sql<Date>`MIN(${exportLogs.exportedAt})`,
+        accountCount: sql<number>`count(*)`,
+      })
+      .from(exportLogs)
+      .where(whereClause)
+      .groupBy(exportLogs.exportBatchId)
+      .orderBy(desc(sql`MIN(${exportLogs.exportedAt})`))
+      .limit(pageSize)
+      .offset((page - 1) * pageSize),
+    db
+      .select({ count: sql<number>`count(DISTINCT ${exportLogs.exportBatchId})` })
+      .from(exportLogs)
+      .where(whereClause),
+  ]);
+
+  return { items, total: Number(countResult[0]?.count ?? 0) };
+}
+
+/**
+ * 查询某个批次的账号明细
+ */
+export async function getExportBatchDetail(filter: {
+  batchId: string;
+  search?: string;
+  page?: number;
+  pageSize?: number;
+}) {
+  const db = await getDb();
+  if (!db) return { items: [], total: 0 };
+
+  const { batchId, search, page = 1, pageSize = 50 } = filter;
+
+  const conditions = [eq(exportLogs.exportBatchId, batchId)];
+  if (search) {
+    conditions.push(
+      or(
+        like(exportLogs.email, `%${search}%`),
+        like(exportLogs.inviteCode, `%${search}%`),
+        like(exportLogs.referrerCode, `%${search}%`)
+      ) as any
+    );
+  }
+
+  const whereClause = and(...conditions);
+
+  const [items, countResult] = await Promise.all([
+    db
+      .select()
+      .from(exportLogs)
+      .where(whereClause)
+      .orderBy(asc(exportLogs.id))
+      .limit(pageSize)
+      .offset((page - 1) * pageSize),
+    db.select({ count: sql<number>`count(*)` }).from(exportLogs).where(whereClause),
+  ]);
+
+  return { items, total: Number(countResult[0]?.count ?? 0) };
 }

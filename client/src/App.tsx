@@ -13,6 +13,7 @@ import Automation from "./pages/Automation";
 import TaskLogs from "./pages/TaskLogs";
 import ApiDocs from "./pages/ApiDocs";
 import PhoneNumbers from "./pages/PhoneNumbers";
+import ExportRecords from "./pages/ExportRecords";
 
 function Router() {
   return (
@@ -26,6 +27,7 @@ function Router() {
         <Route path="/automation" component={Automation} />
         <Route path="/logs" component={TaskLogs} />
         <Route path="/api-docs" component={ApiDocs} />
+        <Route path="/exports" component={ExportRecords} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

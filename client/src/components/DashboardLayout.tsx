@@ -16,6 +16,7 @@ import { useIsMobile } from "@/hooks/useMobile";
 import {
   Activity,
   Bot,
+  Download,
   FileText,
   GitBranch,
   LayoutDashboard,
@@ -37,6 +38,7 @@ const menuItems = [
   { icon: GitBranch, label: "邀请关系", path: "/invitation-tree" },
   { icon: Bot, label: "自动化任务", path: "/automation" },
   { icon: FileText, label: "执行日志", path: "/logs" },
+  { icon: Download, label: "导出记录", path: "/exports" },
   { icon: Webhook, label: "API 集成", path: "/api-docs" },
 ];
 
