@@ -474,8 +474,8 @@ export async function startAdsPowerBrowser(
       params: {
         user_id: profileId,
         open_tabs: 1,
-        ip_tab: 0,
-        new_first_tab: 0,
+        ip_tab: 1,         // 1 = 打开 IP 检测页（即 start.adspower.net 启动页）
+        new_first_tab: 1,  // 1 = 使用新版 IP 检测页（与 AdsPower 客户端行为一致）
       },
     });
     const data = response.data;
