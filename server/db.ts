@@ -752,6 +752,28 @@ export async function getRunningLogsForTask(taskId: number) {
     );
 }
 
+/**
+ * 根据 adspowerBrowserId 查找当前 running 状态的任务日志
+ * 用于插件异常上报时定位对应的任务和日志
+ */
+export async function getRunningLogByBrowserId(browserId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const result = await db
+    .select()
+    .from(taskLogs)
+    .where(
+      and(
+        eq(taskLogs.adspowerBrowserId, browserId),
+        eq(taskLogs.status, "running")
+      )
+    )
+    .limit(1);
+
+  return result.length > 0 ? result[0] : undefined;
+}
+
 // ─── Export Logs ──────────────────────────────────────────────────────────────
 
 /**

@@ -35,7 +35,7 @@ import {
 } from "./db";
 import { checkAdsPowerConnection, getActiveBrowsers } from "./adspower";
 import { ADSPOWER_CONFIG } from "./config";
-import { startScheduler, pauseScheduler, stopScheduler, getRunningTaskIds } from "./scheduler";
+import { startScheduler, pauseScheduler, stopScheduler, getRunningTaskIds, handlePluginError } from "./scheduler";
 
 // ─── Zod Schemas ─────────────────────────────────────────────────────────────
 
@@ -433,7 +433,42 @@ const exportRouter = router({
     }),
 });
 
-// ─── App Router ───────────────────────────────────────────────────────────────
+// ─── Plugin Router （插件回调接口） ───────────────────────────────────────────────────────
+
+const pluginRouter = router({
+  /**
+   * 插件异常上报接口
+   *
+   * 插件在注册失败时调用此接口，传入当前浏览器的 profileId 和错误信息。
+   * 服务器收到后会自动：
+   *   1. 将对应任务日志标记为 failed
+   *   2. 关闭并删除该 AdsPower 浏览器环境
+   *   3. 如果任务仍在运行中，立即触发下一次注册
+   *
+   * 请求示例：
+   * {
+   *   "browserId": "kxxxxx",      // AdsPower 环境 ID（profile_id）
+   *   "error": "验证码超时"         // 错误描述
+   * }
+   */
+  reportError: publicProcedure
+    .input(z.object({
+      browserId: z.string().min(1, "browserId 不能为空"),
+      error: z.string().min(1, "错误信息不能为空"),
+    }))
+    .mutation(async ({ input }) => {
+      const result = await handlePluginError(input.browserId, input.error);
+      if (!result.success) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: result.message,
+        });
+      }
+      return { success: true, message: result.message };
+    }),
+});
+
+// ─── App Router ───────────────────────────────────────────────────────────────────
 
 export const appRouter = router({
   accounts: accountsRouter,
@@ -442,6 +477,7 @@ export const appRouter = router({
   taskLogs: taskLogsRouter,
   phoneNumbers: phoneNumbersRouter,
   export: exportRouter,
+  plugin: pluginRouter,
 });
 
 export type AppRouter = typeof appRouter;

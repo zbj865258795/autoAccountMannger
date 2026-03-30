@@ -15,6 +15,7 @@ import {
   getAutomationTaskById,
   getRunningLogsWithBrowserId,
   getRunningLogsForTask,
+  getRunningLogByBrowserId,
   failAllRunningLogsForTask,
   incrementTaskCounters,
   updateAutomationTask,
@@ -258,10 +259,77 @@ export async function stopScheduler(taskId: number): Promise<void> {
   if (schedulerTimers.size === 0) stopBrowserMonitor();
 }
 
-// ─── 獲取運行中的任務 ID ──────────────────────────────────────────────────────
+// ─── 獲取運行中的任务 ID ────────────────────────────────────────────────────────────────
 
 export function getRunningTaskIds(): number[] {
   return Array.from(schedulerTimers.keys());
+}
+
+// ─── 插件异常上报处理 ────────────────────────────────────────────────────────────────
+
+/**
+ * 处理插件上报的注册异常
+ *
+ * 流程：
+ * 1. 根据 browserId 查找对应的 taskLog 和 taskId
+ * 2. 将该日志标记为 failed，记录错误信息
+ * 3. 关闭并删除对应的 AdsPower 浏览器环境
+ * 4. 更新任务失败计数
+ * 5. 立即触发一次 executeTask，让任务继续创建新的浏览器实例
+ */
+export async function handlePluginError(
+  browserId: string,
+  errorMessage: string
+): Promise<{ success: boolean; message: string }> {
+  console.log(`[PluginCallback] Received error report for browser ${browserId}: ${errorMessage}`);
+
+  // 1. 根据 browserId 查找对应的 running 日志
+  const log = await getRunningLogByBrowserId(browserId);
+
+  if (!log) {
+    console.warn(`[PluginCallback] No running log found for browser ${browserId}, ignoring`);
+    return { success: false, message: `未找到对应的运行中任务（browserId: ${browserId}）` };
+  }
+
+  const taskId = log.taskId!;
+  const logId = log.id;
+  const durationMs = log.startedAt
+    ? Date.now() - new Date(log.startedAt).getTime()
+    : undefined;
+
+  // 2. 将日志标记为 failed
+  await updateTaskLog(logId, {
+    status: "failed",
+    errorMessage: `插件上报异常: ${errorMessage}`,
+    durationMs,
+    completedAt: new Date(),
+  });
+
+  // 3. 关闭并删除 AdsPower 浏览器环境
+  const apiUrl = taskApiUrls.get(taskId) || ADSPOWER_CONFIG.apiUrl;
+  const adspowerConfig = { apiUrl, apiKey: ADSPOWER_CONFIG.apiKey };
+
+  console.log(`[PluginCallback] Closing and deleting browser ${browserId} for task ${taskId}`);
+  await stopAndDeleteAdsPowerBrowser(adspowerConfig, browserId).catch((e) =>
+    console.error(`[PluginCallback] Failed to cleanup browser ${browserId}: ${e}`)
+  );
+
+  // 4. 更新任务失败计数
+  await incrementTaskCounters(taskId, { totalFailed: 1 });
+
+  // 5. 如果任务仍在运行中，立即触发一次新的执行循环（创建新浏览器实例）
+  const task = await getAutomationTaskById(taskId);
+  if (task && task.status === "running") {
+    console.log(`[PluginCallback] Task ${taskId} is still running, triggering next execution immediately`);
+    // 异步触发，不阅塞当前请求
+    executeTask(taskId).catch((e) =>
+      console.error(`[PluginCallback] Failed to trigger next execution for task ${taskId}: ${e}`)
+    );
+  } else {
+    console.log(`[PluginCallback] Task ${taskId} is not running (status: ${task?.status}), skipping re-trigger`);
+  }
+
+  return { success: true, message: `已处理异常，浏览器 ${browserId} 已关闭并删除，任务已触发下一次注册` };
 }
 
 // ─── 核心執行邏輯（只負責創建瀏覽器，不操作邀請碼） ──────────────────────────
