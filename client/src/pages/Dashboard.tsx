@@ -138,7 +138,7 @@ export default function Dashboard() {
       </div>
 
       {/* 统计卡片：导出相关 */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-4">
         <StatCard
           title="已导出账号"
           value={stats?.totalExported ?? 0}

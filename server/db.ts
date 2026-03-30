@@ -844,7 +844,7 @@ export async function exportAccounts(
   const batchId = generateExportBatchId();
   const exportedAt = new Date();
 
-  // 2. 批量写入 export_logs
+  // 2. 批量写入 export_logs + 3. 物理删除 accounts，包裹在事务中保证原子性
   const logRows: InsertExportLog[] = rows.map((row) => ({
     exportBatchId: batchId,
     email: row.email,
@@ -861,11 +861,12 @@ export async function exportAccounts(
     exportedAt,
   }));
 
-  await db.insert(exportLogs).values(logRows);
-
-  // 3. 从 accounts 表物理删除（只删除实际写入了日志的账号）
   const exportedIds = rows.map((r) => r.id);
-  await db.delete(accounts).where(inArray(accounts.id, exportedIds));
+
+  await db.transaction(async (tx) => {
+    await tx.insert(exportLogs).values(logRows);
+    await tx.delete(accounts).where(inArray(accounts.id, exportedIds));
+  });
 
   return { batchId, exported: rows.length };
 }
