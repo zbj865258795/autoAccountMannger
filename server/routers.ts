@@ -27,6 +27,7 @@ import {
   updateAutomationTask,
   deleteAutomationTask,
   updateInviteStatus,
+  updateInviteStatusById,
   exportAccounts,
   getExportableAccounts,
   getExportBatches,
@@ -192,6 +193,15 @@ const accountsRouter = router({
     }))
     .mutation(async ({ input }) => {
       await updateInviteStatus(input.inviteCode, input.status);
+      return { success: true };
+    }),
+
+  // ★ 新增：按账号 ID 将邀请码状态重置为「未使用」
+  // 用于注册异常导致邀请码未被归还时，手动在账号列表重置
+  resetInviteCode: publicProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      await updateInviteStatusById(input.id, "unused");
       return { success: true };
     }),
 });

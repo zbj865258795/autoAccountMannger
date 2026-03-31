@@ -38,8 +38,10 @@ const schedulerTimers = new Map<number, NodeJS.Timeout>();
 // 記錄每個任務對應的 AdsPower apiUrl（用於監控時清理瀏覽器）
 const taskApiUrls = new Map<number, string>();
 
-// ★ 修复问题B：每个任务的 executeTask 防并发锁
-// 防止多个浏览器同时失败时，handlePluginError 被并发调用，导致同时触发多个 executeTask
+// ★ 修复：每个任务的 executeTask 全局防并发锁
+// 防止以下两种场景同时触发多个 executeTask 导致创建多余浏览器：
+//   1. startScheduler 立即执行 + 定时器第一次触发（时间差极短时会并发）
+//   2. 多个浏览器同时失败时，handlePluginError 被并发调用
 const executeTaskLocks = new Map<number, boolean>();
 
 // ─── 瀏覽器狀態監控 ──────────────────────────────────────────────────────────
@@ -361,6 +363,22 @@ export async function handlePluginError(
 // ─── 核心執行邏輯（只負責創建瀏覽器，不操作邀請碼） ──────────────────────────
 
 async function executeTask(taskId: number): Promise<void> {
+  // ★ 修复：全局防并发锁，同一任务同一时刻只允许一个 executeTask 在运行
+  // 这是防止「创建两个浏览器」的核心修复
+  if (executeTaskLocks.get(taskId)) {
+    console.log(`[Scheduler] Task ${taskId}: executeTask already in progress, skipping concurrent call`);
+    return;
+  }
+  executeTaskLocks.set(taskId, true);
+
+  try {
+    await _executeTask(taskId);
+  } finally {
+    executeTaskLocks.delete(taskId);
+  }
+}
+
+async function _executeTask(taskId: number): Promise<void> {
   const task = await getAutomationTaskById(taskId);
   if (!task) return;
 

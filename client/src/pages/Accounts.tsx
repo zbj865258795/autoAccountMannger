@@ -115,6 +115,17 @@ export default function Accounts() {
     { keepPreviousData: true } as any
   );
 
+  const resetInviteCode = trpc.accounts.resetInviteCode.useMutation({
+    onSuccess: () => {
+      toast.success("邀请码已重置为未使用");
+      utils.accounts.list.invalidate();
+      utils.dashboard.stats.invalidate();
+    },
+    onError: (err) => {
+      toast.error(`重置失败：${err.message}`);
+    },
+  });
+
   const deleteAccount = trpc.accounts.delete.useMutation({
     onSuccess: () => {
       toast.success("账号已删除");
@@ -584,6 +595,39 @@ export default function Accounts() {
                             boxShadow: "-2px 0 4px rgba(0,0,0,0.15)",
                           }}
                         >
+                          <div className="flex items-center gap-1 justify-center">
+                          {/* 重置邀请码按钮：仅在邀请码状态为「邀请中」时显示 */}
+                          {account.inviteStatus === "in_progress" && (
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 px-2 text-xs text-yellow-400 hover:text-yellow-300 hover:bg-yellow-500/10"
+                                  title="重置邀请码为未使用"
+                                >
+                                  重置
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>确认重置邀请码</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    将账号 <strong>{account.email}</strong> 的邀请码状态从「邀请中」重置为「未使用」，使其可以被再次使用。
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>取消</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    className="bg-yellow-600 text-white hover:bg-yellow-700"
+                                    onClick={() => resetInviteCode.mutate({ id: account.id })}
+                                  >
+                                    确认重置
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          )}
                           <AlertDialog>
                             <AlertDialogTrigger asChild>
                               <Button
@@ -615,6 +659,7 @@ export default function Accounts() {
                               </AlertDialogFooter>
                             </AlertDialogContent>
                           </AlertDialog>
+                          </div>
                         </td>
                       </tr>
                     );
