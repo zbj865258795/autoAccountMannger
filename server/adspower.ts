@@ -571,7 +571,9 @@ export async function getActiveBrowsers(apiUrl: string): Promise<BrowserStatus[]
     });
     if (response.data?.code === 0) {
       return (response.data?.data?.list || []).map((item: Record<string, unknown>) => ({
-        browserId: String(item.user_id ?? ""),
+        // ★ 修复问题A：同时兼容 v1(user_id) 和 v2(profile_id) 字段名
+        // v1 API 返回 user_id，v2 API 创建的浏览器在此接口可能返回 profile_id
+        browserId: String(item.profile_id ?? item.user_id ?? ""),
         status: "Active" as const,
       }));
     }

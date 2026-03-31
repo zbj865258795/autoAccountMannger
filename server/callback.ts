@@ -370,8 +370,12 @@ export function registerCallbackRoutes(app: Express): void {
 
       const result = await handlePluginError(String(browserId), String(error));
 
+      // ★ 修复问题D：找不到对应日志时返回 200（而非 404）
+      // 插件收到 404 会认为接口不存在并抛出异常，导致流程停止
+      // 实际上找不到日志属于正常情况（比如浏览器已被清理），应该返回成功让插件继续执行
       if (!result.success) {
-        return res.status(404).json({ success: false, error: result.message });
+        console.warn(`[Callback] report-error: ${result.message} (returning 200 to avoid plugin crash)`);
+        return res.json({ success: false, message: result.message });
       }
 
       console.log(`[Callback] Plugin error reported for browser ${browserId}: ${error}`);

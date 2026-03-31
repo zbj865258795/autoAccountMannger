@@ -38,6 +38,10 @@ const schedulerTimers = new Map<number, NodeJS.Timeout>();
 // 記錄每個任務對應的 AdsPower apiUrl（用於監控時清理瀏覽器）
 const taskApiUrls = new Map<number, string>();
 
+// ★ 修复问题B：每个任务的 executeTask 防并发锁
+// 防止多个浏览器同时失败时，handlePluginError 被并发调用，导致同时触发多个 executeTask
+const executeTaskLocks = new Map<number, boolean>();
+
 // ─── 瀏覽器狀態監控 ──────────────────────────────────────────────────────────
 
 let browserMonitorTimer: NodeJS.Timeout | null = null;
@@ -334,13 +338,19 @@ export async function handlePluginError(
   await incrementTaskCounters(taskId, { totalFailed: 1 });
 
   // 5. 如果任务仍在运行中，立即触发一次新的执行循环（创建新浏览器实例）
+  // ★ 修复问题B：加锁防止并发，同一任务同一时刻只允许一个 executeTask 在运行
   const task = await getAutomationTaskById(taskId);
   if (task && task.status === "running") {
-    console.log(`[PluginCallback] Task ${taskId} is still running, triggering next execution immediately`);
-    // 异步触发，不阅塞当前请求
-    executeTask(taskId).catch((e) =>
-      console.error(`[PluginCallback] Failed to trigger next execution for task ${taskId}: ${e}`)
-    );
+    if (executeTaskLocks.get(taskId)) {
+      console.log(`[PluginCallback] Task ${taskId} executeTask already in progress, skipping duplicate trigger`);
+    } else {
+      console.log(`[PluginCallback] Task ${taskId} is still running, triggering next execution immediately`);
+      executeTaskLocks.set(taskId, true);
+      // 异步触发，不阻塞当前请求
+      executeTask(taskId)
+        .catch((e) => console.error(`[PluginCallback] Failed to trigger next execution for task ${taskId}: ${e}`))
+        .finally(() => executeTaskLocks.delete(taskId));
+    }
   } else {
     console.log(`[PluginCallback] Task ${taskId} is not running (status: ${task?.status}), skipping re-trigger`);
   }

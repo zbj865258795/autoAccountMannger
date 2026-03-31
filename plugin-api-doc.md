@@ -140,6 +140,7 @@
 | `totalCredits` | number | 否 | 账号总积分，默认 `0` |
 | `freeCredits` | number | 否 | 免费积分，默认 `0` |
 | `refreshCredits` | number | 否 | 刷新积分，默认 `0` |
+| `adspowerBrowserId` | string | 否 | AdsPower 浏览器环境 ID（启动页 URL 中的 `id` 参数），建议传入，用于后端精确匹配任务日志 |
 
 **请求示例（在你现有数据结构上加 `inviterAccountId` 即可）：**
 
@@ -155,7 +156,8 @@
   "freeCredits": 2500,
   "inviteCode": "DNTT7V7WJAS6ABI",
   "referrerCode": "XXXXXXXXX",
-  "inviterAccountId": 30001
+  "inviterAccountId": 30001,
+  "adspowerBrowserId": "k1ay3ub1"
 }
 ```
 
