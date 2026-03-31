@@ -403,6 +403,61 @@ async function resetInviteCode(inviterAccountId) {
         </div>
       </Section>
 
+      {/* 异常上报接口 */}
+      <Section title="接口 6：插件异常上报" icon={AlertCircle}>
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="font-mono text-xs border-green-500/30 text-green-400 bg-green-500/10">POST</Badge>
+            <code className="text-xs text-primary font-mono">/api/callback/report-error</code>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            注册流程中任意步骤失败时调用。服务器收到后会自动：
+            将对应任务日志标记为失败、关闭并删除该 AdsPower 浏览器环境、
+            如果任务仍在运行中则立即触发下一次注册。
+          </p>
+
+          <div className="p-3 rounded-lg bg-orange-500/5 border border-orange-500/20 text-xs">
+            <p className="font-medium text-orange-400 mb-1">ℹ️ browserId 如何获取</p>
+            <p className="text-muted-foreground">
+              启动页面 URL 中已包含：<code className="text-primary">https://start.adspower.net/?id=<strong>kxxxxx</strong>&host=...</code>
+              。其中 <code className="text-primary">id</code> 参数即为 <code className="text-primary">browserId</code>，插件可直接从 URL 中读取。
+            </p>
+          </div>
+
+          <p className="text-xs font-semibold text-foreground">请求 Body</p>
+          <ParamTable rows={[
+            { name: "browserId", type: "string", required: true, desc: "AdsPower 环境 ID（即启动页 URL 中的 id 参数）" },
+            { name: "error", type: "string", required: true, desc: "错误描述，如：验证码识别失败、手机号超时等" },
+          ]} />
+
+          <p className="text-xs font-semibold text-foreground">返回值</p>
+          <ReturnTable rows={[
+            { name: "success", type: "boolean", desc: "true=已处理" },
+            { name: "message", type: "string", desc: "处理结果说明" },
+          ]} />
+
+          <p className="text-xs font-semibold text-foreground">示例</p>
+          <CodeBlock code={`// 请求
+POST /api/callback/report-error
+{ "browserId": "k1ay3ub1", "error": "验证码识别失败" }
+
+// 成功响应
+{ "success": true, "message": "已处理异常，浏览器 k1ay3ub1 已关闭并删除，任务已触发下一次注册" }`} />
+
+          <CodeBlock code={`// 插件中获取 browserId 并上报错误
+const browserId = new URLSearchParams(window.location.search).get('id');
+
+async function reportError(errorMsg) {
+  if (!browserId) return;
+  await fetch('${BASE_URL}/api/callback/report-error', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ browserId, error: errorMsg })
+  });
+}`} />
+        </div>
+      </Section>
+
       {/* 完整插件集成示例 */}
       <Section title="完整插件集成示例" icon={Code2}>
         <div className="p-3 rounded-lg bg-yellow-500/5 border border-yellow-500/20 mb-3">
@@ -413,84 +468,88 @@ async function resetInviteCode(inviterAccountId) {
         </div>
         <CodeBlock code={`const SYSTEM_API = '${BASE_URL}';
 
-// ── 接口1：获取邀请码（自动标记为邀请中）──
+// 获取当前浏览器 ID（从启动页 URL 中读取）
+const BROWSER_ID = new URLSearchParams(window.location.search).get('id');
+
+// ── 接口1：获取邀请码 ──
 async function getInviteCode() {
   const res = await fetch(\`\${SYSTEM_API}/api/callback/next-invite-code\`);
   const data = await res.json();
   if (!data.inviteCode) return null;
-  return { id: data.id, inviteCode: data.inviteCode };  // 保存 id！
+  return { id: data.id, inviteCode: data.inviteCode };
 }
 
-// ── 接口2：注册失败时重置邀请码 ──
+// ── 接口2：重置邀请码 ──
 async function resetInviteCode(id) {
   await fetch(\`\${SYSTEM_API}/api/callback/reset-invite-code\`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id })
   });
 }
 
-// ── 接口3：获取手机号（自动标记为使用中）──
+// ── 接口3：获取手机号 ──
 async function getPhone() {
   const res = await fetch(\`\${SYSTEM_API}/api/callback/get-phone\`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }
   });
   const data = await res.json();
   if (!data.success) return null;
-  return { id: data.id, phone: data.phone, smsUrl: data.smsUrl };  // 保存 id！
+  return { id: data.id, phone: data.phone, smsUrl: data.smsUrl };
 }
 
 // ── 接口4：标记手机号已使用 ──
 async function markPhoneUsed(phoneId) {
   await fetch(\`\${SYSTEM_API}/api/callback/mark-phone-used\`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: phoneId })
   });
 }
 
-// ── 接口5：上报账号数据 ──
+// ── 接口5：上报注册成功 ──
 async function reportSuccess(accountData, inviterAccountId) {
   const res = await fetch(\`\${SYSTEM_API}/api/callback/register\`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...accountData, inviterAccountId })
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...accountData, inviterAccountId, adspowerBrowserId: BROWSER_ID })
   });
   return await res.json();
 }
 
+// ── 接口6：上报注册异常 ──
+async function reportError(errorMsg) {
+  if (!BROWSER_ID) return;
+  await fetch(\`\${SYSTEM_API}/api/callback/report-error\`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ browserId: BROWSER_ID, error: errorMsg })
+  });
+}
+
 // ============================================================
-// 主流程（在你现有的注册逻辑中替换/插入）
+// 主流程
 // ============================================================
 async function autoRegister() {
-  // Step 1: 获取邀请码（自动标记为邀请中）
   const inviteInfo = await getInviteCode();
-  if (!inviteInfo) { console.log('❌ 无可用邀请码'); return; }
+  if (!inviteInfo) {
+    await reportError('无可用邀请码');
+    return;
+  }
   const { id: inviterAccountId, inviteCode } = inviteInfo;
 
-  // Step 2: 获取手机号
   const phoneInfo = await getPhone();
   if (!phoneInfo) {
-    await resetInviteCode(inviterAccountId);  // 归还邀请码
-    console.log('❌ 无可用手机号');
+    await resetInviteCode(inviterAccountId);
+    await reportError('无可用手机号');
     return;
   }
 
   try {
-    // Step 3: 执行你现有的注册逻辑
     const accountData = await yourExistingRegisterFunction(inviteCode, phoneInfo.phone, phoneInfo.smsUrl);
-
-    // Step 4: 获取到验证码后标记手机号已使用
     await markPhoneUsed(phoneInfo.id);
-
-    // Step 5: 注册成功后上报（传入 inviterAccountId）
     const result = await reportSuccess(accountData, inviterAccountId);
-    console.log('✅ 上报结果:', result);
-
+    console.log('✅ 注册成功:', result);
   } catch (err) {
-    // 注册失败：重置邀请码，使其可被下次重新分配
     await resetInviteCode(inviterAccountId);
-    console.error('❌ 注册失败，邀请码已重置:', err);
+    await reportError(err.message || '注册失败');
+    console.error('❌ 注册失败:', err);
   }
 }`} />
       </Section>
@@ -504,6 +563,7 @@ async function autoRegister() {
             { method: "POST", path: "/api/callback/get-phone", desc: "获取手机号（自动标记为「使用中」），返回 id、phone、smsUrl" },
             { method: "POST", path: "/api/callback/mark-phone-used", desc: "标记手机号为「已使用」，Body: { id }" },
             { method: "POST", path: "/api/callback/register", desc: "上报账号数据，Body: { email*, password*, inviterAccountId*, inviteCode, phone, token, ... }" },
+            { method: "POST", path: "/api/callback/report-error", desc: "插件异常上报：注册失败时调用，自动关闭/删除浏览器并触发下一次注册，Body: { browserId*, error* }" },
             { method: "GET",  path: "/api/callback/health", desc: "健康检查" },
           ].map((api) => (
             <div key={api.path} className="flex items-start gap-3 p-3 rounded-lg bg-muted/20 border border-border/30">

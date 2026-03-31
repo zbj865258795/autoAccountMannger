@@ -39,9 +39,11 @@ import {
   getAutomationTasks,
   getTaskLogs,
   updateTaskLog,
+  getAutomationTaskById,
 } from "./db";
 import { stopAndDeleteAdsPowerBrowser } from "./adspower";
 import { ADSPOWER_CONFIG } from "./config";
+import { handlePluginError, stopScheduler } from "./scheduler";
 
 export function registerCallbackRoutes(app: Express): void {
 
@@ -234,6 +236,18 @@ export function registerCallbackRoutes(app: Express): void {
           // 使用原子自增，避免并发 read-modify-write 导致计数丢失
           await incrementTaskCounters(task.id, { totalAccountsCreated: 1, totalSuccess: 1 });
 
+          // ── 检查是否已达到目标账号数，达到则自动停止任务 ──
+          if (task.targetCount) {
+            const updatedTask = await getAutomationTaskById(task.id);
+            const created = updatedTask?.totalAccountsCreated ?? 0;
+            if (created >= task.targetCount) {
+              console.log(`[Callback] Task ${task.id}: Target count reached (${created}/${task.targetCount}), auto-stopping`);
+              stopScheduler(task.id).catch((e) =>
+                console.error(`[Callback] Failed to auto-stop task ${task.id}: ${e}`)
+              );
+            }
+          }
+
           // ── 匹配对应的任务日志 ──
           // 优先级：1) adspowerBrowserId 直接匹配  2) usedInviteCode 匹配  3) 任意 running 日志
           const logs = await getTaskLogs({
@@ -337,6 +351,33 @@ export function registerCallbackRoutes(app: Express): void {
       });
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ success: false, error: msg });
+    }
+  });
+
+  // ─────────────────────────────────────────────
+  // 插件异常上报（注册失败时调用）
+  // ─────────────────────────────────────────────
+  app.post("/api/callback/report-error", async (req: Request, res: Response) => {
+    try {
+      const { browserId, error } = req.body;
+      if (!browserId) {
+        return res.status(400).json({ success: false, error: "browserId is required" });
+      }
+      if (!error) {
+        return res.status(400).json({ success: false, error: "error message is required" });
+      }
+
+      const result = await handlePluginError(String(browserId), String(error));
+
+      if (!result.success) {
+        return res.status(404).json({ success: false, error: result.message });
+      }
+
+      console.log(`[Callback] Plugin error reported for browser ${browserId}: ${error}`);
+      return res.json({ success: true, message: result.message });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
       return res.status(500).json({ success: false, error: msg });
     }
   });

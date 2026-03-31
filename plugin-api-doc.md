@@ -190,7 +190,57 @@
 
 ---
 
-## 6. 健康检查
+## 6. 插件异常上报
+
+**`POST /api/callback/report-error`**
+
+注册流程中任意步骤失败时调用。服务器收到后会自动：
+1. 将对应任务日志标记为 `failed`，记录错误信息
+2. 关闭并删除该 AdsPower 浏览器环境
+3. 如果任务仍在运行中，立即触发下一次注册
+
+> **browserId 如何获取？**
+> 启动页面 URL 中已包含：`https://start.adspower.net/?id=kxxxxx&host=...`
+> 其中 `id` 参数即为 `browserId`，插件可直接从 URL 中读取。
+
+**请求 Body：**
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `browserId` | string | **是** | AdsPower 环境 ID（启动页 URL 中的 `id` 参数） |
+| `error` | string | **是** | 错误描述，如：验证码识别失败、手机号超时 |
+
+**请求示例：**
+
+```json
+{ "browserId": "k1ay3ub1", "error": "验证码识别失败" }
+```
+
+**成功响应：**
+
+```json
+{ "success": true, "message": "已处理异常，浏览器 k1ay3ub1 已关闭并删除，任务已触发下一次注册" }
+```
+
+**插件中的使用示例：**
+
+```js
+// 从 URL 中读取 browserId
+const browserId = new URLSearchParams(window.location.search).get('id');
+
+async function reportError(errorMsg) {
+  if (!browserId) return;
+  await fetch('http://localhost:3900/api/callback/report-error', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ browserId, error: errorMsg })
+  });
+}
+```
+
+---
+
+## 7. 健康检查
 
 **`GET /api/callback/health`**
 
@@ -213,4 +263,5 @@
 | POST | `/api/callback/get-phone` | 无 | `id`、`phone`、`smsUrl` |
 | POST | `/api/callback/mark-phone-used` | `id` | — |
 | POST | `/api/callback/register` | `email`、`password`、`inviterAccountId` | `success`、`email`、`inviteCode` |
+| POST | `/api/callback/report-error` | `browserId`、`error` | `success`、`message` |
 | GET | `/api/callback/health` | 无 | `status` |
