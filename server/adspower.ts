@@ -585,17 +585,36 @@ export async function getActiveBrowsers(apiUrl: string): Promise<BrowserStatus[]
 // 检查 AdsPower 连通性
 // ─────────────────────────────────────────────
 
-export async function checkAdsPowerConnection(apiUrl: string, apiKey?: string): Promise<boolean> {
-  try {
-    const headers: Record<string, string> = {};
-    if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+export async function checkAdsPowerConnection(apiUrl: string, _apiKey?: string): Promise<boolean> {
+  // ★ 修复：改用 /status 接口（无需 apiKey，专门用于连通性检测）
+  // /api/v1/user/list 需要 apiKey 且可能因权限问题返回非 0 的 code，导致误判断为未连接
+  const endpoints = [
+    `${apiUrl}/status`,
+    `${apiUrl}/api/v1/status`,
+  ];
 
+  for (const endpoint of endpoints) {
+    try {
+      const response = await axios.get(endpoint, { timeout: 5000 });
+      // AdsPower 本地服务运行时，/status 返回 code=0 或 HTTP 200
+      if (response.status === 200) {
+        const code = response.data?.code;
+        // code 为 0 或者接口本身就是健康检查接口（返回的 data 不含 code）
+        if (code === 0 || code === undefined) return true;
+      }
+    } catch {
+      // 尝试下一个接口
+    }
+  }
+
+  // 最后尝试用原有 /api/v1/user/list 接口并宽松判断（HTTP 200 即认为连接）
+  try {
     const response = await axios.get(`${apiUrl}/api/v1/user/list`, {
       params: { page: 1, page_size: 1 },
-      headers,
       timeout: 5000,
     });
-    return response.data?.code === 0;
+    // 只要 HTTP 状态码 200 就认为连接成功（不再严格要求 code === 0）
+    return response.status === 200;
   } catch {
     return false;
   }

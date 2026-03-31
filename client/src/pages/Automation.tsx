@@ -343,14 +343,23 @@ function EditTaskDialog({
 // ─── AdsPower 连接状态 ────────────────────────────────────────────────────────
 
 function AdsPowerStatus({ apiUrl }: { apiUrl: string }) {
-  const { data, isLoading, refetch } = trpc.automation.checkAdspower.useQuery(
+  const { data, isLoading, isFetching, refetch } = trpc.automation.checkAdspower.useQuery(
     { apiUrl },
-    { refetchInterval: 30000 }
+    {
+      // ★ 修复：30 秒轮询一次，但 staleTime=25s 避免页面重新挂载时立即显示加载中
+      refetchInterval: 30000,
+      staleTime: 25000,
+      // ★ 修复：保留上一次的成功数据，重新请求期间不显示“未连接”
+      placeholderData: (prev) => prev,
+    }
   );
+
+  // 初次加载（还没有任何数据）时才显示转圈
+  const showSpinner = isLoading && !data;
 
   return (
     <div className="flex items-center gap-2 text-xs">
-      {isLoading ? (
+      {showSpinner ? (
         <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />
       ) : data?.connected ? (
         <>
@@ -359,11 +368,14 @@ function AdsPowerStatus({ apiUrl }: { apiUrl: string }) {
           {(data.activeBrowsers?.length ?? 0) > 0 && (
             <span className="text-muted-foreground">· {data.activeBrowsers?.length} 个活跃浏览器</span>
           )}
+          {/* ★ 后台轮询时显示微小的刷新指示，不影响已连接状态显示 */}
+          {isFetching && <Loader2 className="w-2.5 h-2.5 animate-spin text-green-400/50" />}
         </>
       ) : (
         <>
           <WifiOff className="w-3 h-3 text-red-400" />
           <span className="text-red-400">未连接</span>
+          {isFetching && <Loader2 className="w-2.5 h-2.5 animate-spin text-muted-foreground" />}
         </>
       )}
       <button onClick={() => refetch()} className="text-muted-foreground hover:text-foreground">
