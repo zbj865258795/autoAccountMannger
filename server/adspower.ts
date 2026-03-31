@@ -349,7 +349,7 @@ function createAxiosClient(config: AdsPowerConfig) {
   return axios.create({
     baseURL: config.apiUrl,
     headers,
-    timeout: 30000,  // ★ 修复：从 15s 增大到 30s，避免 AdsPower 响应慢时误超时
+    timeout: 60000,  // ★ 修复：从 30s 增大到 60s，避免 AdsPower 响应慢时误超时
   });
 }
 
@@ -501,7 +501,7 @@ export async function closeAdsPowerBrowser(
     // v2 API 使用 POST + JSON body，参数名从 user_id 改为 profile_id
     const response = await client.post("/api/v2/browser-profile/stop", {
       profile_id: browserId,
-    }, { timeout: 10000 });
+    }, { timeout: 30000 });  // ★ 修复：关闭浏览器超时从 10s 增大到 30s
     return response.data?.code === 0;
   } catch {
     return false;
