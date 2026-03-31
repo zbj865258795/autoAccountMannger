@@ -103,9 +103,25 @@ async function checkBrowserStatus(): Promise<void> {
       `[BrowserMonitor] Task ${taskId}: checking ${logs.length} browser(s) | ${activeIds.size} active in AdsPower`
     );
 
+    // ★ 修复问题6：设置 3 分钟保护窗口期
+    // 浏览器初始化和插件加载需要时间，如果就开始监控就判定为失败会误判
+    // 只有启动超过 3 分钟的浏览器才进行存活检测
+    const BROWSER_STARTUP_GRACE_MS = 3 * 60 * 1000; // 3 分钟
+
     for (const log of logs) {
       const browserId = log.adspowerBrowserId;
       if (!browserId) continue;
+
+      // ★ 保护窗口期内跳过检测
+      if (log.startedAt) {
+        const ageMs = Date.now() - new Date(log.startedAt).getTime();
+        if (ageMs < BROWSER_STARTUP_GRACE_MS) {
+          console.log(
+            `[BrowserMonitor] Browser ${browserId} (log #${log.id}) is within grace period (${Math.round(ageMs / 1000)}s < ${BROWSER_STARTUP_GRACE_MS / 1000}s), skipping check`
+          );
+          continue;
+        }
+      }
 
       if (!activeIds.has(browserId)) {
         const durationMs = log.startedAt
@@ -125,7 +141,7 @@ async function checkBrowserStatus(): Promise<void> {
 
         await incrementTaskCounters(taskId, { totalFailed: 1 });
 
-        // 嘗試清理（可能已不存在，忽略錯誤）
+        // 嘗試清理（可能已不存在，忽略錯误）
         await stopAndDeleteAdsPowerBrowser(adspowerConfig, browserId).catch(() => {});
       }
     }
