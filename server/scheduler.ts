@@ -332,9 +332,12 @@ export async function handlePluginError(
   const adspowerConfig = { apiUrl, apiKey: ADSPOWER_CONFIG.apiKey };
 
   console.log(`[PluginCallback] Closing and deleting browser ${browserId} for task ${taskId}`);
-  await stopAndDeleteAdsPowerBrowser(adspowerConfig, browserId).catch((e) =>
-    console.error(`[PluginCallback] Failed to cleanup browser ${browserId}: ${e}`)
-  );
+  // ★ 修复：关闭浏览器改为异步，不阻塞当前请求返回，避免 AdsPower 超时导致接口超时
+  stopAndDeleteAdsPowerBrowser(adspowerConfig, browserId)
+    .then((r) => {
+      if (!r.success) console.error(`[PluginCallback] Failed to cleanup browser ${browserId}: ${r.error}`);
+    })
+    .catch((e) => console.error(`[PluginCallback] Failed to cleanup browser ${browserId}: ${e}`));
 
   // 4. 更新任务失败计数
   await incrementTaskCounters(taskId, { totalFailed: 1 });

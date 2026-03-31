@@ -282,22 +282,26 @@ export function registerCallbackRoutes(app: Express): void {
               durationMs: Date.now() - (matchingLog.startedAt?.getTime() ?? Date.now()),
             });
 
-            // 注册成功后，同步关闭并删除 AdsPower 浏览器环境
+            // ★ 修复：注册成功后异步关闭浏览器（不阻塞响应）
+            // 原来是同步等待，如果 AdsPower 超时则整个接口超时，导致插件认为注册失败并重试
             if (matchingLog.adspowerBrowserId) {
               const adspowerConfig = {
                 apiUrl: task.adspowerApiUrl || ADSPOWER_CONFIG.apiUrl,
                 apiKey: ADSPOWER_CONFIG.apiKey,
               };
-              try {
-                const result = await stopAndDeleteAdsPowerBrowser(adspowerConfig, matchingLog.adspowerBrowserId);
-                if (result.success) {
-                  console.log(`[Callback] Browser ${matchingLog.adspowerBrowserId} destroyed after successful registration`);
-                } else {
-                  console.error(`[Callback] Failed to destroy browser ${matchingLog.adspowerBrowserId}: ${result.error}`);
-                }
-              } catch (e) {
-                console.error(`[Callback] Error destroying browser ${matchingLog.adspowerBrowserId}: ${e}`);
-              }
+              const browserIdToClose = matchingLog.adspowerBrowserId;
+              // 异步关闭，不阻塞当前请求的返回
+              stopAndDeleteAdsPowerBrowser(adspowerConfig, browserIdToClose)
+                .then((result) => {
+                  if (result.success) {
+                    console.log(`[Callback] Browser ${browserIdToClose} destroyed after successful registration`);
+                  } else {
+                    console.error(`[Callback] Failed to destroy browser ${browserIdToClose}: ${result.error}`);
+                  }
+                })
+                .catch((e) => {
+                  console.error(`[Callback] Error destroying browser ${browserIdToClose}: ${e}`);
+                });
             } else {
               console.warn(`[Callback] Log #${matchingLog.id} has no adspowerBrowserId, cannot destroy browser`);
             }

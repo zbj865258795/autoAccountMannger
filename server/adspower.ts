@@ -349,7 +349,7 @@ function createAxiosClient(config: AdsPowerConfig) {
   return axios.create({
     baseURL: config.apiUrl,
     headers,
-    timeout: 15000,
+    timeout: 30000,  // ★ 修复：从 15s 增大到 30s，避免 AdsPower 响应慢时误超时
   });
 }
 
@@ -552,12 +552,33 @@ export async function deleteAdsPowerBrowsers(
 
 export async function stopAndDeleteAdsPowerBrowser(
   config: AdsPowerConfig,
-  profileId: string
+  profileId: string,
+  maxRetries = 3
 ): Promise<{ success: boolean; error?: string }> {
+  // ★ 修复：增加重试机制，避免 AdsPower 偶发超时导致浏览器未被关闭
   // 先尝试关闭（可能已关闭，忽略错误）
   await closeAdsPowerBrowser(config, profileId).catch(() => {});
-  // 再删除
-  return deleteAdsPowerBrowsers(config, [profileId]);
+
+  // 带重试的删除
+  let lastError: string | undefined;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const result = await deleteAdsPowerBrowsers(config, [profileId]);
+    if (result.success) {
+      if (attempt > 1) {
+        console.log(`[AdsPower] 删除浏览器 ${profileId} 成功（第 ${attempt} 次尝试）`);
+      }
+      return result;
+    }
+    lastError = result.error;
+    console.warn(`[AdsPower] 删除浏览器 ${profileId} 第 ${attempt}/${maxRetries} 次失败: ${lastError}`);
+    if (attempt < maxRetries) {
+      // 等待后重试（指数退避：1s, 2s, 4s...）
+      await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+    }
+  }
+
+  console.error(`[AdsPower] 删除浏览器 ${profileId} 全部 ${maxRetries} 次尝试均失败，最后错误: ${lastError}`);
+  return { success: false, error: lastError };
 }
 
 // ─────────────────────────────────────────────
