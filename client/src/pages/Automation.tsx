@@ -34,6 +34,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Shield,
   Square,
   Trash2,
   Wifi,
@@ -58,7 +59,7 @@ function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose
   const [apiUrl, setApiUrl] = useState("http://host.docker.internal:50325");
   const [groupId, setGroupId] = useState("");
   const [targetUrl, setTargetUrl] = useState("");
-  const [maxConcurrent, setMaxConcurrent] = useState(1);
+  const [proxyUrl, setProxyUrl] = useState("");
   const [targetCount, setTargetCount] = useState<string>("");
 
   const createTask = trpc.automation.create.useMutation({
@@ -72,7 +73,7 @@ function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="bg-card border-border/50 text-foreground max-w-md">
+      <DialogContent className="bg-card border-border/50 text-foreground max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-foreground">创建自动化任务</DialogTitle>
         </DialogHeader>
@@ -113,6 +114,21 @@ function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose
               className="bg-muted/50 border-border/50 text-foreground"
             />
           </div>
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <Shield className="w-3 h-3" />
+              代理地址（可选）
+            </Label>
+            <Input
+              value={proxyUrl}
+              onChange={(e) => setProxyUrl(e.target.value)}
+              placeholder="socks5h://user:pass@gate.example.com:7000"
+              className="bg-muted/50 border-border/50 text-foreground font-mono text-sm"
+            />
+            <p className="text-xs text-muted-foreground">
+              支持 socks5h:// / socks5:// / http:// 格式。每次注册前会检测出口 IP，确保未被使用过。
+            </p>
+          </div>
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <Label className="text-xs text-muted-foreground">扫描间隔</Label>
@@ -129,23 +145,6 @@ function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>10s</span><span>5分钟</span>
             </div>
-          </div>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs text-muted-foreground">最大并发数</Label>
-              <span className="text-sm font-medium text-foreground">{maxConcurrent} 个</span>
-            </div>
-            <Slider
-              value={[maxConcurrent]}
-              onValueChange={([v]) => setMaxConcurrent(v)}
-              min={1}
-              max={50}
-              step={1}
-              className="w-full"
-            />
-            <p className="text-xs text-muted-foreground">
-              每次扫描最多同时启动 {maxConcurrent} 个 AdsPower 浏览器实例
-            </p>
           </div>
           <div className="space-y-2">
             <Label className="text-xs text-muted-foreground">注册目标总数（可选）</Label>
@@ -171,7 +170,7 @@ function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose
               adspowerApiUrl: apiUrl,
               adspowerGroupId: groupId || undefined,
               targetUrl: targetUrl || undefined,
-              maxConcurrent,
+              proxyUrl: proxyUrl || undefined,
               targetCount: targetCount ? Number(targetCount) : undefined,
             })}
             disabled={createTask.isPending || !name.trim()}
@@ -194,7 +193,6 @@ type TaskItem = {
   adspowerApiUrl: string | null;
   adspowerGroupId: string | null;
   targetUrl: string | null;
-  maxConcurrent: number | null;
   targetCount: number | null;
   status: string;
   [key: string]: unknown;
@@ -214,7 +212,7 @@ function EditTaskDialog({
   const [apiUrl, setApiUrl] = useState(task.adspowerApiUrl ?? "http://host.docker.internal:50325");
   const [groupId, setGroupId] = useState(task.adspowerGroupId ?? "");
   const [targetUrl, setTargetUrl] = useState(task.targetUrl ?? "");
-  const [maxConcurrent, setMaxConcurrent] = useState(task.maxConcurrent ?? 1);
+  const [proxyUrl, setProxyUrl] = useState((task.proxyUrl as string) ?? "");
   const [targetCount, setTargetCount] = useState<string>(
     task.targetCount != null ? String(task.targetCount) : ""
   );
@@ -230,7 +228,7 @@ function EditTaskDialog({
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="bg-card border-border/50 text-foreground max-w-md">
+      <DialogContent className="bg-card border-border/50 text-foreground max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-foreground">编辑任务：{task.name}</DialogTitle>
         </DialogHeader>
@@ -269,6 +267,21 @@ function EditTaskDialog({
               className="bg-muted/50 border-border/50 text-foreground"
             />
           </div>
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <Shield className="w-3 h-3" />
+              代理地址（可选）
+            </Label>
+            <Input
+              value={proxyUrl}
+              onChange={(e) => setProxyUrl(e.target.value)}
+              placeholder="socks5h://user:pass@gate.example.com:7000"
+              className="bg-muted/50 border-border/50 text-foreground font-mono text-sm"
+            />
+            <p className="text-xs text-muted-foreground">
+              支持 socks5h:// / socks5:// / http:// 格式。每次注册前会检测出口 IP，确保未被使用过。
+            </p>
+          </div>
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <Label className="text-xs text-muted-foreground">扫描间隔</Label>
@@ -285,20 +298,6 @@ function EditTaskDialog({
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>10s</span><span>5分钟</span>
             </div>
-          </div>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs text-muted-foreground">最大并发数</Label>
-              <span className="text-sm font-medium text-foreground">{maxConcurrent} 个</span>
-            </div>
-            <Slider
-              value={[maxConcurrent]}
-              onValueChange={([v]) => setMaxConcurrent(v)}
-              min={1}
-              max={50}
-              step={1}
-              className="w-full"
-            />
           </div>
           <div className="space-y-2">
             <Label className="text-xs text-muted-foreground">注册目标总数（可选）</Label>
@@ -324,7 +323,7 @@ function EditTaskDialog({
                   adspowerApiUrl: apiUrl,
                   adspowerGroupId: groupId || undefined,
                   targetUrl: targetUrl || undefined,
-                  maxConcurrent,
+                  proxyUrl: proxyUrl || null,
                   targetCount: targetCount ? Number(targetCount) : null,
                 },
               })
@@ -346,15 +345,12 @@ function AdsPowerStatus({ apiUrl }: { apiUrl: string }) {
   const { data, isLoading, isFetching, refetch } = trpc.automation.checkAdspower.useQuery(
     { apiUrl },
     {
-      // ★ 修复：30 秒轮询一次，但 staleTime=25s 避免页面重新挂载时立即显示加载中
       refetchInterval: 30000,
       staleTime: 25000,
-      // ★ 修复：保留上一次的成功数据，重新请求期间不显示“未连接”
       placeholderData: (prev) => prev,
     }
   );
 
-  // 初次加载（还没有任何数据）时才显示转圈
   const showSpinner = isLoading && !data;
 
   return (
@@ -368,7 +364,6 @@ function AdsPowerStatus({ apiUrl }: { apiUrl: string }) {
           {(data.activeBrowsers?.length ?? 0) > 0 && (
             <span className="text-muted-foreground">· {data.activeBrowsers?.length} 个活跃浏览器</span>
           )}
-          {/* ★ 后台轮询时显示微小的刷新指示，不影响已连接状态显示 */}
           {isFetching && <Loader2 className="w-2.5 h-2.5 animate-spin text-green-400/50" />}
         </>
       ) : (
@@ -457,7 +452,7 @@ export default function Automation() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-foreground">自动化任务</h1>
-          <p className="text-sm text-muted-foreground mt-1">管理 AdsPower 自动注册任务</p>
+          <p className="text-sm text-muted-foreground mt-1">管理 AdsPower 自动注册任务（单线程模式）</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => refetch()}>
@@ -490,6 +485,7 @@ export default function Automation() {
           tasks?.map((task) => {
             const sc = statusConfig[task.status as TaskStatus] ?? statusConfig.idle;
             const StatusIcon = sc.icon;
+            const hasProxy = !!(task as any).proxyUrl;
             return (
               <Card key={task.id} className="bg-card border-border/50">
                 <CardContent className="p-4">
@@ -501,11 +497,15 @@ export default function Automation() {
                           <StatusIcon className="w-3 h-3 mr-1" />
                           {sc.label}
                         </Badge>
+                        {hasProxy && (
+                          <Badge variant="outline" className="text-xs border-blue-500/30 text-blue-400 bg-blue-500/10">
+                            <Shield className="w-3 h-3 mr-1" />代理
+                          </Badge>
+                        )}
                       </div>
                       <AdsPowerStatus apiUrl={task.adspowerApiUrl ?? "http://host.docker.internal:50325"} />
                     </div>
                     <div className="flex gap-1.5 ml-3 flex-wrap justify-end">
-                      {/* 启动按钮：空闲/已暂停/已停止时显示 */}
                       {(task.status === "idle" || task.status === "paused" || task.status === "stopped") && (
                         <Button
                           size="sm"
@@ -517,7 +517,6 @@ export default function Automation() {
                           <Play className="w-3 h-3 mr-1" />启动
                         </Button>
                       )}
-                      {/* 暂停按钮：运行中时显示 */}
                       {task.status === "running" && (
                         <Button
                           size="sm"
@@ -529,7 +528,6 @@ export default function Automation() {
                           <Pause className="w-3 h-3 mr-1" />暂停
                         </Button>
                       )}
-                      {/* 停止按钮：非已停止状态时显示 */}
                       {task.status !== "stopped" && (
                         <Button
                           size="sm"
@@ -540,7 +538,6 @@ export default function Automation() {
                           <Square className="w-3 h-3 mr-1" />停止
                         </Button>
                       )}
-                      {/* 编辑按钮：非运行中时可编辑 */}
                       <Button
                         size="sm"
                         variant="outline"
@@ -551,7 +548,6 @@ export default function Automation() {
                       >
                         <Pencil className="w-3 h-3 mr-1" />编辑
                       </Button>
-                      {/* 删除按钮：始终可见 */}
                       <Button
                         size="sm"
                         variant="outline"
@@ -581,10 +577,16 @@ export default function Automation() {
                     </div>
                   </div>
 
-                  <div className="flex gap-4 mt-3 text-xs text-muted-foreground">
+                  <div className="flex gap-4 mt-3 text-xs text-muted-foreground flex-wrap">
                     <span>间隔：{task.scanIntervalSeconds}s</span>
-                    <span>并发：{task.maxConcurrent}</span>
+                    <span className="text-blue-400/70">单线程模式</span>
                     {(task as any).targetCount ? <span>目标：{(task as any).targetCount}</span> : null}
+                    {hasProxy && (
+                      <span className="text-blue-400/70 flex items-center gap-1">
+                        <Shield className="w-3 h-3" />
+                        代理已配置
+                      </span>
+                    )}
                     {task.lastExecutedAt && (
                       <span>最后执行：{new Date(task.lastExecutedAt).toLocaleString("zh-CN")}</span>
                     )}
@@ -651,11 +653,9 @@ export default function Automation() {
           <AlertDialogFooter>
             <AlertDialogCancel>取消</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => confirmDelete !== null && deleteTask.mutate({ id: confirmDelete.id })}
+              onClick={() => confirmDelete && deleteTask.mutate({ id: confirmDelete.id })}
               className="bg-destructive hover:bg-destructive/90"
-              disabled={deleteTask.isPending}
             >
-              {deleteTask.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
               确认删除
             </AlertDialogAction>
           </AlertDialogFooter>

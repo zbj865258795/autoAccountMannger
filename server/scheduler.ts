@@ -1,12 +1,12 @@
 /**
- * 自動化任務調度器
+ * 自動化任務調度器（单线程版）
  *
  * 核心邏輯：
- * 1. 定時查詢數據庫中「未使用」的邀請碼數量（只讀，不修改狀態）
- * 2. 根據 maxConcurrent（線程數）和 targetCount（目標總數）計算本次需要創建幾個瀏覽器
- * 3. 調用 AdsPower API 創建並啟動對應數量的瀏覽器實例
- * 4. 邀請碼的認領和狀態變更由插件端通過 callback 接口完成
- * 5. 定時輪詢已啟動瀏覽器的狀態，異常關閉時自動標記任務失敗並清理
+ * 1. 每次只运行一个注册任务（单线程），上一个完成后才启动下一个
+ * 2. 创建浏览器前先检测代理出口IP，确保未被使用过
+ * 3. 出口IP连续10次都已使用 → 停止任务（需更换代理平台）
+ * 4. 注册成功后将出口IP记录到已用IP池
+ * 5. 定時輪詢已啟動瀏覽器的狀態，異常關閉時自動標記任務失敗
  */
 
 import {
@@ -20,6 +20,7 @@ import {
   incrementTaskCounters,
   updateAutomationTask,
   updateTaskLog,
+  parseProxyUrl,
 } from "./db";
 import {
   closeAdsPowerBrowser,
@@ -30,6 +31,8 @@ import {
   stopAndDeleteAdsPowerBrowser,
 } from "./adspower";
 import { ADSPOWER_CONFIG } from "./config";
+import { checkProxyWithRetry } from "./proxy";
+import { runRegistration } from "./automation";
 
 // ─── 全局調度器狀態 ───────────────────────────────────────────────────────────
 
@@ -38,10 +41,7 @@ const schedulerTimers = new Map<number, NodeJS.Timeout>();
 // 記錄每個任務對應的 AdsPower apiUrl（用於監控時清理瀏覽器）
 const taskApiUrls = new Map<number, string>();
 
-// ★ 修复：每个任务的 executeTask 全局防并发锁
-// 防止以下两种场景同时触发多个 executeTask 导致创建多余浏览器：
-//   1. startScheduler 立即执行 + 定时器第一次触发（时间差极短时会并发）
-//   2. 多个浏览器同时失败时，handlePluginError 被并发调用
+// 全局防并发锁：同一任务同一时刻只允许一个 executeTask 在运行
 const executeTaskLocks = new Map<number, boolean>();
 
 // ─── 瀏覽器狀態監控 ──────────────────────────────────────────────────────────
@@ -49,14 +49,9 @@ const executeTaskLocks = new Map<number, boolean>();
 let browserMonitorTimer: NodeJS.Timeout | null = null;
 const BROWSER_MONITOR_INTERVAL = 15000; // 每 15 秒檢查一次
 
-/**
- * 啟動瀏覽器狀態監控
- */
 function startBrowserMonitor(): void {
   if (browserMonitorTimer) return;
-
   console.log(`[BrowserMonitor] Started | interval: ${BROWSER_MONITOR_INTERVAL / 1000}s`);
-
   browserMonitorTimer = setInterval(async () => {
     try {
       await checkBrowserStatus();
@@ -67,9 +62,6 @@ function startBrowserMonitor(): void {
   }, BROWSER_MONITOR_INTERVAL);
 }
 
-/**
- * 停止瀏覽器狀態監控
- */
 function stopBrowserMonitor(): void {
   if (browserMonitorTimer) {
     clearInterval(browserMonitorTimer);
@@ -78,18 +70,10 @@ function stopBrowserMonitor(): void {
   }
 }
 
-/**
- * 核心檢查邏輯：
- * 1. 從數據庫獲取所有 running 且有 adspowerBrowserId 的任務日誌
- * 2. 從 AdsPower 獲取當前活躍的瀏覽器列表
- * 3. 對比：如果某個日誌的瀏覽器不在活躍列表中，說明已關閉
- * 4. 標記該日誌為 failed，並嘗試刪除 AdsPower 中的瀏覽器環境
- */
 async function checkBrowserStatus(): Promise<void> {
   const runningLogs = await getRunningLogsWithBrowserId();
   if (runningLogs.length === 0) return;
 
-  // 按 taskId 分組，每個任務用自己的 apiUrl 查詢活躍瀏覽器
   const taskGroups = new Map<number, typeof runningLogs>();
   for (const log of runningLogs) {
     if (!log.taskId) continue;
@@ -97,11 +81,9 @@ async function checkBrowserStatus(): Promise<void> {
     taskGroups.get(log.taskId)!.push(log);
   }
 
-  for (const [taskId, logs] of taskGroups) {
-    // 優先用任務自己保存的 apiUrl，否則用全局配置
+  for (const [taskId, logs] of Array.from(taskGroups)) {
     const apiUrl = taskApiUrls.get(taskId) || ADSPOWER_CONFIG.apiUrl;
     const adspowerConfig = { apiUrl, apiKey: ADSPOWER_CONFIG.apiKey };
-
     const activeBrowsers = await getActiveBrowsers(apiUrl);
     const activeIds = new Set(activeBrowsers.map((b) => b.browserId));
 
@@ -109,24 +91,15 @@ async function checkBrowserStatus(): Promise<void> {
       `[BrowserMonitor] Task ${taskId}: checking ${logs.length} browser(s) | ${activeIds.size} active in AdsPower`
     );
 
-    // ★ 修复问题6：设置 3 分钟保护窗口期
-    // 浏览器初始化和插件加载需要时间，如果就开始监控就判定为失败会误判
-    // 只有启动超过 3 分钟的浏览器才进行存活检测
-    const BROWSER_STARTUP_GRACE_MS = 3 * 60 * 1000; // 3 分钟
+    const BROWSER_STARTUP_GRACE_MS = 3 * 60 * 1000; // 3 分钟保护窗口期
 
     for (const log of logs) {
       const browserId = log.adspowerBrowserId;
       if (!browserId) continue;
 
-      // ★ 保护窗口期内跳过检测
       if (log.startedAt) {
         const ageMs = Date.now() - new Date(log.startedAt).getTime();
-        if (ageMs < BROWSER_STARTUP_GRACE_MS) {
-          console.log(
-            `[BrowserMonitor] Browser ${browserId} (log #${log.id}) is within grace period (${Math.round(ageMs / 1000)}s < ${BROWSER_STARTUP_GRACE_MS / 1000}s), skipping check`
-          );
-          continue;
-        }
+        if (ageMs < BROWSER_STARTUP_GRACE_MS) continue;
       }
 
       if (!activeIds.has(browserId)) {
@@ -134,9 +107,7 @@ async function checkBrowserStatus(): Promise<void> {
           ? Date.now() - new Date(log.startedAt).getTime()
           : undefined;
 
-        console.log(
-          `[BrowserMonitor] Browser ${browserId} (log #${log.id}) is no longer active → marking failed`
-        );
+        console.log(`[BrowserMonitor] Browser ${browserId} (log #${log.id}) is no longer active → marking failed`);
 
         await updateTaskLog(log.id, {
           status: "failed",
@@ -146,9 +117,18 @@ async function checkBrowserStatus(): Promise<void> {
         });
 
         await incrementTaskCounters(taskId, { totalFailed: 1 });
-
-        // 嘗試清理（可能已不存在，忽略錯误）
         await stopAndDeleteAdsPowerBrowser(adspowerConfig, browserId).catch(() => {});
+
+        // 浏览器异常退出后，触发下一次执行
+        const task = await getAutomationTaskById(taskId);
+        if (task && task.status === "running") {
+          if (!executeTaskLocks.get(taskId)) {
+            executeTaskLocks.set(taskId, true);
+            executeTask(taskId)
+              .catch((e) => console.error(`[BrowserMonitor] Failed to trigger next task: ${e}`))
+              .finally(() => executeTaskLocks.delete(taskId));
+          }
+        }
       }
     }
   }
@@ -160,38 +140,30 @@ async function cleanupTaskBrowsers(taskId: number, reason: string): Promise<void
   const apiUrl = taskApiUrls.get(taskId) || ADSPOWER_CONFIG.apiUrl;
   const adspowerConfig = { apiUrl, apiKey: ADSPOWER_CONFIG.apiKey };
 
-  // 1. 先獲取「本任務」所有 running 且有 browserId 的日誌
-  //    getRunningLogsForTask 已按 taskId 過濾，不會取到其他任務的瀏覽器
   const runningLogs = await getRunningLogsForTask(taskId);
-
-  // 2. 批量標記「本任務」所有 running 日誌為 failed
   const affected = await failAllRunningLogsForTask(taskId, reason);
   if (affected > 0) {
     console.log(`[Scheduler] Task ${taskId}: marked ${affected} running log(s) as failed (${reason})`);
   }
 
-  // 3. 收集「本任務」所有需要關閉的 browserId
   const browserIds = runningLogs
     .map((log) => log.adspowerBrowserId)
     .filter((id): id is string => !!id);
 
   if (browserIds.length === 0) return;
 
-  console.log(`[Scheduler] Task ${taskId}: closing ${browserIds.length} browser(s) concurrently: [${browserIds.join(", ")}]`);
+  console.log(`[Scheduler] Task ${taskId}: closing ${browserIds.length} browser(s): [${browserIds.join(", ")}]`);
 
-  // 4. 先並發關閉所有瀏覽器進程（stop），再批量刪除環境（delete）
-  //    兩步分開：stop 需要逐個調用，delete 支持批量一次性提交
   await Promise.all(
     browserIds.map((browserId) =>
       closeAdsPowerBrowser(adspowerConfig, browserId).catch((e) =>
-        console.error(`[Scheduler] Task ${taskId}: failed to close browser ${browserId}: ${e}`)
+        console.error(`[Scheduler] Failed to close browser ${browserId}: ${e}`)
       )
     )
   );
 
-  // 批量刪除（AdsPower v2 API 支持一次傳入多個 profile_id，單次最多 100 個）
   await deleteAdsPowerBrowsers(adspowerConfig, browserIds).catch((e) =>
-    console.error(`[Scheduler] Task ${taskId}: failed to batch-delete browsers [${browserIds.join(", ")}]: ${e}`)
+    console.error(`[Scheduler] Failed to batch-delete browsers: ${e}`)
   );
 }
 
@@ -206,7 +178,6 @@ export async function startScheduler(taskId: number): Promise<void> {
   const task = await getAutomationTaskById(taskId);
   if (!task) throw new Error(`Task ${taskId} not found`);
 
-  // 記錄該任務的 apiUrl
   const apiUrl = task.adspowerApiUrl || ADSPOWER_CONFIG.apiUrl;
   taskApiUrls.set(taskId, apiUrl);
 
@@ -216,13 +187,13 @@ export async function startScheduler(taskId: number): Promise<void> {
   });
 
   console.log(
-    `[Scheduler] Starting task ${taskId} "${task.name}" | interval: ${task.scanIntervalSeconds}s | maxConcurrent: ${task.maxConcurrent}`
+    `[Scheduler] Starting task ${taskId} "${task.name}" | interval: ${task.scanIntervalSeconds}s | single-thread mode`
   );
 
   // 立即執行一次
   await executeTask(taskId);
 
-  // 設置定時器
+  // 設置定時器（用于检查是否需要启动下一个任务）
   const timer = setInterval(async () => {
     const currentTask = await getAutomationTaskById(taskId);
     if (!currentTask || currentTask.status !== "running") {
@@ -236,8 +207,6 @@ export async function startScheduler(taskId: number): Promise<void> {
   }, (task.scanIntervalSeconds || 60) * 1000);
 
   schedulerTimers.set(taskId, timer);
-
-  // 啟動瀏覽器狀態監控
   startBrowserMonitor();
 }
 
@@ -250,9 +219,7 @@ export async function pauseScheduler(taskId: number): Promise<void> {
     schedulerTimers.delete(taskId);
   }
 
-  // 清理所有 running 日誌和瀏覽器
   await cleanupTaskBrowsers(taskId, "任务已暂停，浏览器被强制关闭");
-
   await updateAutomationTask(taskId, { status: "paused" });
   console.log(`[Scheduler] Task ${taskId} paused`);
 
@@ -271,9 +238,7 @@ export async function stopScheduler(taskId: number): Promise<void> {
     schedulerTimers.delete(taskId);
   }
 
-  // 清理所有 running 日誌和瀏覽器
   await cleanupTaskBrowsers(taskId, "任务已停止，浏览器被强制关闭");
-
   await updateAutomationTask(taskId, { status: "stopped" });
   console.log(`[Scheduler] Task ${taskId} stopped`);
 
@@ -281,35 +246,24 @@ export async function stopScheduler(taskId: number): Promise<void> {
   if (schedulerTimers.size === 0) stopBrowserMonitor();
 }
 
-// ─── 獲取運行中的任务 ID ────────────────────────────────────────────────────────────────
+// ─── 獲取運行中的任务 ID ──────────────────────────────────────────────────────
 
 export function getRunningTaskIds(): number[] {
   return Array.from(schedulerTimers.keys());
 }
 
-// ─── 插件异常上报处理 ────────────────────────────────────────────────────────────────
+// ─── 错误处理（注册失败时由 automation.ts 调用） ──────────────────────────────
 
-/**
- * 处理插件上报的注册异常
- *
- * 流程：
- * 1. 根据 browserId 查找对应的 taskLog 和 taskId
- * 2. 将该日志标记为 failed，记录错误信息
- * 3. 关闭并删除对应的 AdsPower 浏览器环境
- * 4. 更新任务失败计数
- * 5. 立即触发一次 executeTask，让任务继续创建新的浏览器实例
- */
 export async function handlePluginError(
   browserId: string,
   errorMessage: string
 ): Promise<{ success: boolean; message: string }> {
-  console.log(`[PluginCallback] Received error report for browser ${browserId}: ${errorMessage}`);
+  console.log(`[Scheduler] Received error report for browser ${browserId}: ${errorMessage}`);
 
-  // 1. 根据 browserId 查找对应的 running 日志
   const log = await getRunningLogByBrowserId(browserId);
 
   if (!log) {
-    console.warn(`[PluginCallback] No running log found for browser ${browserId}, ignoring`);
+    console.warn(`[Scheduler] No running log found for browser ${browserId}, ignoring`);
     return { success: false, message: `未找到对应的运行中任务（browserId: ${browserId}）` };
   }
 
@@ -319,57 +273,46 @@ export async function handlePluginError(
     ? Date.now() - new Date(log.startedAt).getTime()
     : undefined;
 
-  // 2. 将日志标记为 failed
   await updateTaskLog(logId, {
     status: "failed",
-    errorMessage: `插件上报异常: ${errorMessage}`,
+    errorMessage: `注册异常: ${errorMessage}`,
     durationMs,
     completedAt: new Date(),
   });
 
-  // 3. 关闭并删除 AdsPower 浏览器环境
   const apiUrl = taskApiUrls.get(taskId) || ADSPOWER_CONFIG.apiUrl;
   const adspowerConfig = { apiUrl, apiKey: ADSPOWER_CONFIG.apiKey };
 
-  console.log(`[PluginCallback] Closing and deleting browser ${browserId} for task ${taskId}`);
-  // ★ 修复：关闭浏览器改为异步，不阻塞当前请求返回，避免 AdsPower 超时导致接口超时
   stopAndDeleteAdsPowerBrowser(adspowerConfig, browserId)
     .then((r) => {
-      if (!r.success) console.error(`[PluginCallback] Failed to cleanup browser ${browserId}: ${r.error}`);
+      if (!r.success) console.error(`[Scheduler] Failed to cleanup browser ${browserId}: ${r.error}`);
     })
-    .catch((e) => console.error(`[PluginCallback] Failed to cleanup browser ${browserId}: ${e}`));
+    .catch((e) => console.error(`[Scheduler] Failed to cleanup browser ${browserId}: ${e}`));
 
-  // 4. 更新任务失败计数
   await incrementTaskCounters(taskId, { totalFailed: 1 });
 
-  // 5. 如果任务仍在运行中，立即触发一次新的执行循环（创建新浏览器实例）
-  // ★ 修复问题B：加锁防止并发，同一任务同一时刻只允许一个 executeTask 在运行
+  // 触发下一次执行
   const task = await getAutomationTaskById(taskId);
   if (task && task.status === "running") {
     if (executeTaskLocks.get(taskId)) {
-      console.log(`[PluginCallback] Task ${taskId} executeTask already in progress, skipping duplicate trigger`);
+      console.log(`[Scheduler] Task ${taskId} executeTask already in progress, skipping`);
     } else {
-      console.log(`[PluginCallback] Task ${taskId} is still running, triggering next execution immediately`);
+      console.log(`[Scheduler] Task ${taskId} triggering next execution`);
       executeTaskLocks.set(taskId, true);
-      // 异步触发，不阻塞当前请求
       executeTask(taskId)
-        .catch((e) => console.error(`[PluginCallback] Failed to trigger next execution for task ${taskId}: ${e}`))
+        .catch((e) => console.error(`[Scheduler] Failed to trigger next execution: ${e}`))
         .finally(() => executeTaskLocks.delete(taskId));
     }
-  } else {
-    console.log(`[PluginCallback] Task ${taskId} is not running (status: ${task?.status}), skipping re-trigger`);
   }
 
-  return { success: true, message: `已处理异常，浏览器 ${browserId} 已关闭并删除，任务已触发下一次注册` };
+  return { success: true, message: `已处理异常，浏览器 ${browserId} 已关闭，任务继续` };
 }
 
-// ─── 核心執行邏輯（只負責創建瀏覽器，不操作邀請碼） ──────────────────────────
+// ─── 核心執行邏輯（单线程：每次只创建一个浏览器） ────────────────────────────
 
 async function executeTask(taskId: number): Promise<void> {
-  // ★ 修复：全局防并发锁，同一任务同一时刻只允许一个 executeTask 在运行
-  // 这是防止「创建两个浏览器」的核心修复
   if (executeTaskLocks.get(taskId)) {
-    console.log(`[Scheduler] Task ${taskId}: executeTask already in progress, skipping concurrent call`);
+    console.log(`[Scheduler] Task ${taskId}: executeTask already in progress, skipping`);
     return;
   }
   executeTaskLocks.set(taskId, true);
@@ -385,8 +328,6 @@ async function _executeTask(taskId: number): Promise<void> {
   const task = await getAutomationTaskById(taskId);
   if (!task) return;
 
-  const maxConcurrent = task.maxConcurrent || 1;
-
   // 检查是否已达到注册目标总数
   if (task.targetCount && (task.totalAccountsCreated ?? 0) >= task.targetCount) {
     console.log(
@@ -401,50 +342,65 @@ async function _executeTask(taskId: number): Promise<void> {
     apiKey: ADSPOWER_CONFIG.apiKey,
     groupId: task.adspowerGroupId || undefined,
   };
-  const targetUrl = (task as any).targetUrl || undefined;
 
   try {
-    // 1. 只讀查詢：獲取當前未使用的邀請碼數量
+    // 1. 检查是否有未使用的邀请码
     const unusedCount = await getUnusedInviteCodeCount();
-
     if (unusedCount === 0) {
       console.log(`[Scheduler] Task ${taskId}: No unused invite codes available`);
       await updateAutomationTask(taskId, { lastExecutedAt: new Date() });
       return;
     }
 
-    // 2. 查詢當前正在運行中的瀏覽器數量（避免重複創建）
+    // 2. 检查当前是否已有正在运行的浏览器（单线程：最多1个）
     const runningLogs = await getRunningLogsForTask(taskId);
-    const currentRunning = runningLogs.length;
-
-    // 3. 計算本次需要創建的瀏覽器數量
-    let browsersToCreate = Math.min(maxConcurrent - currentRunning, unusedCount);
-
-    if (task.targetCount) {
-      const remaining = task.targetCount - (task.totalAccountsCreated ?? 0);
-      browsersToCreate = Math.min(browsersToCreate, remaining);
-    }
-
-    if (browsersToCreate <= 0) {
+    if (runningLogs.length >= 1) {
       console.log(
-        `[Scheduler] Task ${taskId}: No new browsers needed (running: ${currentRunning}/${maxConcurrent})`
+        `[Scheduler] Task ${taskId}: A registration task is already running (single-thread mode), skipping`
       );
       await updateAutomationTask(taskId, { lastExecutedAt: new Date() });
       return;
     }
 
-    console.log(
-      `[Scheduler] Task ${taskId}: ${unusedCount} unused codes | ${currentRunning} running | creating ${browsersToCreate} new browser(s)`
-    );
+    console.log(`[Scheduler] Task ${taskId}: Starting new registration task`);
 
-    // 4. 並發創建瀏覽器
-    await Promise.all(
-      Array.from({ length: browsersToCreate }, (_, i) =>
-        createOneBrowser(taskId, task, adspowerConfig, targetUrl, i)
-      )
-    );
+    // 3. 如果配置了代理，先检测出口IP
+    let exitIp: string | undefined;
+    const proxyUrl = (task as any).proxyUrl as string | undefined;
 
+    if (proxyUrl && proxyUrl.trim()) {
+      console.log(`[Scheduler] Task ${taskId}: Checking proxy exit IP...`);
+      const proxyResult = await checkProxyWithRetry(proxyUrl, 10);
+
+      if (!proxyResult.success) {
+        const errMsg = proxyResult.error || "代理IP检测失败";
+        console.error(`[Scheduler] Task ${taskId}: ${errMsg}`);
+
+        // 如果是连续10次IP都已使用，停止任务
+        if (proxyResult.ipAlreadyUsed) {
+          console.error(`[Scheduler] Task ${taskId}: Stopping task due to exhausted IPs`);
+          await updateAutomationTask(taskId, { status: "stopped" });
+          await stopScheduler(taskId);
+        }
+
+        await incrementTaskCounters(taskId, { totalFailed: 1 });
+        return;
+      }
+
+      exitIp = proxyResult.exitIp;
+      if (proxyResult.retryCount > 0) {
+        console.log(`[Scheduler] Task ${taskId}: Got fresh exit IP ${exitIp} after ${proxyResult.retryCount} retries`);
+      } else {
+        console.log(`[Scheduler] Task ${taskId}: Exit IP ${exitIp} is fresh, proceeding`);
+      }
+    } else {
+      console.log(`[Scheduler] Task ${taskId}: No proxy configured, skipping IP check`);
+    }
+
+    // 4. 创建单个浏览器并启动注册
+    await createOneBrowser(taskId, task, adspowerConfig, exitIp);
     await updateAutomationTask(taskId, { lastExecutedAt: new Date() });
+
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error(`[Scheduler] Task ${taskId}: Unexpected error - ${msg}`);
@@ -452,56 +408,92 @@ async function _executeTask(taskId: number): Promise<void> {
   }
 }
 
-// ─── 創建單個瀏覽器實例 ─────────────────────────────────────────────────────
+// ─── 創建單個瀏覽器實例並启动注册 ────────────────────────────────────────────
 
 async function createOneBrowser(
   taskId: number,
   task: Awaited<ReturnType<typeof getAutomationTaskById>>,
   adspowerConfig: { apiUrl: string; apiKey?: string; groupId?: string },
-  targetUrl?: string,
-  index?: number
+  exitIp?: string
 ): Promise<void> {
   const startTime = Date.now();
   let logId: number | undefined;
+  let profileId: string | undefined;
 
   try {
-    console.log(`[Scheduler] Task ${taskId}: Creating browser instance #${(index ?? 0) + 1}`);
+    console.log(`[Scheduler] Task ${taskId}: Creating browser instance`);
 
+    // 创建任务日志
     const logResult = await createTaskLog({
       taskId,
       status: "running",
       startedAt: new Date(),
+      exitIp: exitIp ?? null,
     });
     logId = (logResult as any)[0]?.insertId;
 
-    const createResult = await createAdsPowerBrowser(adspowerConfig, `task_${taskId}_${Date.now()}`, {
-      targetUrl,
-    });
+    // 解析代理配置
+    const proxyUrl = (task as any).proxyUrl as string | undefined;
+    let proxyConfig: { proxyType: string; host?: string; port?: string; user?: string; password?: string } | undefined;
+
+    if (proxyUrl && proxyUrl.trim()) {
+      const parsed = parseProxyUrl(proxyUrl);
+      if (parsed) {
+        proxyConfig = {
+          proxyType: parsed.proxyType,
+          host: parsed.host,
+          port: parsed.port,
+          user: parsed.username,
+          password: parsed.password,
+        };
+      }
+    }
+
+    // 创建 AdsPower 浏览器（注入代理）
+    const createResult = await createAdsPowerBrowser(
+      adspowerConfig,
+      `task_${taskId}_${Date.now()}`,
+      { proxyConfig }
+    );
 
     if (!createResult.success || !createResult.profileId) {
       throw new Error(createResult.error || "Failed to create browser profile");
     }
 
-    const profileId = createResult.profileId;
+    profileId = createResult.profileId;
 
+    // 启动浏览器，获取 CDP wsEndpoint
     const startResult = await startAdsPowerBrowser(adspowerConfig, profileId);
-    const durationMs = Date.now() - startTime;
 
-    if (startResult.success) {
-      if (logId) {
-        await updateTaskLog(logId, {
-          status: "running",
-          adspowerBrowserId: profileId,
-          durationMs,
-        });
-      }
-      console.log(`[Scheduler] Task ${taskId}: Browser started | profile: ${profileId}`);
-    } else {
-      await stopAndDeleteAdsPowerBrowser(adspowerConfig, profileId).catch((e) =>
-        console.error(`[Scheduler] Task ${taskId}: Failed to cleanup browser ${profileId}: ${e}`)
-      );
-      throw new Error(startResult.error || "Failed to start browser");
+    if (!startResult.success || !startResult.wsEndpoint) {
+      await stopAndDeleteAdsPowerBrowser(adspowerConfig, profileId).catch(() => {});
+      throw new Error(startResult.error || "Failed to start browser or get wsEndpoint");
     }
+
+    // 更新日志：记录 browserId
+    if (logId) {
+      await updateTaskLog(logId, {
+        status: "running",
+        adspowerBrowserId: profileId,
+        durationMs: Date.now() - startTime,
+      });
+    }
+
+    console.log(`[Scheduler] Task ${taskId}: Browser started | profile: ${profileId} | ws: ${startResult.wsEndpoint}`);
+
+    // 异步启动注册流程（不阻塞调度器）
+    runRegistration({
+      taskId,
+      logId: logId!,
+      profileId,
+      wsEndpoint: startResult.wsEndpoint,
+      exitIp,
+      adspowerConfig,
+      backendUrl: `http://localhost:${process.env.PORT || 3900}`,
+    }).catch((e) => {
+      console.error(`[Scheduler] Task ${taskId}: Registration failed unexpectedly: ${e}`);
+    });
+
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     const durationMs = Date.now() - startTime;
@@ -515,7 +507,24 @@ async function createOneBrowser(
       });
     }
 
+    if (profileId) {
+      await stopAndDeleteAdsPowerBrowser(adspowerConfig, profileId).catch(() => {});
+    }
+
     await incrementTaskCounters(taskId, { totalFailed: 1 });
     console.error(`[Scheduler] Task ${taskId}: Failed to create/start browser - ${msg}`);
+
+    // 失败后触发下一次尝试
+    const currentTask = await getAutomationTaskById(taskId);
+    if (currentTask && currentTask.status === "running") {
+      setTimeout(() => {
+        if (!executeTaskLocks.get(taskId)) {
+          executeTaskLocks.set(taskId, true);
+          executeTask(taskId)
+            .catch((e) => console.error(`[Scheduler] Retry trigger failed: ${e}`))
+            .finally(() => executeTaskLocks.delete(taskId));
+        }
+      }, 5000);
+    }
   }
 }

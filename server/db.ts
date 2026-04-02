@@ -1,6 +1,6 @@
 import { and, asc, count, desc, eq, gte, inArray, like, lte, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { accounts, automationTasks, exportLogs, phoneNumbers, taskLogs, users } from "../drizzle/schema";
+import { accounts, automationTasks, exportLogs, phoneNumbers, taskLogs, users, usedIpPool } from "../drizzle/schema";
 import type { InsertAccount, InsertAutomationTask, InsertExportLog, InsertPhoneNumber, InsertTaskLog } from "../drizzle/schema";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -999,4 +999,219 @@ export async function getExportBatchDetail(filter: {
   ]);
 
   return { items, total: Number(countResult[0]?.count ?? 0) };
+}
+
+// ─── Used IP Pool ─────────────────────────────────────────────────────────────
+
+/**
+ * 检查某个出口IP是否已在已用IP池中
+ * 用于防止重复使用同一IP注册账号
+ */
+export async function isIpUsed(ip: string): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  const result = await db.select({ id: usedIpPool.id }).from(usedIpPool)
+    .where(eq(usedIpPool.ip, ip)).limit(1);
+  return result.length > 0;
+}
+
+/**
+ * 将出口IP记录到已用IP池（注册成功后调用）
+ */
+export async function recordUsedIp(ip: string, usedByEmail?: string, taskLogId?: number) {
+  const db = await getDb();
+  if (!db) return;
+  try {
+    await db.insert(usedIpPool).values({
+      ip,
+      usedByEmail: usedByEmail ?? null,
+      taskLogId: taskLogId ?? null,
+    }).onDuplicateKeyUpdate({ set: { usedByEmail: usedByEmail ?? null } });
+  } catch {
+    // 忽略重复插入错误
+  }
+}
+
+/**
+ * 获取已用IP池列表（分页）
+ */
+export async function getUsedIpPool(filter: {
+  search?: string;
+  page?: number;
+  pageSize?: number;
+} = {}) {
+  const db = await getDb();
+  if (!db) return { items: [], total: 0 };
+  const { search, page = 1, pageSize = 50 } = filter;
+  const conditions: ReturnType<typeof eq>[] = [];
+  if (search) {
+    conditions.push(
+      or(
+        like(usedIpPool.ip, `%${search}%`),
+        like(usedIpPool.usedByEmail, `%${search}%`)
+      ) as any
+    );
+  }
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+  const [items, countResult] = await Promise.all([
+    db.select().from(usedIpPool).where(whereClause)
+      .orderBy(desc(usedIpPool.usedAt))
+      .limit(pageSize).offset((page - 1) * pageSize),
+    db.select({ count: sql<number>`count(*)` }).from(usedIpPool).where(whereClause),
+  ]);
+  return { items, total: Number(countResult[0]?.count ?? 0) };
+}
+
+/**
+ * 获取已用IP总数
+ */
+export async function getUsedIpCount(): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const result = await db.select({ count: sql<number>`count(*)` }).from(usedIpPool);
+  return Number(result[0]?.count ?? 0);
+}
+
+/**
+ * 清空已用IP池（谨慎使用，一般用于测试重置）
+ */
+export async function clearUsedIpPool() {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(usedIpPool);
+}
+
+// ─── Proxy URL 解析工具 ───────────────────────────────────────────────────────
+
+/**
+ * 解析 socks5h://user:pass@host:port 格式的代理 URL
+ * 返回 AdsPower 创建浏览器所需的代理配置字段
+ */
+export function parseProxyUrl(proxyUrl: string): {
+  proxyType: string;   // "socks5" | "http" | "https"
+  host: string;
+  port: string;
+  username: string;
+  password: string;
+} | null {
+  if (!proxyUrl || !proxyUrl.trim()) return null;
+  try {
+    // socks5h 是 socks5 with remote DNS，AdsPower 用 socks5 类型
+    const normalized = proxyUrl.trim().replace(/^socks5h:\/\//, "socks5://");
+    const url = new URL(normalized);
+    return {
+      proxyType: url.protocol.replace(":", ""),
+      host: url.hostname,
+      port: url.port || "1080",
+      username: decodeURIComponent(url.username),
+      password: decodeURIComponent(url.password),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ─── Automation 注册结果保存 ──────────────────────────────────────────────────
+
+/**
+ * 重置邀请码状态（注册失败时归还）
+ * 将 in_progress 状态改回 unused
+ */
+export async function resetInviteCodeStatus(accountId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .update(accounts)
+    .set({ inviteStatus: "unused" })
+    .where(eq(accounts.id, accountId));
+}
+
+/**
+ * 保存注册成功的账号数据（automation.ts 调用，替代 HTTP callback）
+ * 与 callback.ts /register 路由的逻辑完全一致
+ */
+export async function saveRegistrationResult(data: {
+  email: string;
+  password: string;
+  phone?: string;
+  token?: string;
+  clientId?: string;
+  membershipVersion?: string;
+  totalCredits?: number;
+  freeCredits?: number;
+  refreshCredits?: number;
+  inviteCode?: string;
+  referrerCode?: string;
+  inviterAccountId: number;
+  adspowerBrowserId?: string;
+  taskLogId?: number;
+}): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const {
+    email,
+    password,
+    phone,
+    token,
+    clientId,
+    membershipVersion = "free",
+    totalCredits = 0,
+    freeCredits = 0,
+    refreshCredits = 0,
+    inviteCode,
+    referrerCode,
+    inviterAccountId,
+  } = data;
+
+  // 检查邮箱是否已存在
+  const existing = await db
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(eq(accounts.email, email))
+    .limit(1);
+  if (existing.length > 0) {
+    console.log(`[DB] saveRegistrationResult: email ${email} already exists, skipping`);
+    return;
+  }
+
+  // 查找邀请人，将邀请码标记为已使用
+  let invitedById: number | undefined;
+  let resolvedReferrerCode: string | undefined = referrerCode;
+
+  const inviter = await db
+    .select({ id: accounts.id, inviteCode: accounts.inviteCode })
+    .from(accounts)
+    .where(eq(accounts.id, inviterAccountId))
+    .limit(1);
+
+  if (inviter.length > 0) {
+    invitedById = inviter[0].id;
+    resolvedReferrerCode = inviter[0].inviteCode ?? referrerCode;
+    await db
+      .update(accounts)
+      .set({ inviteStatus: "used" })
+      .where(eq(accounts.id, inviterAccountId));
+    console.log(`[DB] Inviter account id=${inviterAccountId} invite code marked as used`);
+  }
+
+  // 创建新账号
+  await db.insert(accounts).values({
+    email,
+    password,
+    phone,
+    token,
+    clientId,
+    membershipVersion,
+    totalCredits,
+    freeCredits,
+    refreshCredits,
+    inviteCode,
+    referrerCode: resolvedReferrerCode,
+    invitedById,
+    registeredAt: new Date(),
+    inviteStatus: "unused",
+  });
+
+  console.log(`[DB] saveRegistrationResult: account created for ${email}`);
 }

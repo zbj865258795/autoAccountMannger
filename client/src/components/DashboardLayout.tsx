@@ -19,6 +19,7 @@ import {
   Download,
   FileText,
   GitBranch,
+  Globe,
   LayoutDashboard,
   PanelLeft,
   Phone,
@@ -39,6 +40,7 @@ const menuItems = [
   { icon: Bot, label: "自动化任务", path: "/automation" },
   { icon: FileText, label: "执行日志", path: "/logs" },
   { icon: Download, label: "导出记录", path: "/exports" },
+  { icon: Globe, label: "IP 池管理", path: "/ip-pool" },
   { icon: Webhook, label: "API 集成", path: "/api-docs" },
 ];
 

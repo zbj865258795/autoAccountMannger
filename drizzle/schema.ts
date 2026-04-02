@@ -92,7 +92,13 @@ export const automationTasks = mysqlTable("automation_tasks", {
   adspowerApiKey: varchar("adspowerApiKey", { length: 256 }),   // AdsPower API Key（開啟安全校驗時使用）
   adspowerGroupId: varchar("adspowerGroupId", { length: 64 }),
   targetUrl: varchar("targetUrl", { length: 512 }),              // 注冊目標 URL（插件打開的頁面）
-  maxConcurrent: int("maxConcurrent").default(1),  // 最大並發數
+
+  // 代理配置：socks5h://user:pass@host:port 格式，每次创建浏览器时使用此代理
+  // 支持动态代理（每次拨号IP不同），留空则不使用代理
+  proxyUrl: varchar("proxyUrl", { length: 1024 }),
+
+  // 并发固定为 1（单线程），保留字段兼容旧数据
+  maxConcurrent: int("maxConcurrent").default(1),
   targetCount: int("targetCount"),  // 注冊目標總數（達到後自動停止），NULL 表示不限制
 
   // 統計
@@ -130,6 +136,9 @@ export const taskLogs = mysqlTable("task_logs", {
 
   // AdsPower 相關
   adspowerBrowserId: varchar("adspowerBrowserId", { length: 128 }),
+
+  // 本次注册使用的出口IP（代理检测后记录）
+  exitIp: varchar("exitIp", { length: 64 }),
 
   // 執行詳情
   errorMessage: text("errorMessage"),
@@ -209,3 +218,27 @@ export const exportLogs = mysqlTable("export_logs", {
 
 export type ExportLog = typeof exportLogs.$inferSelect;
 export type InsertExportLog = typeof exportLogs.$inferInsert;
+
+/**
+ * 已用出口IP池：记录每次注册成功使用过的出口IP，防止重复使用同一IP注册
+ * 动态代理每次拨号IP不同，此表确保不会重复使用同一出口IP
+ */
+export const usedIpPool = mysqlTable("used_ip_pool", {
+  id: int("id").autoincrement().primaryKey(),
+
+  // 出口 IP 地址（唯一）
+  ip: varchar("ip", { length: 64 }).notNull().unique(),
+
+  // 关联的账号 email（哪次注册用了这个IP）
+  usedByEmail: varchar("usedByEmail", { length: 320 }),
+
+  // 关联的任务日志 ID
+  taskLogId: int("taskLogId"),
+
+  // 时间
+  usedAt: timestamp("usedAt").defaultNow().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type UsedIp = typeof usedIpPool.$inferSelect;
+export type InsertUsedIp = typeof usedIpPool.$inferInsert;

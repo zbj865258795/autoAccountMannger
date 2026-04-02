@@ -33,6 +33,9 @@ import {
   getExportBatches,
   getExportBatchDetail,
   getExportableCount,
+  getUsedIpPool,
+  getUsedIpCount,
+  clearUsedIpPool,
 } from "./db";
 import { checkAdsPowerConnection, getActiveBrowsers } from "./adspower";
 import { ADSPOWER_CONFIG } from "./config";
@@ -236,11 +239,11 @@ const automationRouter = router({
       adspowerApiUrl: z.string().default(ADSPOWER_CONFIG.apiUrl),
       adspowerGroupId: z.string().optional(),
       targetUrl: z.string().optional(),
-      maxConcurrent: z.number().min(1).max(50).default(1),
+      proxyUrl: z.string().optional(),
       targetCount: z.number().min(1).optional(),
     }))
     .mutation(async ({ input }) => {
-      await createAutomationTask(input);
+      await createAutomationTask({ ...input, maxConcurrent: 1 });
       return { success: true };
     }),
 
@@ -253,7 +256,7 @@ const automationRouter = router({
         adspowerApiUrl: z.string().optional(),
         adspowerGroupId: z.string().optional(),
         targetUrl: z.string().optional(),
-        maxConcurrent: z.number().min(1).max(50).optional(),
+        proxyUrl: z.string().nullish(),
         targetCount: z.number().min(1).nullish(),
       }),
     }))
@@ -478,6 +481,29 @@ const pluginRouter = router({
     }),
 });
 
+// ─── IP Pool Router ───────────────────────────────────────────────────────────
+
+const ipPoolRouter = router({
+  list: publicProcedure
+    .input(z.object({
+      search: z.string().optional(),
+      page: z.number().min(1).default(1),
+      pageSize: z.number().min(1).max(200).default(50),
+    }))
+    .query(async ({ input }) => {
+      return getUsedIpPool(input);
+    }),
+
+  count: publicProcedure.query(async () => {
+    return { count: await getUsedIpCount() };
+  }),
+
+  clear: publicProcedure.mutation(async () => {
+    await clearUsedIpPool();
+    return { success: true };
+  }),
+});
+
 // ─── App Router ───────────────────────────────────────────────────────────────────
 
 export const appRouter = router({
@@ -488,6 +514,7 @@ export const appRouter = router({
   phoneNumbers: phoneNumbersRouter,
   export: exportRouter,
   plugin: pluginRouter,
+  ipPool: ipPoolRouter,
 });
 
 export type AppRouter = typeof appRouter;
