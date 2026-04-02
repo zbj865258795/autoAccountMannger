@@ -1,6 +1,6 @@
 import { and, asc, count, desc, eq, gte, inArray, like, lte, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { accounts, automationTasks, exportLogs, phoneNumbers, taskLogs, users, usedIpPool } from "../drizzle/schema";
+import { accounts, automationTasks, exportLogs, phoneNumbers, taskLogs, users } from "../drizzle/schema";
 import type { InsertAccount, InsertAutomationTask, InsertExportLog, InsertPhoneNumber, InsertTaskLog } from "../drizzle/schema";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -1000,86 +1000,6 @@ export async function getExportBatchDetail(filter: {
 
   return { items, total: Number(countResult[0]?.count ?? 0) };
 }
-
-// ─── Used IP Pool ─────────────────────────────────────────────────────────────
-/**
- * 检查某个出口IP是否已在已用IP池中
- * 用于防止重复使用同一IP注册账号
- */
-export async function isIpUsed(ip: string): Promise<boolean> {
-  const db = await getDb();
-  if (!db) return false;
-  const result = await db.select({ id: usedIpPool.id }).from(usedIpPool)
-    .where(eq(usedIpPool.ip, ip)).limit(1);
-  return result.length > 0;
-}
-
-/**
- * 将出口IP记录到已用IP池（注册成功后调用）
- */
-export async function recordUsedIp(ip: string, usedByEmail?: string, taskLogId?: number) {
-  const db = await getDb();
-  if (!db) return;
-  try {
-    await db.insert(usedIpPool).values({
-      ip,
-      usedByEmail: usedByEmail ?? null,
-      taskLogId: taskLogId ?? null,
-    }).onDuplicateKeyUpdate({ set: { usedByEmail: usedByEmail ?? null } });
-  } catch {
-    // 忽略重复插入错误
-  }
-}
-
-/**
- * 获取已用IP池列表（分页）
- */
-export async function getUsedIpPool(filter: {
-  search?: string;
-  page?: number;
-  pageSize?: number;
-} = {}) {
-  const db = await getDb();
-  if (!db) return { items: [], total: 0 };
-  const { search, page = 1, pageSize = 50 } = filter;
-  const conditions: ReturnType<typeof eq>[] = [];
-  if (search) {
-    conditions.push(
-      or(
-        like(usedIpPool.ip, `%${search}%`),
-        like(usedIpPool.usedByEmail, `%${search}%`)
-      ) as any
-    );
-  }
-  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-  const [items, countResult] = await Promise.all([
-    db.select().from(usedIpPool).where(whereClause)
-      .orderBy(desc(usedIpPool.usedAt))
-      .limit(pageSize).offset((page - 1) * pageSize),
-    db.select({ count: sql<number>`count(*)` }).from(usedIpPool).where(whereClause),
-  ]);
-  return { items, total: Number(countResult[0]?.count ?? 0) };
-}
-
-/**
- * 获取已用IP总数
- */
-export async function getUsedIpCount(): Promise<number> {
-  const db = await getDb();
-  if (!db) return 0;
-  const result = await db.select({ count: sql<number>`count(*)` }).from(usedIpPool);
-  return Number(result[0]?.count ?? 0);
-}
-
-/**
- * 清空已用IP池（谨慎使用，一般用于测试重置）
- */
-export async function clearUsedIpPool() {
-  const db = await getDb();
-  if (!db) return;
-  await db.delete(usedIpPool);
-}
-
 // ─── Proxy URL 解析工具 ───────────────────────────────────────────────────────
 
 /**

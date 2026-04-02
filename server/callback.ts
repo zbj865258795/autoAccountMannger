@@ -40,7 +40,6 @@ import {
   getTaskLogs,
   updateTaskLog,
   getAutomationTaskById,
-  recordUsedIp,
 } from "./db";
 import { stopAndDeleteAdsPowerBrowser } from "./adspower";
 import { ADSPOWER_CONFIG } from "./config";
@@ -276,11 +275,6 @@ export function registerCallbackRoutes(app: Express): void {
 
           if (matchingLog) {
             console.log(`[Callback] Matched log #${matchingLog.id} | browserId: ${matchingLog.adspowerBrowserId ?? 'none'} | inviteCode: ${matchingLog.usedInviteCode ?? 'none'}`);
-
-            // 记录已用IP
-            if (matchingLog.exitIp) {
-              await recordUsedIp(matchingLog.exitIp, email, matchingLog.id).catch(() => {});
-            }
 
             await updateTaskLog(matchingLog.id, {
               status: "success",
