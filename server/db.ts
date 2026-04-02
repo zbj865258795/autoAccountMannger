@@ -651,6 +651,18 @@ export async function resetPhoneStatus(phone: string): Promise<void> {
 }
 
 /**
+ * 按 id 重置手机号状态为 unused（阶段二超时且短信未收到时归还）
+ */
+export async function resetPhoneStatusById(id: number): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .update(phoneNumbers)
+    .set({ status: "unused", usedByEmail: null, usedAt: null, updatedAt: new Date() })
+    .where(eq(phoneNumbers.id, id));
+}
+
+/**
  * 删除手机号
  */
 export async function deletePhoneNumbers(ids: number[]): Promise<void> {

@@ -19,6 +19,7 @@ import {
   resetInviteCodeStatus,
   getNextAvailablePhone,
   markPhoneUsedById,
+  resetPhoneStatusById,
   recordUsedIp,
   updateTaskLog,
   incrementTaskCounters,
@@ -519,6 +520,7 @@ async function handleVerifyPhonePage(
   }
 
   const phoneInfo = parseBackendPhone(phoneData);
+  const acquiredPhoneId = phoneData.id; // 记录获取的手机号 id，失败时用于归还
   log(`Phone: ${phoneInfo.phoneRaw} (${phoneInfo.iso})`);
 
   const MAX_REFRESHES = 3;
@@ -527,7 +529,7 @@ async function handleVerifyPhonePage(
 
   let smsCodeFetching = false;
   let smsCode: string | null = null;
-  let phoneMarkedUsed = false;
+  let phoneMarkedUsed = false; // 提升到外层，超时时可读取
 
   while (refreshCount <= MAX_REFRESHES) {
     await sleep(1500);
@@ -688,6 +690,15 @@ async function handleVerifyPhonePage(
     }
   }
 
+  // 阶段二超时：按插件逻辑处理手机号状态
+  // - 如果短信已收到并标记使用（phoneMarkedUsed=true），保持已使用状态，不允许再次使用
+  // - 如果按钮点了但短信未收到（phoneMarkedUsed=false），归还手机号供下次使用
+  if (!phoneMarkedUsed) {
+    log(`Phase 2 timeout, phone not marked used, resetting phone ${acquiredPhoneId} back to unused`, "warn");
+    await resetPhoneStatusById(acquiredPhoneId).catch(() => {});
+  } else {
+    log(`Phase 2 timeout, phone ${acquiredPhoneId} already marked used (SMS received), keeping used status`, "warn");
+  }
   return { result: "timeout" };
 }
 
@@ -929,6 +940,7 @@ async function selectCountry(page: Page, iso: string, dialCode: string, log: Log
       return items;
     }
 
+       // 手机号固定为美国，硬编码搜索 United States，匹配 +1
     for (const term of ["United States", isoCode]) {
       await typeSearch(term);
       const items = getVisibleItems();
