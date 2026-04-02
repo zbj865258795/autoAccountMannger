@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS `automation_tasks` (
   `adspowerApiKey` varchar(256),
   `adspowerGroupId` varchar(64),
   `targetUrl` varchar(512),
+  `proxyUrl` varchar(1024) COMMENT 'socks5h代理地址，留空不使用',
   `maxConcurrent` int DEFAULT 1,
   `targetCount` int,
   `totalAccountsCreated` int DEFAULT 0,
@@ -73,6 +74,7 @@ CREATE TABLE IF NOT EXISTS `task_logs` (
   `sourceAccountId` int,
   `newAccountId` int,
   `adspowerBrowserId` varchar(128),
+  `exitIp` varchar(64) COMMENT '本次注册使用的出口IP',
   `errorMessage` text,
   `durationMs` int,
   `startedAt` timestamp DEFAULT (now()),
@@ -117,3 +119,14 @@ CREATE TABLE IF NOT EXISTS `export_logs` (
 CREATE INDEX `export_logs_batchId_idx` ON `export_logs` (`exportBatchId`);
 CREATE INDEX `export_logs_email_idx` ON `export_logs` (`email`);
 CREATE INDEX `export_logs_exportedAt_idx` ON `export_logs` (`exportedAt`);
+
+-- ─── 已用IP池表 ────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS `used_ip_pool` (
+  `id` int AUTO_INCREMENT NOT NULL,
+  `ip` varchar(64) NOT NULL COMMENT '出口IP地址',
+  `usedByEmail` varchar(320) COMMENT '哪个账号注册时使用了此IP',
+  `taskLogId` int COMMENT '关联的任务日志ID',
+  `usedAt` timestamp NOT NULL DEFAULT (now()),
+  CONSTRAINT `used_ip_pool_id` PRIMARY KEY(`id`),
+  CONSTRAINT `used_ip_pool_ip_unique` UNIQUE(`ip`)
+);
