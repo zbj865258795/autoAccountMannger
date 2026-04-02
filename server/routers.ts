@@ -236,6 +236,7 @@ const automationRouter = router({
       adspowerApiUrl: z.string().default(ADSPOWER_CONFIG.apiUrl),
       adspowerGroupId: z.string().optional(),
       targetUrl: z.string().optional(),
+      proxyUrl: z.string().optional(),
       maxConcurrent: z.number().min(1).max(50).default(1),
       targetCount: z.number().min(1).optional(),
     }))
@@ -253,6 +254,7 @@ const automationRouter = router({
         adspowerApiUrl: z.string().optional(),
         adspowerGroupId: z.string().optional(),
         targetUrl: z.string().optional(),
+        proxyUrl: z.string().nullish(),
         maxConcurrent: z.number().min(1).max(50).optional(),
         targetCount: z.number().min(1).nullish(),
       }),

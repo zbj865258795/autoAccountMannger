@@ -54,10 +54,8 @@ const statusConfig: Record<TaskStatus, { label: string; class: string; icon: Rea
 
 function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: () => void }) {
   const [name, setName] = useState("自动注册任务");
-  const [interval, setInterval] = useState(60);
   const [apiUrl, setApiUrl] = useState("http://host.docker.internal:50325");
-  const [groupId, setGroupId] = useState("");
-  const [targetUrl, setTargetUrl] = useState("");
+  const [proxyUrl, setProxyUrl] = useState("");
   const [maxConcurrent, setMaxConcurrent] = useState(1);
   const [targetCount, setTargetCount] = useState<string>("");
 
@@ -95,40 +93,14 @@ function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose
             />
           </div>
           <div className="space-y-2">
-            <Label className="text-xs text-muted-foreground">注册目标 URL（可选）</Label>
+            <Label className="text-xs text-muted-foreground">代理地址（可选）</Label>
             <Input
-              value={targetUrl}
-              onChange={(e) => setTargetUrl(e.target.value)}
-              placeholder="https://example.com/register"
+              value={proxyUrl}
+              onChange={(e) => setProxyUrl(e.target.value)}
+              placeholder="socks5://user:pass@host:port"
               className="bg-muted/50 border-border/50 text-foreground font-mono text-sm"
             />
-            <p className="text-xs text-muted-foreground">浏览器打开后自动跳转到此 URL，邀请码会自动附加到 URL 参数</p>
-          </div>
-          <div className="space-y-2">
-            <Label className="text-xs text-muted-foreground">分组 ID（可选）</Label>
-            <Input
-              value={groupId}
-              onChange={(e) => setGroupId(e.target.value)}
-              placeholder="AdsPower 浏览器分组 ID"
-              className="bg-muted/50 border-border/50 text-foreground"
-            />
-          </div>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs text-muted-foreground">扫描间隔</Label>
-              <span className="text-sm font-medium text-foreground">{interval} 秒</span>
-            </div>
-            <Slider
-              value={[interval]}
-              onValueChange={([v]) => setInterval(v)}
-              min={10}
-              max={300}
-              step={10}
-              className="w-full"
-            />
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>10s</span><span>5分钟</span>
-            </div>
+            <p className="text-xs text-muted-foreground">填写后每次注册前会检测出口IP，确保不重复使用同一IP</p>
           </div>
           <div className="space-y-3">
             <div className="flex items-center justify-between">
@@ -167,10 +139,9 @@ function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose
           <Button
             onClick={() => createTask.mutate({
               name,
-              scanIntervalSeconds: interval,
+              scanIntervalSeconds: 10,
               adspowerApiUrl: apiUrl,
-              adspowerGroupId: groupId || undefined,
-              targetUrl: targetUrl || undefined,
+              proxyUrl: proxyUrl || undefined,
               maxConcurrent,
               targetCount: targetCount ? Number(targetCount) : undefined,
             })}
@@ -194,6 +165,7 @@ type TaskItem = {
   adspowerApiUrl: string | null;
   adspowerGroupId: string | null;
   targetUrl: string | null;
+  proxyUrl?: string | null;
   maxConcurrent: number | null;
   targetCount: number | null;
   status: string;
@@ -210,10 +182,8 @@ function EditTaskDialog({
   onUpdated: () => void;
 }) {
   const [name, setName] = useState(task.name);
-  const [interval, setInterval] = useState(task.scanIntervalSeconds ?? 60);
   const [apiUrl, setApiUrl] = useState(task.adspowerApiUrl ?? "http://host.docker.internal:50325");
-  const [groupId, setGroupId] = useState(task.adspowerGroupId ?? "");
-  const [targetUrl, setTargetUrl] = useState(task.targetUrl ?? "");
+  const [proxyUrl, setProxyUrl] = useState((task.proxyUrl as string) ?? "");
   const [maxConcurrent, setMaxConcurrent] = useState(task.maxConcurrent ?? 1);
   const [targetCount, setTargetCount] = useState<string>(
     task.targetCount != null ? String(task.targetCount) : ""
@@ -252,39 +222,14 @@ function EditTaskDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label className="text-xs text-muted-foreground">注册目标 URL（可选）</Label>
+            <Label className="text-xs text-muted-foreground">代理地址（可选）</Label>
             <Input
-              value={targetUrl}
-              onChange={(e) => setTargetUrl(e.target.value)}
-              placeholder="https://example.com/register"
+              value={proxyUrl}
+              onChange={(e) => setProxyUrl(e.target.value)}
+              placeholder="socks5://user:pass@host:port"
               className="bg-muted/50 border-border/50 text-foreground font-mono text-sm"
             />
-          </div>
-          <div className="space-y-2">
-            <Label className="text-xs text-muted-foreground">分组 ID（可选）</Label>
-            <Input
-              value={groupId}
-              onChange={(e) => setGroupId(e.target.value)}
-              placeholder="AdsPower 浏览器分组 ID"
-              className="bg-muted/50 border-border/50 text-foreground"
-            />
-          </div>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs text-muted-foreground">扫描间隔</Label>
-              <span className="text-sm font-medium text-foreground">{interval} 秒</span>
-            </div>
-            <Slider
-              value={[interval]}
-              onValueChange={([v]) => setInterval(v)}
-              min={10}
-              max={300}
-              step={10}
-              className="w-full"
-            />
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>10s</span><span>5分钟</span>
-            </div>
+            <p className="text-xs text-muted-foreground">填写后每次注册前会检测出口IP，确保不重复使用同一IP</p>
           </div>
           <div className="space-y-3">
             <div className="flex items-center justify-between">
@@ -320,10 +265,8 @@ function EditTaskDialog({
                 id: task.id,
                 data: {
                   name,
-                  scanIntervalSeconds: interval,
                   adspowerApiUrl: apiUrl,
-                  adspowerGroupId: groupId || undefined,
-                  targetUrl: targetUrl || undefined,
+                  proxyUrl: proxyUrl || null,
                   maxConcurrent,
                   targetCount: targetCount ? Number(targetCount) : null,
                 },
@@ -346,15 +289,12 @@ function AdsPowerStatus({ apiUrl }: { apiUrl: string }) {
   const { data, isLoading, isFetching, refetch } = trpc.automation.checkAdspower.useQuery(
     { apiUrl },
     {
-      // ★ 修复：30 秒轮询一次，但 staleTime=25s 避免页面重新挂载时立即显示加载中
       refetchInterval: 30000,
       staleTime: 25000,
-      // ★ 修复：保留上一次的成功数据，重新请求期间不显示“未连接”
       placeholderData: (prev) => prev,
     }
   );
 
-  // 初次加载（还没有任何数据）时才显示转圈
   const showSpinner = isLoading && !data;
 
   return (
@@ -368,7 +308,6 @@ function AdsPowerStatus({ apiUrl }: { apiUrl: string }) {
           {(data.activeBrowsers?.length ?? 0) > 0 && (
             <span className="text-muted-foreground">· {data.activeBrowsers?.length} 个活跃浏览器</span>
           )}
-          {/* ★ 后台轮询时显示微小的刷新指示，不影响已连接状态显示 */}
           {isFetching && <Loader2 className="w-2.5 h-2.5 animate-spin text-green-400/50" />}
         </>
       ) : (
@@ -435,6 +374,9 @@ export default function Automation() {
     refetchInterval: 5000,
   });
 
+  // 是否已有任务在运行中（单任务模式限制）
+  const hasRunningTask = tasks?.some((t) => t.status === "running" || t.status === "paused") ?? false;
+
   const startTask = trpc.automation.start.useMutation({
     onSuccess: () => { toast.success("任务已启动"); utils.automation.list.invalidate(); },
     onError: (err) => toast.error(`启动失败：${err.message}`),
@@ -457,7 +399,7 @@ export default function Automation() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-foreground">自动化任务</h1>
-          <p className="text-sm text-muted-foreground mt-1">管理 AdsPower 自动注册任务</p>
+          <p className="text-sm text-muted-foreground mt-1">管理 AdsPower 自动注册任务（同一时间只能运行一个任务）</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => refetch()}>
@@ -490,6 +432,8 @@ export default function Automation() {
           tasks?.map((task) => {
             const sc = statusConfig[task.status as TaskStatus] ?? statusConfig.idle;
             const StatusIcon = sc.icon;
+            // 其他任务正在运行时，当前任务的启动按钮禁用
+            const isOtherRunning = hasRunningTask && task.status !== "running" && task.status !== "paused";
             return (
               <Card key={task.id} className="bg-card border-border/50">
                 <CardContent className="p-4">
@@ -505,14 +449,21 @@ export default function Automation() {
                       <AdsPowerStatus apiUrl={task.adspowerApiUrl ?? "http://host.docker.internal:50325"} />
                     </div>
                     <div className="flex gap-1.5 ml-3 flex-wrap justify-end">
-                      {/* 启动按钮：空闲/已暂停/已停止时显示 */}
+                      {/* 启动按钮：空闲/已停止时显示，有其他任务运行时禁用 */}
                       {(task.status === "idle" || task.status === "paused" || task.status === "stopped") && (
                         <Button
                           size="sm"
                           variant="outline"
                           className="h-8 text-green-400 border-green-500/30 hover:bg-green-500/10"
-                          onClick={() => startTask.mutate({ id: task.id })}
-                          disabled={startTask.isPending}
+                          onClick={() => {
+                            if (isOtherRunning) {
+                              toast.error("已有任务正在运行，请先停止后再启动其他任务");
+                              return;
+                            }
+                            startTask.mutate({ id: task.id });
+                          }}
+                          disabled={startTask.isPending || isOtherRunning}
+                          title={isOtherRunning ? "已有其他任务正在运行" : "启动任务"}
                         >
                           <Play className="w-3 h-3 mr-1" />启动
                         </Button>
@@ -582,9 +533,9 @@ export default function Automation() {
                   </div>
 
                   <div className="flex gap-4 mt-3 text-xs text-muted-foreground">
-                    <span>间隔：{task.scanIntervalSeconds}s</span>
                     <span>并发：{task.maxConcurrent}</span>
                     {(task as any).targetCount ? <span>目标：{(task as any).targetCount}</span> : null}
+                    {(task as any).proxyUrl ? <span>代理：已配置</span> : null}
                     {task.lastExecutedAt && (
                       <span>最后执行：{new Date(task.lastExecutedAt).toLocaleString("zh-CN")}</span>
                     )}

@@ -92,6 +92,7 @@ export const automationTasks = mysqlTable("automation_tasks", {
   adspowerApiKey: varchar("adspowerApiKey", { length: 256 }),   // AdsPower API Key（開啟安全校驗時使用）
   adspowerGroupId: varchar("adspowerGroupId", { length: 64 }),
   targetUrl: varchar("targetUrl", { length: 512 }),              // 注冊目標 URL（插件打開的頁面）
+  proxyUrl: varchar("proxyUrl", { length: 1024 }),                 // 代理地址（socks5://user:pass@host:port）
   maxConcurrent: int("maxConcurrent").default(1),  // 最大並發數
   targetCount: int("targetCount"),  // 注冊目標總數（達到後自動停止），NULL 表示不限制
 

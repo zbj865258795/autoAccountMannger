@@ -205,6 +205,12 @@ export async function startScheduler(taskId: number): Promise<void> {
     return;
   }
 
+  // 单任务模式：如果已有其他任务在运行，拒绝启动
+  if (schedulerTimers.size > 0) {
+    const runningIds = Array.from(schedulerTimers.keys());
+    throw new Error(`已有任务正在运行（ID: ${runningIds.join(", ")})，请先停止后再启动其他任务`);
+  }
+
   const task = await getAutomationTaskById(taskId);
   if (!task) throw new Error(`Task ${taskId} not found`);
 
