@@ -67,7 +67,6 @@ export interface RegistrationParams {
     apiKey?: string;
     groupId?: string;
   };
-  backendUrl: string;         // 后台服务地址（用于内部 API 调用）
 }
 
 // ─── 主入口 ───────────────────────────────────────────────────────────────────

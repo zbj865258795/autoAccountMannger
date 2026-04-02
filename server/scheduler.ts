@@ -479,19 +479,38 @@ async function createOneBrowser(
       });
     }
 
-    console.log(`[Scheduler] Task ${taskId}: Browser started | profile: ${profileId} | ws: ${startResult.wsEndpoint}`);
+    // Docker 容器内无法通过 127.0.0.1 访问宿主机，需替换为 host.docker.internal
+    const wsEndpointFixed = startResult.wsEndpoint.replace(
+      /127\.0\.0\.1/g,
+      "host.docker.internal"
+    );
+    console.log(`[Scheduler] Task ${taskId}: Browser started | profile: ${profileId} | ws: ${wsEndpointFixed}`);
 
     // 异步启动注册流程（不阻塞调度器）
     runRegistration({
       taskId,
       logId: logId!,
       profileId,
-      wsEndpoint: startResult.wsEndpoint,
+      wsEndpoint: wsEndpointFixed,
       exitIp,
       adspowerConfig,
-      backendUrl: `http://localhost:${process.env.PORT || 3900}`,
-    }).catch((e) => {
+    }).catch(async (e) => {
       console.error(`[Scheduler] Task ${taskId}: Registration failed unexpectedly: ${e}`);
+      // 异步失败时也要清理浏览器，防止残留
+      if (profileId) await stopAndDeleteAdsPowerBrowser(adspowerConfig, profileId).catch(() => {});
+      if (logId) {
+        await updateTaskLog(logId, {
+          status: "failed",
+          errorMessage: String(e),
+          completedAt: new Date(),
+        }).catch(() => {});
+      }
+      await incrementTaskCounters(taskId, { totalFailed: 1 }).catch(() => {});
+      // 失败后继续下一次
+      const currentTask = await getAutomationTaskById(taskId);
+      if (currentTask && currentTask.status === "running") {
+        setTimeout(() => executeTask(taskId), 3000);
+      }
     });
 
   } catch (error: unknown) {
