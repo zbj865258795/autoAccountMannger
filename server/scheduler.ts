@@ -20,6 +20,7 @@ import {
   incrementTaskCounters,
   updateAutomationTask,
   updateTaskLog,
+  parseProxyUrl,
 } from "./db";
 import {
   closeAdsPowerBrowser,
@@ -30,6 +31,7 @@ import {
   stopAndDeleteAdsPowerBrowser,
 } from "./adspower";
 import { ADSPOWER_CONFIG } from "./config";
+import { checkProxyWithRetry } from "./proxy";
 
 // ─── 全局調度器狀態 ───────────────────────────────────────────────────────────
 
@@ -437,10 +439,41 @@ async function _executeTask(taskId: number): Promise<void> {
       `[Scheduler] Task ${taskId}: ${unusedCount} unused codes | ${currentRunning} running | creating ${browsersToCreate} new browser(s)`
     );
 
-    // 4. 並發創建瀏覽器
+    // 4. 如果配置了代理，先检测出口IP（每次创建浏览器前都检测一次）
+    let exitIp: string | undefined;
+    const proxyUrl = (task as any).proxyUrl as string | undefined;
+
+    if (proxyUrl && proxyUrl.trim()) {
+      console.log(`[Scheduler] Task ${taskId}: Checking proxy exit IP...`);
+      const proxyResult = await checkProxyWithRetry(proxyUrl, 10);
+
+      if (!proxyResult.success) {
+        const errMsg = proxyResult.error || "代理IP检测失败";
+        console.error(`[Scheduler] Task ${taskId}: ${errMsg}`);
+        // 如果是连续10次IP都已使用，停止任务
+        if (proxyResult.ipAlreadyUsed) {
+          console.error(`[Scheduler] Task ${taskId}: Stopping task due to exhausted IPs`);
+          await updateAutomationTask(taskId, { status: "stopped" });
+          await stopScheduler(taskId);
+        }
+        await incrementTaskCounters(taskId, { totalFailed: 1 });
+        return;
+      }
+
+      exitIp = proxyResult.exitIp;
+      if (proxyResult.retryCount > 0) {
+        console.log(`[Scheduler] Task ${taskId}: Got fresh exit IP ${exitIp} after ${proxyResult.retryCount} retries`);
+      } else {
+        console.log(`[Scheduler] Task ${taskId}: Exit IP ${exitIp} is fresh, proceeding`);
+      }
+    } else {
+      console.log(`[Scheduler] Task ${taskId}: No proxy configured, skipping IP check`);
+    }
+
+    // 5. 並發創建瀏覽器
     await Promise.all(
       Array.from({ length: browsersToCreate }, (_, i) =>
-        createOneBrowser(taskId, task, adspowerConfig, targetUrl, i)
+        createOneBrowser(taskId, task, adspowerConfig, targetUrl, i, exitIp)
       )
     );
 
@@ -459,7 +492,8 @@ async function createOneBrowser(
   task: Awaited<ReturnType<typeof getAutomationTaskById>>,
   adspowerConfig: { apiUrl: string; apiKey?: string; groupId?: string },
   targetUrl?: string,
-  index?: number
+  index?: number,
+  exitIp?: string
 ): Promise<void> {
   const startTime = Date.now();
   let logId: number | undefined;
@@ -471,11 +505,31 @@ async function createOneBrowser(
       taskId,
       status: "running",
       startedAt: new Date(),
+      exitIp: exitIp ?? null,
     });
     logId = (logResult as any)[0]?.insertId;
 
+    // 解析代理配置
+    const proxyUrl = (task as any).proxyUrl as string | undefined;
+    let proxyConfig: { proxyType: string; host?: string; port?: string; user?: string; password?: string } | undefined;
+
+    if (proxyUrl && proxyUrl.trim()) {
+      const parsed = parseProxyUrl(proxyUrl);
+      if (parsed) {
+        proxyConfig = {
+          proxyType: parsed.proxyType,
+          host: parsed.host,
+          port: parsed.port,
+          user: parsed.username,
+          password: parsed.password,
+        };
+      }
+    }
+
+    // 创建 AdsPower 浏览器（注入代理）
     const createResult = await createAdsPowerBrowser(adspowerConfig, `task_${taskId}_${Date.now()}`, {
       targetUrl,
+      proxyConfig,
     });
 
     if (!createResult.success || !createResult.profileId) {

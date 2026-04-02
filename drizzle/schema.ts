@@ -131,6 +131,9 @@ export const taskLogs = mysqlTable("task_logs", {
   // AdsPower 相關
   adspowerBrowserId: varchar("adspowerBrowserId", { length: 128 }),
 
+  // 本次注册使用的出口IP（代理检测后记录）
+  exitIp: varchar("exitIp", { length: 64 }),
+
   // 執行詳情
   errorMessage: text("errorMessage"),
   durationMs: int("durationMs"),  // 耗時（毫秒）
@@ -209,3 +212,27 @@ export const exportLogs = mysqlTable("export_logs", {
 
 export type ExportLog = typeof exportLogs.$inferSelect;
 export type InsertExportLog = typeof exportLogs.$inferInsert;
+
+/**
+ * 已用 IP 池表
+ * 记录所有已使用过的代理出口 IP，防止重复使用
+ * 动态代理每次拨号IP不同，此表确保不会重复使用同一出口IP
+ */
+export const usedIpPool = mysqlTable("used_ip_pool", {
+  id: int("id").autoincrement().primaryKey(),
+
+  // 出口 IP 地址（唯一）
+  ip: varchar("ip", { length: 64 }).notNull().unique(),
+
+  // 关联的账号 email（哪次注册用了这个IP）
+  usedByEmail: varchar("usedByEmail", { length: 320 }),
+
+  // 关联的任务日志 ID
+  taskLogId: int("taskLogId"),
+
+  // 记录时间
+  usedAt: timestamp("usedAt").defaultNow().notNull(),
+});
+
+export type UsedIp = typeof usedIpPool.$inferSelect;
+export type InsertUsedIp = typeof usedIpPool.$inferInsert;
