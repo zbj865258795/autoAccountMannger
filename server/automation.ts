@@ -219,7 +219,8 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
 function setupResponseInterception(
   page: Page,
   capturedUserData: any,
-  onToken: (token: string) => void
+  onToken: (token: string) => void,
+  onSendPhoneError?: () => void  // SendPhoneVerificationCode 失败回调
 ) {
   const WATCHED_APIS = [
     "RegisterByEmail",
@@ -277,6 +278,14 @@ function setupResponseInterception(
             capturedUserData.inviteCode = codes[0].inviteCode;
           }
         } catch {}
+      }
+
+      // SendPhoneVerificationCode 失败：重置发送状态，下次循环重新点击发送按钮
+      if (matchedApi === "SendPhoneVerificationCode") {
+        const status = response.status();
+        if (status < 200 || status >= 300) {
+          if (onSendPhoneError) onSendPhoneError();
+        }
       }
     } catch {}
   });
@@ -530,6 +539,16 @@ async function handleVerifyPhonePage(
   let smsCodeFetching = false;
   let smsCode: string | null = null;
   let phoneMarkedUsed = false; // 提升到外层，超时时可读取
+  let sendPhoneError = false;  // SendPhoneVerificationCode 接口失败标志
+
+  // 监听 SendPhoneVerificationCode 接口失败，对齐插件逻辑
+  const onSendPhoneError = () => { sendPhoneError = true; };
+  page.on("response", async (response) => {
+    if (response.url().includes("SendPhoneVerificationCode")) {
+      const s = response.status();
+      if (s < 200 || s >= 300) onSendPhoneError();
+    }
+  });
 
   while (refreshCount <= MAX_REFRESHES) {
     await sleep(1500);
@@ -582,6 +601,15 @@ async function handleVerifyPhonePage(
           stepStallCount++;
           if (stepStallCount >= 20) { log("Stalled on phone input, refreshing...", "warn"); break; }
         }
+        continue;
+      }
+
+      // 处理 SendPhoneVerificationCode 接口失败：重置发送状态，对齐插件逻辑
+      if (sendPhoneError) {
+        log("SendPhoneVerificationCode API error, resetting send state...", "warn");
+        phoneSendClicked = false;
+        sendPhoneError = false;
+        await sleep(3000);
         continue;
       }
 
@@ -1019,15 +1047,38 @@ async function fetchVerifyCode(codeUrl: string): Promise<string | null> {
   return null;
 }
 
-/** 轮询获取短信验证码（最多 5 分钟） */
+/** 轮询获取短信验证码（与插件完全对齐：36次 × 5秒 = 3分钟） */
 async function fetchSmsCode(smsUrl: string): Promise<string | null> {
-  for (let i = 0; i < 60; i++) {
+  const maxAttempts = 36;
+  for (let i = 1; i <= maxAttempts; i++) {
     await sleep(5000);
     try {
       const resp = await fetchWithTimeout(smsUrl, {}, 15000);
-      const json = await resp.json() as any;
-      const code = json.code || json.sms_code || json.smsCode || json.data?.code;
-      if (code && /^\d{4,8}$/.test(String(code))) return String(code);
+      const text = await resp.text();
+
+      // 尝试解析 JSON
+      try {
+        const json = JSON.parse(text);
+        // 优先匹配 json.code
+        if (json.code && String(json.code).trim()) {
+          const code = String(json.code).trim();
+          return code;
+        }
+        // 其次尝试从 json.message 中提取数字
+        if (json.message) {
+          const match = String(json.message).match(/\b(\d{4,8})\b/);
+          if (match) return match[1];
+        }
+      } catch {}
+
+      // 纯文本匹配："code is: XXXX" 或 "code: XXXX"
+      const codeMatch = text.match(/(?:code\s*(?:is|:)\s*)\s*(\d{4,8})/i);
+      if (codeMatch) return codeMatch[1];
+
+      // 纯文本匹配：独立的 6 位数字
+      const numMatch = text.match(/\b(\d{6})\b/);
+      if (numMatch) return numMatch[1];
+
     } catch {}
   }
   return null;
