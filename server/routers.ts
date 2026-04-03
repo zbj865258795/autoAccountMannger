@@ -52,7 +52,10 @@ import { startScheduler, pauseScheduler, stopScheduler, getRunningTaskIds, handl
 // 辅助：将 null / undefined / 空字符串统一转为 undefined
 const optStr = z.string().nullish().transform(v => (v == null || v === "" ? undefined : v));
 const optNum = (def: number) =>
-  z.number().nullish().transform(v => v ?? def).default(def);
+  z.union([z.number(), z.string().transform(v => Number(v))])
+    .nullish()
+    .transform(v => (v == null || isNaN(Number(v)) ? def : Number(v)))
+    .default(def);
 
 const AccountImportSchema = z.object({
   // ── 必填字段（三个）──────────────────────────────────────────────────────

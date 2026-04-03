@@ -1199,13 +1199,15 @@ export async function saveRegistrationResult(data: {
     token,
     clientId,
     membershipVersion = "free",
-    totalCredits = 0,
-    freeCredits = 0,
-    refreshCredits = 0,
     inviteCode,
     referrerCode,
     inviterAccountId,
   } = data;
+
+  // NaN 保护：API 返回的数字字段可能是 NaN（如 Number(undefined) 或 Number("NaN")），MySQL int 不接受 NaN
+  const totalCredits = isNaN(Number(data.totalCredits)) ? 0 : (data.totalCredits ?? 0);
+  const freeCredits = isNaN(Number(data.freeCredits)) ? 0 : (data.freeCredits ?? 0);
+  const refreshCredits = isNaN(Number(data.refreshCredits)) ? 0 : (data.refreshCredits ?? 0);
 
   // 检查邮箱是否已存在
   const existing = await db

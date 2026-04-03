@@ -39,9 +39,9 @@ function parseAndTransform(raw: string): { items: any[]; error: string } {
     token:             item.token             || undefined,
     clientId:          item.clientId          || undefined,
     membershipVersion: item.membershipVersion  || "free",
-    totalCredits:      item.totalCredits  ?? 0,
-    freeCredits:       item.freeCredits   ?? 0,
-    refreshCredits:    item.refreshCredits ?? 0,
+    totalCredits:      (isNaN(Number(item.totalCredits))  ? 0 : Number(item.totalCredits  ?? 0)),
+    freeCredits:       (isNaN(Number(item.freeCredits))   ? 0 : Number(item.freeCredits   ?? 0)),
+    refreshCredits:    (isNaN(Number(item.refreshCredits)) ? 0 : Number(item.refreshCredits ?? 0)),
     // 自己的邀请码（必填）
     inviteCode:        item.inviteCode    || undefined,
     // 邀请人的邀请码（初始根账号没有邀请人）
