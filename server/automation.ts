@@ -154,6 +154,37 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
       }
     }
 
+    // ── 设置资源拦截（节省代理流量）──
+    // 屏蔽图片、字体、广告追踪等不必要资源，保留 JS/CSS/Cloudflare 必要资源
+    await context.route("**/*", (route) => {
+      const req = route.request();
+      const resourceType = req.resourceType();
+      const url = req.url();
+
+      // 屏蔽：图片（Cloudflare Turnstile 不依赖图片）
+      if (resourceType === "image") {
+        route.abort();
+        return;
+      }
+      // 屏蔽：字体文件
+      if (resourceType === "font") {
+        route.abort();
+        return;
+      }
+      // 屏蔽：广告/追踪/分析域名
+      const blockedDomains = [
+        "google-analytics.com", "googletagmanager.com", "doubleclick.net",
+        "facebook.com", "twitter.com", "hotjar.com", "segment.com",
+        "amplitude.com", "mixpanel.com", "intercom.io", "crisp.chat",
+        "sentry.io", "bugsnag.com", "fullstory.com", "logrocket.com",
+      ];
+      if (blockedDomains.some((d) => url.includes(d))) {
+        route.abort();
+        return;
+      }
+      route.continue();
+    });
+
     // ── 设置网络响应拦截（替代 chrome.debugger）──
     setupResponseInterception(page, capturedUserData, (token) => {
       capturedToken = token;
@@ -344,6 +375,35 @@ function setupResponseInterception(
   });
 }
 
+// ─── 拟人化浏览行为 ──────────────────────────────────────────────────────────
+
+/**
+ * 页面加载后模拟真人浏览：随机鼠标漫游 + 偶尔轻微滚动
+ * 让 Cloudflare Turnstile 的行为分析看起来像真实用户
+ */
+async function humanBrowse(page: Page): Promise<void> {
+  try {
+    // 随机鼠标漫游 2-4 次
+    const moveCount = 2 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < moveCount; i++) {
+      const x = 200 + Math.random() * 1000;
+      const y = 100 + Math.random() * 500;
+      await page.mouse.move(x, y, { steps: 10 + Math.floor(Math.random() * 15) });
+      await sleep(300 + Math.random() * 600);
+    }
+    // 30% 概率轻微向下滚动再滚回来（模拟用户阅读页面）
+    if (Math.random() < 0.3) {
+      const scrollY = 80 + Math.floor(Math.random() * 120);
+      await page.mouse.wheel(0, scrollY);
+      await sleep(400 + Math.random() * 400);
+      await page.mouse.wheel(0, -scrollY);
+      await sleep(200 + Math.random() * 300);
+    }
+  } catch {
+    // 拟人化操作失败不影响主流程
+  }
+}
+
 // ─── 阶段一：login 页面 ──────────────────────────────────────────────────────
 
 async function handleLoginPage(
@@ -384,6 +444,8 @@ async function handleLoginPage(
       log(`阶段一：当前 URL 异常（${url}），等待跳转...`);
       await sleep(2000);
     }
+    // 页面加载后模拟真人浏览行为（随机滚动 + 鼠标漫游）
+    await humanBrowse(page);
     let emailFilled = false;
     let emailContinueClicked = false;
     let pwdFilled = false;
