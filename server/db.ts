@@ -1,7 +1,7 @@
 import { and, asc, count, desc, eq, gte, inArray, like, lte, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { accounts, automationTasks, exportLogs, phoneNumbers, taskLogs, users, usedIpPool } from "../drizzle/schema";
-import type { InsertAccount, InsertAutomationTask, InsertExportLog, InsertPhoneNumber, InsertTaskLog } from "../drizzle/schema";
+import { accounts, automationTasks, exportLogs, phoneNumbers, taskLogs, users, usedIpPool, proxyAccounts } from "../drizzle/schema";
+import type { InsertAccount, InsertAutomationTask, InsertExportLog, InsertPhoneNumber, InsertTaskLog, InsertProxyAccount } from "../drizzle/schema";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -1226,4 +1226,37 @@ export async function saveRegistrationResult(data: {
   });
 
   console.log(`[DB] saveRegistrationResult: account created for ${email}`);
+}
+
+// ─── Proxy Accounts ───────────────────────────────────────────────────────────
+
+export async function getProxyAccounts() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(proxyAccounts).orderBy(asc(proxyAccounts.createdAt));
+}
+
+export async function getProxyAccountById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(proxyAccounts).where(eq(proxyAccounts.id, id)).limit(1);
+  return result.length > 0 ? result[0] : undefined;
+}
+
+export async function createProxyAccount(data: InsertProxyAccount) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return db.insert(proxyAccounts).values(data);
+}
+
+export async function updateProxyAccount(id: number, data: Partial<InsertProxyAccount>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return db.update(proxyAccounts).set(data).where(eq(proxyAccounts.id, id));
+}
+
+export async function deleteProxyAccount(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return db.delete(proxyAccounts).where(eq(proxyAccounts.id, id));
 }

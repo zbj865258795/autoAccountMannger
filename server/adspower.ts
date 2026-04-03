@@ -81,11 +81,9 @@ function randomSample<T>(arr: T[], n: number): T[] {
 // 指纹数据库
 // ─────────────────────────────────────────────
 
-/** Chrome 主版本号池（近两年常见版本） */
+/** Chrome 主版本号池（本地已安装版本） */
 const CHROME_VERSIONS = [
-  "110", "111", "112", "113", "114", "115",
-  "116", "117", "118", "119", "120", "121",
-  "122", "123", "124", "125", "126",
+  "142", "143", "144", "145", "146",
 ];
 
 /** Firefox 主版本号池 */
@@ -102,57 +100,79 @@ const MAC_UA_VERSIONS = [
   "Mac OS X 10", "Mac OS X 11", "Mac OS X 12", "Mac OS X 13",
 ];
 
-/** 常见时区池（30个） */
-const TIMEZONES = [
-  "America/New_York", "America/Los_Angeles", "America/Chicago",
-  "America/Toronto", "America/Vancouver", "America/Denver",
-  "America/Phoenix", "America/Miami", "America/Boston",
-  "Europe/London", "Europe/Paris", "Europe/Berlin",
-  "Europe/Amsterdam", "Europe/Madrid", "Europe/Rome",
-  "Europe/Warsaw", "Europe/Stockholm", "Europe/Zurich",
-  "Asia/Tokyo", "Asia/Shanghai", "Asia/Seoul",
-  "Asia/Singapore", "Asia/Hong_Kong", "Asia/Bangkok",
-  "Asia/Dubai", "Asia/Kolkata", "Asia/Jakarta",
-  "Australia/Sydney", "Australia/Melbourne",
-  "Pacific/Auckland",
+/** 地区指纹配置：每个地区对应专属的时区、语言、城市池 */
+const REGION_CONFIGS = {
+  us: {
+    timezones: [
+      "America/New_York", "America/Los_Angeles", "America/Chicago",
+      "America/Denver", "America/Phoenix", "America/Seattle",
+      "America/Miami", "America/Boston", "America/Atlanta",
+    ],
+    languages: ["en-US", "en"],
+    cities: [
+      { city: "New York",     lat: 40.7128,  lon: -74.0060,  tz: "America/New_York" },
+      { city: "Los Angeles",  lat: 34.0522,  lon: -118.2437, tz: "America/Los_Angeles" },
+      { city: "Chicago",      lat: 41.8781,  lon: -87.6298,  tz: "America/Chicago" },
+      { city: "Houston",      lat: 29.7604,  lon: -95.3698,  tz: "America/Chicago" },
+      { city: "Phoenix",      lat: 33.4484,  lon: -112.0740, tz: "America/Phoenix" },
+      { city: "Philadelphia", lat: 39.9526,  lon: -75.1652,  tz: "America/New_York" },
+      { city: "San Antonio",  lat: 29.4241,  lon: -98.4936,  tz: "America/Chicago" },
+      { city: "San Diego",    lat: 32.7157,  lon: -117.1611, tz: "America/Los_Angeles" },
+      { city: "Dallas",       lat: 32.7767,  lon: -96.7970,  tz: "America/Chicago" },
+      { city: "Seattle",      lat: 47.6062,  lon: -122.3321, tz: "America/Los_Angeles" },
+    ],
+  },
+  tw: {
+    timezones: ["Asia/Taipei"],
+    languages: ["zh-TW", "zh", "en-US", "en"],
+    cities: [
+      { city: "Taipei",       lat: 25.0330,  lon: 121.5654,  tz: "Asia/Taipei" },
+      { city: "New Taipei",   lat: 25.0169,  lon: 121.4628,  tz: "Asia/Taipei" },
+      { city: "Taichung",     lat: 24.1477,  lon: 120.6736,  tz: "Asia/Taipei" },
+      { city: "Kaohsiung",    lat: 22.6273,  lon: 120.3014,  tz: "Asia/Taipei" },
+      { city: "Tainan",       lat: 22.9999,  lon: 120.2269,  tz: "Asia/Taipei" },
+    ],
+  },
+  hk: {
+    timezones: ["Asia/Hong_Kong"],
+    languages: ["zh-HK", "zh", "en-US", "en"],
+    cities: [
+      { city: "Hong Kong",    lat: 22.3193,  lon: 114.1694,  tz: "Asia/Hong_Kong" },
+      { city: "Kowloon",      lat: 22.3282,  lon: 114.1735,  tz: "Asia/Hong_Kong" },
+      { city: "Tsuen Wan",    lat: 22.3707,  lon: 114.1146,  tz: "Asia/Hong_Kong" },
+    ],
+  },
+  jp: {
+    timezones: ["Asia/Tokyo"],
+    languages: ["ja", "ja-JP", "en-US", "en"],
+    cities: [
+      { city: "Tokyo",        lat: 35.6895,  lon: 139.6917,  tz: "Asia/Tokyo" },
+      { city: "Osaka",        lat: 34.6937,  lon: 135.5023,  tz: "Asia/Tokyo" },
+      { city: "Nagoya",       lat: 35.1815,  lon: 136.9066,  tz: "Asia/Tokyo" },
+      { city: "Yokohama",     lat: 35.4437,  lon: 139.6380,  tz: "Asia/Tokyo" },
+      { city: "Sapporo",      lat: 43.0618,  lon: 141.3545,  tz: "Asia/Tokyo" },
+      { city: "Fukuoka",      lat: 33.5904,  lon: 130.4017,  tz: "Asia/Tokyo" },
+    ],
+  },
+} as const;
+
+export type RegionCode = keyof typeof REGION_CONFIGS;
+
+/**
+ * 屏幕分辨率池（AdsPower 格式：宽_高）
+ * 窗口大小与指纹分辨率保持一致，均为 Windows 10 常见分辨率
+ * 对应的窗口大小：宽 = 分辨率宽 - 16，高 = 分辨率高 - 88（标题栏 + 任务栏）
+ */
+const RESOLUTIONS: Array<{ screen: string; windowWidth: number; windowHeight: number }> = [
+  { screen: "1920_1080", windowWidth: 1904, windowHeight: 992 },
+  { screen: "1366_768",  windowWidth: 1350, windowHeight: 680 },
+  { screen: "1440_900",  windowWidth: 1424, windowHeight: 812 },
+  { screen: "1536_864",  windowWidth: 1520, windowHeight: 776 },
+  { screen: "1280_800",  windowWidth: 1264, windowHeight: 712 },
+  { screen: "1600_900",  windowWidth: 1584, windowHeight: 812 },
+  { screen: "1280_720",  windowWidth: 1264, windowHeight: 632 },
 ];
 
-/** 屏幕分辨率池（AdsPower 格式：宽_高） */
-const RESOLUTIONS = [
-  "1920_1080", "1366_768", "1440_900", "1536_864",
-  "1280_800", "1680_1050", "2560_1440", "1600_900",
-  "1280_1024", "1920_1200", "1360_768", "1024_768",
-  "1280_720", "1400_1050",
-];
-
-/** 城市坐标池（含经纬度范围，用于微小随机偏移） */
-const CITY_LOCATIONS = [
-  { city: "New York",     lat: 40.7128,   lon: -74.0060,  tz: "America/New_York" },
-  { city: "Los Angeles",  lat: 34.0522,   lon: -118.2437, tz: "America/Los_Angeles" },
-  { city: "Chicago",      lat: 41.8781,   lon: -87.6298,  tz: "America/Chicago" },
-  { city: "Houston",      lat: 29.7604,   lon: -95.3698,  tz: "America/Chicago" },
-  { city: "Phoenix",      lat: 33.4484,   lon: -112.0740, tz: "America/Phoenix" },
-  { city: "Toronto",      lat: 43.6532,   lon: -79.3832,  tz: "America/Toronto" },
-  { city: "Vancouver",    lat: 49.2827,   lon: -123.1207, tz: "America/Vancouver" },
-  { city: "London",       lat: 51.5074,   lon: -0.1276,   tz: "Europe/London" },
-  { city: "Paris",        lat: 48.8566,   lon: 2.3522,    tz: "Europe/Paris" },
-  { city: "Berlin",       lat: 52.5200,   lon: 13.4050,   tz: "Europe/Berlin" },
-  { city: "Amsterdam",    lat: 52.3676,   lon: 4.9041,    tz: "Europe/Amsterdam" },
-  { city: "Madrid",       lat: 40.4168,   lon: -3.7038,   tz: "Europe/Madrid" },
-  { city: "Rome",         lat: 41.9028,   lon: 12.4964,   tz: "Europe/Rome" },
-  { city: "Stockholm",    lat: 59.3293,   lon: 18.0686,   tz: "Europe/Stockholm" },
-  { city: "Tokyo",        lat: 35.6895,   lon: 139.6917,  tz: "Asia/Tokyo" },
-  { city: "Seoul",        lat: 37.5665,   lon: 126.9780,  tz: "Asia/Seoul" },
-  { city: "Shanghai",     lat: 31.2304,   lon: 121.4737,  tz: "Asia/Shanghai" },
-  { city: "Singapore",    lat: 1.3521,    lon: 103.8198,  tz: "Asia/Singapore" },
-  { city: "Hong Kong",    lat: 22.3193,   lon: 114.1694,  tz: "Asia/Hong_Kong" },
-  { city: "Bangkok",      lat: 13.7563,   lon: 100.5018,  tz: "Asia/Bangkok" },
-  { city: "Dubai",        lat: 25.2048,   lon: 55.2708,   tz: "Asia/Dubai" },
-  { city: "Mumbai",       lat: 19.0760,   lon: 72.8777,   tz: "Asia/Kolkata" },
-  { city: "Sydney",       lat: -33.8688,  lon: 151.2093,  tz: "Australia/Sydney" },
-  { city: "Melbourne",    lat: -37.8136,  lon: 144.9631,  tz: "Australia/Melbourne" },
-  { city: "Auckland",     lat: -36.8485,  lon: 174.7633,  tz: "Pacific/Auckland" },
-];
 
 /** WebGL 厂商/渲染器组合池 */
 const WEBGL_VENDORS = [
@@ -190,20 +210,17 @@ const FONT_POOL = [
 // 每次调用产生完全不同的指纹组合
 // ─────────────────────────────────────────────
 
-export function generateRandomFingerprint() {
-  // ── 1. 浏览器类型和版本 ──────────────────────
-  // 以 chrome 为主（更常见）
+export function generateRandomFingerprint(region: RegionCode = "us") {
+  const regionCfg = REGION_CONFIGS[region];
+
+  // ── 1. 浏览器类型和版本 ────────────────────────────────────
   const browserType = "chrome" as "chrome" | "firefox";
   const chromeVersion = randomPick(CHROME_VERSIONS);
   const firefoxVersion = randomPick(FIREFOX_VERSIONS);
   const browserVersion = browserType === "chrome" ? chromeVersion : firefoxVersion;
 
-  // ── 2. 操作系统 ──────────────────────────────
-  // Windows 权重更高，Mac 次之，Linux 较少
+  // ── 2. 操作系统 ────────────────────────────────────────
   const osType = randomPick(["windows", "windows", "windows", "mac", "linux"]);
-
-  // 根据 OS 确定 random_ua.ua_system_version（AdsPower 合法值）
-  // 文档要求：Windows 10 / Windows 11 / Mac OS X 10~13 / Linux
   let uaSystemVersion: string[];
   if (osType === "windows") {
     uaSystemVersion = [randomPick(WINDOWS_UA_VERSIONS)];
@@ -213,21 +230,19 @@ export function generateRandomFingerprint() {
     uaSystemVersion = ["Linux"];
   }
 
-  // ── 3. 城市/时区/地理坐标 ────────────────────
-  const cityInfo = randomPick(CITY_LOCATIONS);
-  // 在城市坐标基础上加微小随机偏移（±0.05度，约5公里范围内）
+  // ── 3. 城市/时区/地理坐标（根据地区选取）─────────────────────
+  const cityInfo = randomPick([...regionCfg.cities] as Array<{ city: string; lat: number; lon: number; tz: string }>);
   const latOffset = randomFloat(-0.05, 0.05, 6);
   const lonOffset = randomFloat(-0.05, 0.05, 6);
   const finalLat = (cityInfo.lat + latOffset).toFixed(6);
   const finalLon = (cityInfo.lon + lonOffset).toFixed(6);
   const timezone = cityInfo.tz;
 
-  // ── 4. 语言（固定台湾地区繁体中文）──────────────────────
-  // 文档要求 language 为字符串数组格式
-  const language = ["zh-TW", "zh", "en-US", "en"];
+  // ── 4. 语言（根据地区配置）───────────────────────────────────────
+  const language = [...regionCfg.languages] as string[];
 
-  // ── 5. 屏幕分辨率（AdsPower 格式：宽_高）──────
-  const resolution = randomPick(RESOLUTIONS);
+  // ── 5. 屏幕分辨率 + 窗口大小（保持一致）──────────────────────
+  const resolutionInfo = randomPick(RESOLUTIONS);
 
   // ── 6. 硬件参数 ──────────────────────────────
   // 文档支持：default, 2, 4, 6, 8, 16
@@ -242,9 +257,9 @@ export function generateRandomFingerprint() {
   const fontCount = randomInt(15, 25);
   const fonts = randomSample(FONT_POOL, fontCount);
 
-  // ── 9. 其他随机参数 ──────────────────────────
-  // 文档支持：forward, proxy, local, disabled, disableUDP
-  const webrtc = randomPick(["disabled", "disabled", "proxy", "local"]);
+  // ── 9. 其他随机参数 ────────────────────────────────────────
+  // WebRTC 固定为 disabled，防止泄露真实 IP
+  const webrtc = "disabled";
   // 文档支持：0=使用本地设置, 1=开启硬件加速, 2=关闭硬件加速
   const gpu = randomPick(["0", "1"]);
   // 文档支持：default, true, false
@@ -288,7 +303,7 @@ export function generateRandomFingerprint() {
       gpu,
 
       // ── 屏幕分辨率（文档格式：宽_高，如 1920_1080）──
-      screen_resolution: resolution,
+      screen_resolution: resolutionInfo.screen,
 
       // ── MAC 地址：随机生成 ──
       mac_address_config: {
@@ -328,7 +343,9 @@ export function generateRandomFingerprint() {
       uaSystemVersion: uaSystemVersion[0],
       hardwareConcurrency,
       deviceMemory,
-      resolution,
+      resolution: resolutionInfo.screen,
+      windowWidth: resolutionInfo.windowWidth,
+      windowHeight: resolutionInfo.windowHeight,
       webglVendor: webglInfo.vendor,
       fontCount,
     },
@@ -363,6 +380,7 @@ export async function createAdsPowerBrowser(
   inviteCode: string,
   options: {
     targetUrl?: string;
+    region?: RegionCode;
     proxyConfig?: {
       proxyType: string;
       host?: string;
@@ -373,7 +391,7 @@ export async function createAdsPowerBrowser(
   } = {}
 ): Promise<CreateBrowserResult> {
   const client = createAxiosClient(config);
-  const { fingerprint_config, _meta } = generateRandomFingerprint();
+  const { fingerprint_config, _meta } = generateRandomFingerprint(options.region ?? "us");
 
   const profileName = `AutoReg_${inviteCode}_${randomHex(8)}`;
   const remark = `邀请码: ${inviteCode} | ${_meta.browserType} | ${_meta.osType} | ${_meta.location} | ${_meta.resolution} | ${new Date().toISOString()}`;
@@ -395,6 +413,9 @@ export async function createAdsPowerBrowser(
     group_id: config.groupId ?? "0",
     remark,
     fingerprint_config,
+    // 窗口大小与指纹分辨率保持一致，避免窗口大小异常
+    open_width: _meta.windowWidth,
+    open_height: _meta.windowHeight,
   };
 
   if (tabs.length > 0) {

@@ -21,6 +21,7 @@ import {
   updateAutomationTask,
   updateTaskLog,
   parseProxyUrl,
+  getProxyAccountById,
 } from "./db";
 import {
   closeAdsPowerBrowser,
@@ -397,8 +398,19 @@ async function createOneBrowser(
     });
     logId = (logResult as any)[0]?.insertId;
 
-    // 解析代理配置
-    const proxyUrl = (task as any).proxyUrl as string | undefined;
+    // 解析代理配置：优先从代理账号表读取，如果没有则回退到任务的 proxyUrl
+    const proxyAccountId = (task as any).proxyAccountId as number | undefined | null;
+    let proxyUrl: string | undefined = (task as any).proxyUrl as string | undefined;
+    let region: "us" | "tw" | "hk" | "jp" = "us"; // 默认美国
+
+    if (proxyAccountId) {
+      const proxyAccount = await getProxyAccountById(proxyAccountId);
+      if (proxyAccount) {
+        proxyUrl = proxyAccount.proxyUrl;
+        region = proxyAccount.region as "us" | "tw" | "hk" | "jp";
+      }
+    }
+
     let proxyConfig: { proxyType: string; host?: string; port?: string; user?: string; password?: string } | undefined;
 
     if (proxyUrl && proxyUrl.trim()) {
@@ -414,11 +426,11 @@ async function createOneBrowser(
       }
     }
 
-    // 创建 AdsPower 浏览器（注入代理）
+    // 创建 AdsPower 浏览器（注入代理 + 地区指纹）
     const createResult = await createAdsPowerBrowser(
       adspowerConfig,
       `task_${taskId}_${Date.now()}`,
-      { proxyConfig }
+      { proxyConfig, region }
     );
 
     if (!createResult.success || !createResult.profileId) {

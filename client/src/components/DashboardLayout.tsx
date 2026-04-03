@@ -24,6 +24,7 @@ import {
   PanelLeft,
   Phone,
   Plus,
+  Shield,
   Users,
   Webhook,
 } from "lucide-react";
@@ -41,6 +42,7 @@ const menuItems = [
   { icon: FileText, label: "执行日志", path: "/logs" },
   { icon: Download, label: "导出记录", path: "/exports" },
   { icon: Globe, label: "IP 池管理", path: "/ip-pool" },
+  { icon: Shield, label: "代理账号", path: "/proxy-accounts" },
   { icon: Webhook, label: "API 集成", path: "/api-docs" },
 ];
 

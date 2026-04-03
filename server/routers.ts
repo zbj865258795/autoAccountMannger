@@ -36,6 +36,11 @@ import {
   getUsedIpPool,
   getUsedIpCount,
   clearUsedIpPool,
+  getProxyAccounts,
+  createProxyAccount,
+  updateProxyAccount,
+  deleteProxyAccount,
+  getProxyAccountById,
 } from "./db";
 import { checkAdsPowerConnection, getActiveBrowsers } from "./adspower";
 import { ADSPOWER_CONFIG } from "./config";
@@ -237,9 +242,7 @@ const automationRouter = router({
       name: z.string().min(1),
       scanIntervalSeconds: z.number().min(10).default(60),
       adspowerApiUrl: z.string().default(ADSPOWER_CONFIG.apiUrl),
-      adspowerGroupId: z.string().optional(),
-      targetUrl: z.string().optional(),
-      proxyUrl: z.string().optional(),
+      proxyAccountId: z.number().optional(),
       targetCount: z.number().min(1).optional(),
     }))
     .mutation(async ({ input }) => {
@@ -254,9 +257,7 @@ const automationRouter = router({
         name: z.string().optional(),
         scanIntervalSeconds: z.number().min(10).optional(),
         adspowerApiUrl: z.string().optional(),
-        adspowerGroupId: z.string().optional(),
-        targetUrl: z.string().optional(),
-        proxyUrl: z.string().nullish(),
+        proxyAccountId: z.number().nullish(),
         targetCount: z.number().min(1).nullish(),
       }),
     }))
@@ -503,8 +504,57 @@ const ipPoolRouter = router({
     return { success: true };
   }),
 });
+// ─── Proxy Accounts Router ───────────────────────────────────────────────────────────────────────
 
-// ─── App Router ───────────────────────────────────────────────────────────────────
+const proxyAccountsRouter = router({
+  list: publicProcedure.query(async () => {
+    return getProxyAccounts();
+  }),
+
+  get: publicProcedure
+    .input(z.object({ id: z.number() }))
+    .query(async ({ input }) => {
+      const account = await getProxyAccountById(input.id);
+      if (!account) throw new TRPCError({ code: "NOT_FOUND", message: "代理账号不存在" });
+      return account;
+    }),
+
+  create: publicProcedure
+    .input(z.object({
+      name: z.string().min(1),
+      region: z.enum(["us", "tw", "hk", "jp"]),
+      proxyUrl: z.string().min(1),
+      notes: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      await createProxyAccount(input);
+      return { success: true };
+    }),
+
+  update: publicProcedure
+    .input(z.object({
+      id: z.number(),
+      data: z.object({
+        name: z.string().min(1).optional(),
+        region: z.enum(["us", "tw", "hk", "jp"]).optional(),
+        proxyUrl: z.string().min(1).optional(),
+        notes: z.string().optional(),
+      }),
+    }))
+    .mutation(async ({ input }) => {
+      await updateProxyAccount(input.id, input.data);
+      return { success: true };
+    }),
+
+  delete: publicProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      await deleteProxyAccount(input.id);
+      return { success: true };
+    }),
+});
+
+// ─── App Router ────────────────────────────────────────────────────────────────────────
 
 export const appRouter = router({
   accounts: accountsRouter,
@@ -515,6 +565,7 @@ export const appRouter = router({
   export: exportRouter,
   plugin: pluginRouter,
   ipPool: ipPoolRouter,
+  proxyAccounts: proxyAccountsRouter,
 });
 
 export type AppRouter = typeof appRouter;

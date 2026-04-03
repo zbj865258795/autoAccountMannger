@@ -93,6 +93,9 @@ export const automationTasks = mysqlTable("automation_tasks", {
   adspowerGroupId: varchar("adspowerGroupId", { length: 64 }),
   targetUrl: varchar("targetUrl", { length: 512 }),              // 注冊目標 URL（插件打開的頁面）
 
+  // 代理账号 ID（关联 proxy_accounts 表，优先使用此字段）
+  proxyAccountId: int("proxyAccountId"),
+
   // 代理配置：socks5h://user:pass@host:port 格式，每次创建浏览器时使用此代理
   // 支持动态代理（每次拨号IP不同），留空则不使用代理
   proxyUrl: varchar("proxyUrl", { length: 1024 }),
@@ -242,3 +245,30 @@ export const usedIpPool = mysqlTable("used_ip_pool", {
 
 export type UsedIp = typeof usedIpPool.$inferSelect;
 export type InsertUsedIp = typeof usedIpPool.$inferInsert;
+
+/**
+ * 代理账号表：存储代理账号、地区、代理 URL
+ * 地区决定指纹的时区、语言、城市等配置
+ */
+export const proxyAccounts = mysqlTable("proxy_accounts", {
+  id: int("id").autoincrement().primaryKey(),
+
+  // 账号名称（便于识别）
+  name: varchar("name", { length: 128 }).notNull(),
+
+  // 地区代码：us / tw / hk / jp
+  region: mysqlEnum("region", ["us", "tw", "hk", "jp"]).notNull(),
+
+  // 代理 URL（socks5://user:pass@host:port 格式）
+  proxyUrl: varchar("proxyUrl", { length: 1024 }).notNull(),
+
+  // 备注
+  notes: text("notes"),
+
+  // 时间
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ProxyAccount = typeof proxyAccounts.$inferSelect;
+export type InsertProxyAccount = typeof proxyAccounts.$inferInsert;

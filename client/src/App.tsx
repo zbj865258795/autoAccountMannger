@@ -15,6 +15,7 @@ import ApiDocs from "./pages/ApiDocs";
 import PhoneNumbers from "./pages/PhoneNumbers";
 import ExportRecords from "@/pages/ExportRecords";
 import IpPool from "@/pages/IpPool";
+import ProxyAccounts from "@/pages/ProxyAccounts";
 
 function Router() {
   return (
@@ -30,6 +31,7 @@ function Router() {
         <Route path="/api-docs" component={ApiDocs} />
         <Route path="/exports" component={ExportRecords} />
         <Route path="/ip-pool" component={IpPool} />
+        <Route path="/proxy-accounts" component={ProxyAccounts} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

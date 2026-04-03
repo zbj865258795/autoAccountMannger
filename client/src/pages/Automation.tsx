@@ -1,4 +1,11 @@
 import { useState } from "react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
@@ -51,16 +58,16 @@ const statusConfig: Record<TaskStatus, { label: string; class: string; icon: Rea
   stopped: { label: "已停止", class: "border-red-500/30 text-red-400 bg-red-500/10", icon: Square },
 };
 
-// ─── 创建任务弹窗 ─────────────────────────────────────────────────────────────
+// ─── 创建任务弹窗 ───────// ─── 创建任务弹窗 ──────────────────────────────────────────────────────────────────────
 
 function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: () => void }) {
-  const DEFAULT_PROXY = "socks5://pZAY1voZ9z6AbN4c:DIXJkakL9gbeNoju_country-us_session-qkCyZ9SE_lifetime-30m_streaming-1@geo.iproyal.com:12321";
   const [name, setName] = useState("自动注册任务");
   const [interval, setInterval] = useState(60);
-  const [apiUrl, setApiUrl] = useState("http://127.0.0.1:50325");
-  const [proxyUrl, setProxyUrl] = useState(DEFAULT_PROXY);
+  const apiUrl = "http://127.0.0.1:50325";
+  const [proxyAccountId, setProxyAccountId] = useState<string>("");
   const [targetCount, setTargetCount] = useState<string>("");
 
+  const { data: proxyAccounts } = trpc.proxyAccounts.list.useQuery();
   const createTask = trpc.automation.create.useMutation({
     onSuccess: () => {
       toast.success("任务已创建");
@@ -88,16 +95,23 @@ function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose
           <div className="space-y-2">
             <Label className="text-xs text-muted-foreground flex items-center gap-1.5">
               <Shield className="w-3 h-3" />
-              代理地址
+              代理账号
             </Label>
-            <Input
-              value={proxyUrl}
-              onChange={(e) => setProxyUrl(e.target.value)}
-              placeholder="socks5://user:pass@host:port"
-              className="bg-muted/50 border-border/50 text-foreground font-mono text-sm"
-            />
+            <Select value={proxyAccountId} onValueChange={setProxyAccountId}>
+              <SelectTrigger className="bg-muted/50 border-border/50 text-foreground">
+                <SelectValue placeholder="选择代理账号" />
+              </SelectTrigger>
+              <SelectContent>
+                {proxyAccounts?.map((p: { id: number; name: string; region: string }) => (
+                  <SelectItem key={p.id} value={String(p.id)}>
+                    <span className="font-medium">{p.name}</span>
+                    <span className="ml-2 text-xs text-muted-foreground">{p.region.toUpperCase()}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <p className="text-xs text-muted-foreground">
-              支持 socks5:// / http:// 格式。每次注册前会检测出口 IP，确保未被使用过。
+              在「代理账号管理」页面添加代理账号后，这里就会出现对应选项
             </p>
           </div>
           <div className="space-y-3">
@@ -139,7 +153,7 @@ function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose
               name,
               scanIntervalSeconds: interval,
               adspowerApiUrl: apiUrl,
-              proxyUrl: proxyUrl || undefined,
+              proxyAccountId: proxyAccountId ? Number(proxyAccountId) : undefined,
               targetCount: targetCount ? Number(targetCount) : undefined,
             })}
             disabled={createTask.isPending || !name.trim()}
@@ -178,12 +192,15 @@ function EditTaskDialog({
 }) {
   const [name, setName] = useState(task.name);
   const [interval, setInterval] = useState(task.scanIntervalSeconds ?? 60);
-  const DEFAULT_PROXY = "socks5://pZAY1voZ9z6AbN4c:DIXJkakL9gbeNoju_country-us_session-qkCyZ9SE_lifetime-30m_streaming-1@geo.iproyal.com:12321";
-  const [apiUrl, setApiUrl] = useState(task.adspowerApiUrl ?? "http://127.0.0.1:50325");
-  const [proxyUrl, setProxyUrl] = useState((task.proxyUrl as string) || DEFAULT_PROXY);
+  const apiUrl = "http://127.0.0.1:50325";
+  const [proxyAccountId, setProxyAccountId] = useState<string>(
+    task.proxyAccountId != null ? String(task.proxyAccountId) : ""
+  );
   const [targetCount, setTargetCount] = useState<string>(
     task.targetCount != null ? String(task.targetCount) : ""
   );
+
+  const { data: proxyAccounts } = trpc.proxyAccounts.list.useQuery();
 
   const updateTask = trpc.automation.update.useMutation({
     onSuccess: () => {
@@ -212,16 +229,23 @@ function EditTaskDialog({
           <div className="space-y-2">
             <Label className="text-xs text-muted-foreground flex items-center gap-1.5">
               <Shield className="w-3 h-3" />
-              代理地址
+              代理账号
             </Label>
-            <Input
-              value={proxyUrl}
-              onChange={(e) => setProxyUrl(e.target.value)}
-              placeholder="socks5://user:pass@host:port"
-              className="bg-muted/50 border-border/50 text-foreground font-mono text-sm"
-            />
+            <Select value={proxyAccountId} onValueChange={setProxyAccountId}>
+              <SelectTrigger className="bg-muted/50 border-border/50 text-foreground">
+                <SelectValue placeholder="选择代理账号" />
+              </SelectTrigger>
+              <SelectContent>
+                {proxyAccounts?.map((p: { id: number; name: string; region: string }) => (
+                  <SelectItem key={p.id} value={String(p.id)}>
+                    <span className="font-medium">{p.name}</span>
+                    <span className="ml-2 text-xs text-muted-foreground">{p.region.toUpperCase()}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <p className="text-xs text-muted-foreground">
-              支持 socks5:// / http:// 格式。每次注册前会检测出口 IP，确保未被使用过。
+              在「代理账号管理」页面添加代理账号后，这里就会出现对应选项
             </p>
           </div>
           <div className="space-y-3">
@@ -263,7 +287,7 @@ function EditTaskDialog({
                   name,
                   scanIntervalSeconds: interval,
                   adspowerApiUrl: apiUrl,
-                  proxyUrl: proxyUrl || null,
+                  proxyAccountId: proxyAccountId ? Number(proxyAccountId) : null,
                   targetCount: targetCount ? Number(targetCount) : null,
                 },
               })
