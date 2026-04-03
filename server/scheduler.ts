@@ -31,7 +31,6 @@ import {
   stopAndDeleteAdsPowerBrowser,
 } from "./adspower";
 import { ADSPOWER_CONFIG } from "./config";
-import { checkProxyWithRetry } from "./proxy";
 import { runRegistration } from "./automation";
 
 // ─── 全局調度器狀態 ───────────────────────────────────────────────────────────
@@ -364,41 +363,8 @@ async function _executeTask(taskId: number): Promise<void> {
 
     console.log(`[Scheduler] Task ${taskId}: Starting new registration task`);
 
-    // 3. 如果配置了代理，先检测出口IP
-    let exitIp: string | undefined;
-    const proxyUrl = (task as any).proxyUrl as string | undefined;
-
-    if (proxyUrl && proxyUrl.trim()) {
-      console.log(`[Scheduler] Task ${taskId}: Checking proxy exit IP...`);
-      const proxyResult = await checkProxyWithRetry(proxyUrl, 10);
-
-      if (!proxyResult.success) {
-        const errMsg = proxyResult.error || "代理IP检测失败";
-        console.error(`[Scheduler] Task ${taskId}: ${errMsg}`);
-
-        // 如果是连续10次IP都已使用，停止任务
-        if (proxyResult.ipAlreadyUsed) {
-          console.error(`[Scheduler] Task ${taskId}: Stopping task due to exhausted IPs`);
-          await updateAutomationTask(taskId, { status: "stopped" });
-          await stopScheduler(taskId);
-        }
-
-        await incrementTaskCounters(taskId, { totalFailed: 1 });
-        return;
-      }
-
-      exitIp = proxyResult.exitIp;
-      if (proxyResult.retryCount > 0) {
-        console.log(`[Scheduler] Task ${taskId}: Got fresh exit IP ${exitIp} after ${proxyResult.retryCount} retries`);
-      } else {
-        console.log(`[Scheduler] Task ${taskId}: Exit IP ${exitIp} is fresh, proceeding`);
-      }
-    } else {
-      console.log(`[Scheduler] Task ${taskId}: No proxy configured, skipping IP check`);
-    }
-
-    // 4. 创建单个浏览器并启动注册
-    await createOneBrowser(taskId, task, adspowerConfig, exitIp);
+    // 3. 创建单个浏览器并启动注册（IP 检测已移入浏览器内部执行，确保代理已生效且 IP 一致）
+    await createOneBrowser(taskId, task, adspowerConfig);
     await updateAutomationTask(taskId, { lastExecutedAt: new Date() });
 
   } catch (error: unknown) {
@@ -413,8 +379,7 @@ async function _executeTask(taskId: number): Promise<void> {
 async function createOneBrowser(
   taskId: number,
   task: Awaited<ReturnType<typeof getAutomationTaskById>>,
-  adspowerConfig: { apiUrl: string; apiKey?: string; groupId?: string },
-  exitIp?: string
+  adspowerConfig: { apiUrl: string; apiKey?: string; groupId?: string }
 ): Promise<void> {
   const startTime = Date.now();
   let logId: number | undefined;
@@ -423,12 +388,12 @@ async function createOneBrowser(
   try {
     console.log(`[Scheduler] Task ${taskId}: Creating browser instance`);
 
-    // 创建任务日志
+    // 创建任务日志（exitIp 将由浏览器内部检测后写入）
     const logResult = await createTaskLog({
       taskId,
       status: "running",
       startedAt: new Date(),
-      exitIp: exitIp ?? null,
+      exitIp: null,
     });
     logId = (logResult as any)[0]?.insertId;
 
@@ -489,7 +454,6 @@ async function createOneBrowser(
       logId: logId!,
       profileId,
       wsEndpoint: wsEndpointFixed,
-      exitIp,
       adspowerConfig,
     }).catch(async (e) => {
       console.error(`[Scheduler] Task ${taskId}: Registration failed unexpectedly: ${e}`);

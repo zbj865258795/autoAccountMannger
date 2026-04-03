@@ -21,6 +21,7 @@ import {
   markPhoneUsedById,
   resetPhoneStatusById,
   recordUsedIp,
+  isIpUsed,
   updateTaskLog,
   incrementTaskCounters,
   saveRegistrationResult,
@@ -61,7 +62,6 @@ export interface RegistrationParams {
   logId: number;
   profileId: string;          // AdsPower browser profile ID
   wsEndpoint: string;         // CDP WebSocket endpoint
-  exitIp?: string;            // 已检测的出口IP（可选）
   adspowerConfig: {
     apiUrl: string;
     apiKey?: string;
@@ -76,7 +76,7 @@ export interface RegistrationParams {
  * 由 scheduler.ts 的 createOneBrowser 异步调用
  */
 export async function runRegistration(params: RegistrationParams): Promise<void> {
-  const { taskId, logId, profileId, wsEndpoint, exitIp, adspowerConfig } = params;
+  const { taskId, logId, profileId, wsEndpoint, adspowerConfig } = params;
   const startTime = Date.now();
   const log = makeLogger(taskId, profileId);
 
@@ -103,6 +103,38 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     const page = pages.length > 0 ? pages[0] : await context.newPage();
 
     log(`Connected. Current URL: ${page.url()}`);
+
+    // ── Step -1: 通过浏览器内部检测出口 IP（确保代理已生效，且 IP 与注册用 IP 完全一致）──
+    log("Detecting exit IP via browser...");
+    let detectedExitIp: string | undefined;
+    try {
+      const ipPage = await context.newPage();
+      await ipPage.goto("https://ipv4.icanhazip.com", { waitUntil: "domcontentloaded", timeout: 20000 });
+      const ipText = (await ipPage.textContent("body") ?? "").trim();
+      await ipPage.close();
+      if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ipText)) {
+        detectedExitIp = ipText;
+        log(`Exit IP detected via browser: ${detectedExitIp}`);
+        // 检查 IP 是否已使用过
+        const used = await isIpUsed(detectedExitIp);
+        if (used) {
+          log(`Exit IP ${detectedExitIp} already used, aborting`, "warn");
+          await updateTaskLog(logId, {
+            status: "skipped",
+            errorMessage: `出口IP ${detectedExitIp} 已被使用过，跳过本次注册`,
+            durationMs: Date.now() - startTime,
+            completedAt: new Date(),
+          });
+          await cleanupBrowser(browser, adspowerConfig, profileId);
+          return;
+        }
+        log(`Exit IP ${detectedExitIp} is fresh, proceeding`);
+      } else {
+        log(`Could not parse exit IP from browser response: "${ipText}", proceeding without IP check`, "warn");
+      }
+    } catch (ipErr: any) {
+      log(`Exit IP detection failed: ${ipErr.message}, proceeding without IP check`, "warn");
+    }
 
     // ── 设置网络响应拦截（替代 chrome.debugger）──
     setupResponseInterception(page, capturedUserData, (token) => {
@@ -164,7 +196,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
 
     if (loginResult === "app") {
       // 直接跳到 /app，无需手机验证
-      await finishRegistration(page, email, password, null, inviteCode, inviterAccountId, capturedToken, capturedUserData, taskId, logId, profileId, exitIp, adspowerConfig, startTime, log);
+      await finishRegistration(page, email, password, null, inviteCode, inviterAccountId, capturedToken, capturedUserData, taskId, logId, profileId, detectedExitIp, adspowerConfig, startTime, log);
       return;
     }
 
@@ -178,7 +210,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     const phoneResult = await handleVerifyPhonePage(page, log);
 
     if (phoneResult.result === "app" && phoneResult.phoneInfo) {
-      await finishRegistration(page, email, password, phoneResult.phoneInfo, inviteCode, inviterAccountId, capturedToken, capturedUserData, taskId, logId, profileId, exitIp, adspowerConfig, startTime, log);
+      await finishRegistration(page, email, password, phoneResult.phoneInfo, inviteCode, inviterAccountId, capturedToken, capturedUserData, taskId, logId, profileId, detectedExitIp, adspowerConfig, startTime, log);
       return;
     }
 
@@ -871,9 +903,10 @@ async function finishRegistration(
       await recordUsedIp(exitIp, email, logId).catch(() => {});
     }
 
-    // 更新任务日志为成功
+    // 更新任务日志为成功（将浏览器内检测到的 IP 写入日志）
     await updateTaskLog(logId, {
       status: "success",
+      exitIp: exitIp ?? null,
       durationMs,
       completedAt: new Date(),
     });
