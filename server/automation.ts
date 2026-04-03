@@ -239,8 +239,8 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     }
 
     // ── 阶段一：login 页面 ──
-    log("=== 阶段一：邮箱 + 密码 + 邮箱验证码 ===");
-    const loginResult = await handleLoginPage(page, email, password, codeUrl, log);
+    log("=== 阶段一：邮筱 + 密码 + 邮筱验证码 ===");
+    const loginResult = await handleLoginPage(page, email, password, codeUrl, inviteUrl, log);
 
     if (loginResult === "app") {
       // 直接跳到 /app，无需手机验证
@@ -406,6 +406,7 @@ async function handleLoginPage(
   email: string,
   password: string,
   codeUrl: string,
+  inviteUrl: string,
   log: Logger
 ): Promise<"verify-phone" | "app" | "timeout" | "error"> {
   const PHASE_TIMEOUT = 180000;
@@ -646,17 +647,23 @@ async function handleLoginPage(
       }
     }
 
-    // 内层循环退出，刷新重试
+    // 内层循环退出，重新访问邀请链接重试（不能用 reload，否则邀请码 URL 参数丢失）
     refreshCount++;
     if (refreshCount > MAX_REFRESHES) {
-      log(`阶段一已刷新 ${MAX_REFRESHES} 次仍未完成，放弃`, "error");
+      log(`阶段一已重试 ${MAX_REFRESHES} 次仍未完成，放弃`, "error");
       return "timeout";
     }
-    log(`阶段一第 ${refreshCount} 次刷新重试...`, "warn");
+    log(`阶段一第 ${refreshCount} 次重试，重新访问邀请链接：${inviteUrl}`, "warn");
     try {
-      await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
-    } catch (reloadErr: any) {
-      log(`阶段一刷新失败（代理网络错误）：${reloadErr.message}`, "error");
+      await page.goto(inviteUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+      await sleep(2000);
+      // 如果跳转到邀请页，点击注册入口
+      const retryUrl = page.url();
+      if (retryUrl.includes("manus.im/invitation") || retryUrl.includes("manus.im/register") || retryUrl.includes("manus.im/signup")) {
+        await clickRegistrationEntry(page);
+      }
+    } catch (gotoErr: any) {
+      log(`阶段一重新访问邀请链接失败（代理网络错误）：${gotoErr.message}`, "error");
       return "error";
     }
     await sleep(2000);

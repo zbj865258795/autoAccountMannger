@@ -424,14 +424,43 @@ async function createOneBrowser(
     let proxyConfig: { proxyType: string; host?: string; port?: string; user?: string; password?: string } | undefined;
 
     if (proxyUrl && proxyUrl.trim()) {
-      // 动态替换 session ID：支持 _session-XXXXX 格式（iProyal 粘性 IP）
-      // 每次注册生成新的随机 session ID，确保不同注册使用不同出口 IP
-      const dynamicProxyUrl = proxyUrl.replace(
-        /(_session-)([a-zA-Z0-9_-]+)/,
-        (_match, prefix) => `${prefix}${Math.random().toString(36).slice(2, 14)}`
-      );
-      if (dynamicProxyUrl !== proxyUrl) {
-        console.log(`[调度器] 任务 ${taskId}: 已动态替换代理 session ID`);
+      // ── 通用多平台 session 动态替换 ──────────────────────────────────────────
+      // 生成随机 session 值（12位字母数字）
+      const newSessionId = Math.random().toString(36).slice(2, 14);
+      let dynamicProxyUrl = proxyUrl;
+      let sessionReplaced = false;
+
+      // 方案一：显式占位符 {session}（推荐，适用于所有平台）
+      // 用法示例（iProyal）：socks5://user:pass_session-{session}_lifetime-30m@host:port
+      // 用法示例（Decodo）：socks5h://user-name-session-{session}-sessionduration-30:pass@host:port
+      if (dynamicProxyUrl.includes("{session}")) {
+        dynamicProxyUrl = dynamicProxyUrl.replace(/\{session\}/g, newSessionId);
+        sessionReplaced = true;
+      }
+
+      // 方案二：iProyal 兼容格式 _session-XXXXX（密码段，下划线分隔）
+      // 用法示例：socks5://user:pass_country-us_session-placeholder_lifetime-30m@host:port
+      if (!sessionReplaced && /(_session-)([a-zA-Z0-9_-]+)/.test(dynamicProxyUrl)) {
+        dynamicProxyUrl = dynamicProxyUrl.replace(
+          /(_session-)([a-zA-Z0-9_-]+)/,
+          (_match, prefix) => `${prefix}${newSessionId}`
+        );
+        sessionReplaced = true;
+      }
+
+      // 方案三：Decodo 兼容格式 -session-XXXXX-（用户名段，连字符分隔）
+      // 用法示例：socks5h://user-name-session-1-sessionduration-30:pass@host:port
+      // 注意：此格式要求 session 值后面紧跟 -（即 -session-值-）
+      if (!sessionReplaced && /(-session-)([a-zA-Z0-9]+)(-)/.test(dynamicProxyUrl)) {
+        dynamicProxyUrl = dynamicProxyUrl.replace(
+          /(-session-)([a-zA-Z0-9]+)(-)/,
+          (_match, prefix, _old, suffix) => `${prefix}${newSessionId}${suffix}`
+        );
+        sessionReplaced = true;
+      }
+
+      if (sessionReplaced) {
+        console.log(`[调度器] 任务 ${taskId}: 已动态替换代理 session ID → ${newSessionId}`);
       }
 
       const parsed = parseProxyUrl(dynamicProxyUrl);

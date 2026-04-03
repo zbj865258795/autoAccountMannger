@@ -354,14 +354,22 @@ function ProxyForm({
       <div>
         <label className="text-sm font-medium mb-1 block">代理地址 *</label>
         <Input
-          placeholder="socks5://user:pass_country-us_session-placeholder_lifetime-30m_streaming-1@geo.iproyal.com:12321"
+          placeholder="socks5h://user-name-session-{session}-sessionduration-30:pass@gate.decodo.com:7000"
           value={form.proxyUrl}
           onChange={(e) => setForm((f) => ({ ...f, proxyUrl: e.target.value }))}
           className="font-mono text-sm"
         />
-        <p className="text-xs text-muted-foreground mt-1">
-          建议使用粘性 IP 格式（含 <code className="bg-muted px-1 rounded">_session-placeholder</code>），系统每次注册时自动替换为新 session ID，确保每次注册使用不同出口 IP
-        </p>
+        <div className="text-xs text-muted-foreground mt-1 space-y-1">
+          <p>
+            将 session 值的位置替换为 <code className="bg-muted px-1 rounded">{'{session}'}</code>，系统每次注册时自动填入随机字符串，确保每次使用不同出口 IP。
+          </p>
+          <p className="text-muted-foreground/70">
+            Decodo 示例：<code className="bg-muted px-1 rounded">socks5h://user-name-session-{'{session}'}-sessionduration-30:pass@gate.decodo.com:7000</code>
+          </p>
+          <p className="text-muted-foreground/70">
+            iProyal 示例：<code className="bg-muted px-1 rounded">socks5://user:pass_country-us_session-{'{session}'}_lifetime-30m@geo.iproyal.com:12321</code>
+          </p>
+        </div>
       </div>
 
       <div>
