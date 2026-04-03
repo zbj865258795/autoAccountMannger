@@ -550,13 +550,24 @@ async function handleLoginPage(
           log("邮箱步骤已通过", "success");
           await sleep(500);
         } else if (btnState === "disabled") {
-          // 情况一：按钮 disabled，清空输入框重新输入
+          // 情况一：按钮 disabled，先等待 1.5 秒给页面响应时间，再次检测
+          await sleep(1500);
+          const btnStateRetry = await page.evaluate(() => {
+            const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
+            if (!btn || btn.offsetParent === null) return "no-button";
+            if (btn.disabled) return "disabled";
+            return "clickable";
+          });
+          if (btnStateRetry === "clickable") {
+            // 页面已响应，下次循环直接点击
+            continue;
+          }
+          // 仍然 disabled，才清空重输
           emailRetryCount++;
           if (emailRetryCount > 3) {
-            log("邮箱按钮持续 disabled，刷新重试...", "warn"); break;
+            log("邮筱按钮持续 disabled，刷新重试...", "warn"); break;
           }
-          log(`邮箱按钮 disabled，清空重输（第 ${emailRetryCount} 次）...`, "warn");
-          // 清空输入框并重新输入
+          log(`邮筱按钮持续 disabled，清空重输（第 ${emailRetryCount} 次）...`, "warn");
           await page.evaluate((sel: string) => {
             const el = document.querySelector(sel) as HTMLInputElement | null;
             if (!el) return;
@@ -566,7 +577,7 @@ async function handleLoginPage(
             el.dispatchEvent(new Event("change", { bubbles: true }));
           }, 'input#email[autocomplete="email"], input#email[type="email"], input#email');
           await sleep(500);
-          emailFilled = false; // 重置，让下次循环重新输入
+          emailFilled = false;
         } else if (btnState === "clickable") {
           // 按钮可点击，执行点击
           await page.evaluate(async () => {
@@ -635,12 +646,23 @@ async function handleLoginPage(
           log("密码步骤已通过", "success");
           await sleep(500);
         } else if (pwdBtnState === "disabled") {
-          // 情况一：按钮 disabled，清空密码重新输入
+          // 情况一：按钮 disabled，先等待 1.5 秒给页面响应时间，再次检测
+          await sleep(1500);
+          const pwdBtnStateRetry = await page.evaluate(() => {
+            const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
+            if (!btn || btn.offsetParent === null) return "no-button";
+            if (btn.disabled) return "disabled";
+            return "clickable";
+          });
+          if (pwdBtnStateRetry === "clickable") {
+            continue;
+          }
+          // 仍然 disabled，才清空重输
           pwdRetryCount++;
           if (pwdRetryCount > 3) {
             log("密码按钮持续 disabled，刷新重试...", "warn"); break;
           }
-          log(`密码按钮 disabled，清空重输（第 ${pwdRetryCount} 次）...`, "warn");
+          log(`密码按钮持续 disabled，清空重输（第 ${pwdRetryCount} 次）...`, "warn");
           await page.evaluate((sel: string) => {
             const el = document.querySelector(sel) as HTMLInputElement | null;
             if (!el) return;
@@ -650,7 +672,7 @@ async function handleLoginPage(
             el.dispatchEvent(new Event("change", { bubbles: true }));
           }, 'input[name="password"][type="password"]');
           await sleep(500);
-          pwdFilled = false; // 重置，让下次循环重新输入
+          pwdFilled = false;
         } else if (pwdBtnState === "clickable") {
           // 按钮可点击，执行点击
           await page.evaluate(async () => {
@@ -735,12 +757,23 @@ async function handleLoginPage(
           stepStallCount++;
           if (stepStallCount >= 10) { log("验证码输入框持续为空，刷新重试...", "warn"); break; }
         } else if (verifyBtnState === "disabled") {
-          // 情况一：验证码已输入但按钮 disabled，清空重输
+          // 情况一：验证码已输入但按钮 disabled，先等待 1.5 秒给页面响应时间，再次检测
+          await sleep(1500);
+          const verifyBtnStateRetry = await page.evaluate(() => {
+            const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
+            if (!btn || btn.offsetParent === null) return "no-button";
+            if (btn.disabled) return "disabled";
+            return "clickable";
+          });
+          if (verifyBtnStateRetry === "clickable") {
+            continue;
+          }
+          // 仍然 disabled，才清空重输
           verifyCodeRetryCount++;
           if (verifyCodeRetryCount > 3) {
             log("验证码按钮持续 disabled，刷新重试...", "warn"); break;
           }
-          log(`验证码按钮 disabled，清空重输（第 ${verifyCodeRetryCount} 次）...`, "warn");
+          log(`验证码按钮持续 disabled，清空重输（第 ${verifyCodeRetryCount} 次）...`, "warn");
           await page.evaluate((sel: string) => {
             const el = document.querySelector(sel) as HTMLInputElement | null;
             if (!el) return;
@@ -750,7 +783,7 @@ async function handleLoginPage(
             el.dispatchEvent(new Event("change", { bubbles: true }));
           }, 'input#verifyCode[name="verifyCode"]');
           await sleep(500);
-          verifyCodeFilled = false; // 重置，让下次循环重新填入
+          verifyCodeFilled = false;
         } else if (verifyBtnState === "clickable") {
           // 按钮可点击，执行点击
           await page.evaluate(async () => {
@@ -965,12 +998,23 @@ async function handleVerifyPhonePage(
         });
 
         if (phoneBtnState === "disabled") {
-          // 情况一：手机号输入后按钮仍 disabled，清空重输
+          // 情况一：手机号输入后按钮仍 disabled，先等待 1.5 秒给页面响应时间，再次检测
+          await sleep(1500);
+          const phoneBtnStateRetry = await page.evaluate(() => {
+            const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
+            if (!btn || btn.offsetParent === null) return "no-button";
+            if (btn.disabled) return "disabled";
+            return "clickable";
+          });
+          if (phoneBtnStateRetry === "clickable") {
+            continue;
+          }
+          // 仍然 disabled，才清空重输
           phoneRetryCount++;
           if (phoneRetryCount > 3) {
             log("手机号按钮持续 disabled，刷新重试...", "warn"); break;
           }
-          log(`手机号按钮 disabled，清空重输（第 ${phoneRetryCount} 次）...`, "warn");
+          log(`手机号按钮持续 disabled，清空重输（第 ${phoneRetryCount} 次）...`, "warn");
           await page.evaluate((sel: string) => {
             const el = document.querySelector(sel) as HTMLInputElement | null;
             if (!el) return;
@@ -980,7 +1024,7 @@ async function handleVerifyPhonePage(
             el.dispatchEvent(new Event("change", { bubbles: true }));
           }, 'input#phone[type="tel"]');
           await sleep(500);
-          phoneFilled = false; // 重置，让下次循环重新输入
+          phoneFilled = false;
         } else if (phoneBtnState === "clickable") {
           // 按钮可点击，执行点击
           await page.evaluate(async () => {
@@ -1072,12 +1116,23 @@ async function handleVerifyPhonePage(
         stepStallCount++;
         if (stepStallCount >= 10) { log("短信验证码输入框持续为空，刷新重试...", "warn"); break; }
       } else if (smsBtnState === "disabled") {
-        // 情况一：短信验证码已输入但按钮 disabled，清空重输
+        // 情况一：短信验证码已输入但按钮 disabled，先等待 1.5 秒给页面响应时间，再次检测
+        await sleep(1500);
+        const smsBtnStateRetry = await page.evaluate(() => {
+          const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
+          if (!btn || btn.offsetParent === null) return "no-button";
+          if (btn.disabled) return "disabled";
+          return "clickable";
+        });
+        if (smsBtnStateRetry === "clickable") {
+          continue;
+        }
+        // 仍然 disabled，才清空重输
         smsCodeRetryCount++;
         if (smsCodeRetryCount > 3) {
           log("短信验证码按钮持续 disabled，刷新重试...", "warn"); break;
         }
-        log(`短信验证码按钮 disabled，清空重输（第 ${smsCodeRetryCount} 次）...`, "warn");
+        log(`短信验证码按钮持续 disabled，清空重输（第 ${smsCodeRetryCount} 次）...`, "warn");
         await page.evaluate((sel: string) => {
           const el = document.querySelector(sel) as HTMLInputElement | null;
           if (!el) return;
@@ -1087,7 +1142,7 @@ async function handleVerifyPhonePage(
           el.dispatchEvent(new Event("change", { bubbles: true }));
         }, "input#phone-code");
         await sleep(500);
-        smsCodeFilled = false; // 重置，让下次循环重新填入
+        smsCodeFilled = false;
       } else if (smsBtnState === "clickable") {
         // 按钮可点击，执行点击
         await page.evaluate(async () => {
