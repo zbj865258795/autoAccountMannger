@@ -416,37 +416,12 @@ async function createOneBrowser(
     if (proxyUrl && proxyUrl.trim()) {
       const parsed = parseProxyUrl(proxyUrl);
       if (parsed) {
-        // ── 动态替换 session ID，确保每次获得不同出口 IP ──
-        // 支持 iProyal 格式：
-        //   用户在密码字段中包含选项，例如：
-        //   password_country-us_session-AyYmNX0w_lifetime-30m_streaming-1
-        //   正则匹配 _session-XXXXX 或 -session-XXXXX，替换为新的随机 session ID
-        const newSessionId = Math.random().toString(36).slice(2, 10) +
-                             Math.random().toString(36).slice(2, 10); // 16位随机字符串
-
-        // iProyal 的选项在密码字段里（用下划线分隔）
-        // 格式：actualPassword_country-XX_session-XXXXX_lifetime-Xm_streaming-1
-        const dynamicPassword = parsed.password.replace(
-          /([_-]session-)([a-zA-Z0-9]+)/,
-          `$1${newSessionId}`
-        );
-        // 如果密码字段没有 session 参数，尝试在用户名字段替换
-        const dynamicUsername = parsed.password === dynamicPassword
-          ? parsed.username.replace(/([_-]session-)([a-zA-Z0-9]+)/, `$1${newSessionId}`)
-          : parsed.username;
-
-        const sessionChanged = dynamicPassword !== parsed.password || dynamicUsername !== parsed.username;
-        console.log(
-          sessionChanged
-            ? `[Scheduler] Task ${taskId}: Session ID rotated → new session: ${newSessionId}`
-            : `[Scheduler] Task ${taskId}: No session pattern found in proxy URL, using as-is (consider adding _session-placeholder to proxy URL for IP rotation)`
-        );
         proxyConfig = {
           proxyType: parsed.proxyType,
           host: parsed.host,
           port: parsed.port,
-          user: dynamicUsername,
-          password: dynamicPassword,
+          user: parsed.username,
+          password: parsed.password,
         };
       }
     }
