@@ -1301,7 +1301,12 @@ async function selectCountry(page: Page, iso: string, dialCode: string, log: Log
     if (!searchInput) return false;
 
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
-    const typeSearch = async (term: string) => {
+
+    // 手机号固定为美国，硬编码搜索 United States，匹配 +1
+    // 注意：这里不能定义命名函数（const typeSearch = ...），
+    // 否则 tsx/esbuild 会注入 __name() 辅助函数，导致浏览器沙算报 ReferenceError: __name is not defined
+    for (const term of ["United States", isoCode]) {
+      // 内联搜索输入操作（原 typeSearch 函数内容）
       if (setter) setter.call(searchInput!, ""); else searchInput!.value = "";
       searchInput!.dispatchEvent(new Event("input", { bubbles: true }));
       await new Promise((r) => setTimeout(r, 300));
@@ -1309,33 +1314,23 @@ async function selectCountry(page: Page, iso: string, dialCode: string, log: Log
       searchInput!.dispatchEvent(new Event("input", { bubbles: true }));
       searchInput!.dispatchEvent(new Event("change", { bubbles: true }));
       await new Promise((r) => setTimeout(r, 1000));
-    };
 
-    const getVisibleItems = () => {
+      // 内联获取可见列表项（原 getVisibleItems 函数内容）
       const items: HTMLElement[] = [];
-      // 插件的完整选择器列表（包含 radix scroll area）
-      const selectors = [
+      for (const sel of [
         "[data-close-when-click=\"true\"] > *",
         "[role=\"listbox\"] > *",
         "[role=\"option\"]",
         "[role=\"menuitem\"]",
         "ul > li",
         "div[data-radix-scroll-area-viewport] > div > div",
-      ];
-      for (const sel of selectors) {
+      ]) {
         const els = Array.from(document.querySelectorAll(sel));
         for (const el of els) {
           if ((el as HTMLElement).offsetParent !== null && el.textContent?.trim()) items.push(el as HTMLElement);
         }
         if (items.length > 0) break;
       }
-      return items;
-    };
-
-    // 手机号固定为美国，硬编码搜索 United States，匹配 +1
-    for (const term of ["United States", isoCode]) {
-      await typeSearch(term);
-      const items = getVisibleItems();
       for (const item of items) {
         const t = item.textContent || "";
         if ((t.includes("United States") || t.includes("美国") || t.includes("美國")) && t.includes("+1")) {
