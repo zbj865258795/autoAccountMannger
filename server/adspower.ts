@@ -241,8 +241,8 @@ export function generateRandomFingerprint(region: RegionCode = "us") {
   // ── 4. 语言（根据地区配置）───────────────────────────────────────
   const language = [...regionCfg.languages] as string[];
 
-  // ── 5. 屏幕分辨率 + 窗口大小（保持一致）──────────────────────
-  const resolutionInfo = randomPick(RESOLUTIONS);
+  // ── 5. 屏幕分辨率 + 窗口大小（固定 1920x1080）───────────────────────────
+  const resolutionInfo = RESOLUTIONS[0]; // 固定使用 1920x1080
 
   // ── 6. 硬件参数 ──────────────────────────────
   // 文档支持：default, 2, 4, 6, 8, 16
