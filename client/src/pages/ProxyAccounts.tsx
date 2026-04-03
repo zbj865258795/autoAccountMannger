@@ -354,13 +354,13 @@ function ProxyForm({
       <div>
         <label className="text-sm font-medium mb-1 block">代理地址 *</label>
         <Input
-          placeholder="socks5://user:pass@host:port"
+          placeholder="socks5://user:pass_country-us_session-placeholder_lifetime-30m_streaming-1@geo.iproyal.com:12321"
           value={form.proxyUrl}
           onChange={(e) => setForm((f) => ({ ...f, proxyUrl: e.target.value }))}
           className="font-mono text-sm"
         />
         <p className="text-xs text-muted-foreground mt-1">
-          支持格式：socks5://、http://、https://
+          建议使用粘性 IP 格式（含 <code className="bg-muted px-1 rounded">_session-placeholder</code>），系统每次注册时自动替换为新 session ID，确保每次注册使用不同出口 IP
         </p>
       </div>
 
