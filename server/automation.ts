@@ -177,6 +177,11 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
         route.abort();
         return;
       }
+      // 屏蔽：files.manuscdn.com 图片资源（节省代理流量）
+      if (url.includes("files.manuscdn.com") && resourceType === "image") {
+        route.abort();
+        return;
+      }
       route.continue();
     });
 
@@ -647,23 +652,18 @@ async function handleLoginPage(
       }
     }
 
-    // 内层循环退出，重新访问邀请链接重试（不能用 reload，否则邀请码 URL 参数丢失）
+    // 内层循环退出，刷新当前页面重试
+    // 注意：邀请码已在 Step 0 被原子锁定，不依赖 URL 参数，直接刷新当前页面即可
     refreshCount++;
     if (refreshCount > MAX_REFRESHES) {
-      log(`阶段一已重试 ${MAX_REFRESHES} 次仍未完成，放弃`, "error");
+      log(`阶段一已刷新 ${MAX_REFRESHES} 次仍未完成，放弃`, "error");
       return "timeout";
     }
-    log(`阶段一第 ${refreshCount} 次重试，重新访问邀请链接：${inviteUrl}`, "warn");
+    log(`阶段一第 ${refreshCount} 次刷新重试（当前页面：${page.url()}）...`, "warn");
     try {
-      await page.goto(inviteUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
-      await sleep(2000);
-      // 如果跳转到邀请页，点击注册入口
-      const retryUrl = page.url();
-      if (retryUrl.includes("manus.im/invitation") || retryUrl.includes("manus.im/register") || retryUrl.includes("manus.im/signup")) {
-        await clickRegistrationEntry(page);
-      }
-    } catch (gotoErr: any) {
-      log(`阶段一重新访问邀请链接失败（代理网络错误）：${gotoErr.message}`, "error");
+      await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
+    } catch (reloadErr: any) {
+      log(`阶段一刷新失败（代理网络错误）：${reloadErr.message}`, "error");
       return "error";
     }
     await sleep(2000);
@@ -925,7 +925,7 @@ async function handleVerifyPhonePage(
   return { result: "timeout" };
 }
 
-// ─── 完成注册（刷新 + 兑换推广码 + 采集数据 + 上报后端）────────────────────
+// ─── 完成注册（兑换推广码 + 直接 API 采集数据 + 上报后端）──────────────────
 
 async function finishRegistration(
   page: Page,
@@ -946,13 +946,14 @@ async function finishRegistration(
 ) {
   log("注册成功！开始执行注册后续步骤...", "success");
 
-  // Step 1: 刷新 + 兑换推广码
-  log("正在刷新页面并兑换推广码...");
-  await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
-  await sleep(2000);
+  // ── Step 1: 兑换推广码 ──
+  // 注意：BindPhoneTrait 成功后 token 已捕获，直接用 token 调用 API，无需刷新页面
+  log("正在兑换推广码...");
   await redeemPromotion(page, capturedToken, log);
 
-  // Step 2: 再次刷新，等待 API 数据
+  // ── Step 2: 直接用 token 调用 API 采集用户数据（跳过页面刷新等待）──
+  // 原逻辑（页面刷新等待 API 响应）已注释，改为直接 HTTP 调用，速度更快且不依赖页面跳转
+  /*
   log("正在刷新页面，采集用户数据...");
   capturedUserData.membershipVersion = null;
   capturedUserData.totalCredits = null;
@@ -970,8 +971,22 @@ async function finishRegistration(
     }
     await sleep(1000);
   }
+  */
 
-  // 获取 clientId
+  // 直接用 token 调用 API 获取积分和邀请码
+  if (capturedToken) {
+    log("正在通过 API 直接获取积分和邀请码...");
+    const apiData = await fetchUserDataByToken(capturedToken, log);
+    if (apiData.totalCredits !== null) capturedUserData.totalCredits = apiData.totalCredits;
+    if (apiData.freeCredits !== null) capturedUserData.freeCredits = apiData.freeCredits;
+    if (apiData.refreshCredits !== null) capturedUserData.refreshCredits = apiData.refreshCredits;
+    if (apiData.inviteCode) capturedUserData.inviteCode = apiData.inviteCode;
+    if (apiData.membershipVersion) capturedUserData.membershipVersion = apiData.membershipVersion;
+  } else {
+    log("未获取到 token，跳过 API 数据采集", "warn");
+  }
+
+  // 获取 clientId（仍从 localStorage 读取）
   const clientId = await page.evaluate(() => localStorage.getItem("client_id_v2")).catch(() => null);
   capturedUserData.clientId = clientId;
 
@@ -1096,6 +1111,94 @@ async function redeemPromotion(page: Page, token: string | null, log: Logger) {
 }
 
 // ─── 工具函数 ─────────────────────────────────────────────────────────────────
+
+/**
+ * 直接用 token 调用 Manus API 获取用户积分和邀请码
+ * 对应 Python 脚本的 step12_get_available_credits + step13_get_invitation_codes
+ */
+async function fetchUserDataByToken(token: string, log: Logger): Promise<{
+  totalCredits: number | null;
+  freeCredits: number | null;
+  refreshCredits: number | null;
+  inviteCode: string | null;
+  membershipVersion: string | null;
+}> {
+  const result = {
+    totalCredits: null as number | null,
+    freeCredits: null as number | null,
+    refreshCredits: null as number | null,
+    inviteCode: null as string | null,
+    membershipVersion: null as string | null,
+  };
+
+  const headers = {
+    "Content-Type": "application/json",
+    "authorization": `Bearer ${token}`,
+  };
+
+  // 获取可用积分（GetAvailableCredits）
+  try {
+    const resp = await fetch("https://api.manus.im/user.v1.UserService/GetAvailableCredits", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({}),
+    });
+    if (resp.ok) {
+      const json = await resp.json() as any;
+      result.totalCredits = json.totalCredits ?? null;
+      result.freeCredits = json.freeCredits ?? null;
+      result.refreshCredits = json.refreshCredits ?? null;
+      log(`积分获取成功：总积分=${result.totalCredits}，免费积分=${result.freeCredits}`);
+    } else {
+      log(`GetAvailableCredits 返回 ${resp.status}`, "warn");
+    }
+  } catch (e: any) {
+    log(`GetAvailableCredits 调用失败：${e.message}`, "warn");
+  }
+
+  // 获取个人邀请码（GetPersonalInvitationCodes）
+  try {
+    const resp = await fetch("https://api.manus.im/user.v1.UserService/GetPersonalInvitationCodes", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({}),
+    });
+    if (resp.ok) {
+      const json = await resp.json() as any;
+      const codes = json.invitationCodes || [];
+      if (codes.length > 0 && codes[0].inviteCode) {
+        result.inviteCode = codes[0].inviteCode;
+        log(`邀请码获取成功：${result.inviteCode}`);
+      }
+    } else {
+      log(`GetPersonalInvitationCodes 返回 ${resp.status}`, "warn");
+    }
+  } catch (e: any) {
+    log(`GetPersonalInvitationCodes 调用失败：${e.message}`, "warn");
+  }
+
+  // 获取用户信息（UserInfo）
+  try {
+    const resp = await fetch("https://api.manus.im/user.v1.UserService/UserInfo", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({}),
+    });
+    if (resp.ok) {
+      const json = await resp.json() as any;
+      if (json.membershipVersion) {
+        result.membershipVersion = json.membershipVersion;
+        log(`会员版本获取成功：${result.membershipVersion}`);
+      }
+    } else {
+      log(`UserInfo 返回 ${resp.status}`, "warn");
+    }
+  } catch (e: any) {
+    log(`UserInfo 调用失败：${e.message}`, "warn");
+  }
+
+  return result;
+}
 
 /** 模拟鼠标移动（与插件的 simulateMouseMove 完全对齐） */
 async function simulateMouseMove(page: Page, selector: string): Promise<void> {
