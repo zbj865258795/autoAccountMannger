@@ -474,9 +474,7 @@ async function handleLoginPage(
     }
     // 页面加载后模拟真人浏览行为（随机滚动 + 鼠标漫游）
     await humanBrowse(page);
-    // 页面加载完成后等待 10 秒，让页面完全稳定后再开始检测
-    log("页面已加载，等待 20 秒让页面稳定...");
-    await sleep(20000);
+
     let emailFilled = false;
     let emailContinueClicked = false;
     let emailRetryCount = 0;          // 情况一：邮箱输入后按钮仍 disabled 的清空重输次数
@@ -557,8 +555,8 @@ async function handleLoginPage(
           log("邮箱步骤已通过", "success");
           await sleep(500);
         } else if (btnState === "disabled") {
-          // 情况一：按钮 disabled，先等待 1.5 秒给页面响应时间，再次检测
-          await sleep(1500);
+          // 情况一：按钮 disabled，先等待 3 秒给页面响应时间，再次检测
+          await sleep(3000);
           const btnStateRetry = await page.evaluate(() => {
             const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
             if (!btn || btn.offsetParent === null) return "no-button";
@@ -571,7 +569,7 @@ async function handleLoginPage(
           }
           // 仍然 disabled，才清空重输
           emailRetryCount++;
-          if (emailRetryCount > 6) {
+          if (emailRetryCount > 8) {
             log("邮筱按钮持续 disabled，刷新重试...", "warn"); break;
           }
           log(`邮筱按钮持续 disabled，清空重输（第 ${emailRetryCount} 次）...`, "warn");
@@ -592,7 +590,7 @@ async function handleLoginPage(
             if (btn) { await new Promise((r) => setTimeout(r, 800)); btn.click(); }
           });
           log("邮箱确认按钮已点击", "success");
-          await sleep(2500);
+          await sleep(3000);
           // 情况二：点击后检测页面是否有变化（密码框是否出现）
           const afterClick = await page.evaluate(() => {
             const pwdEl = document.querySelector('input[name="password"][type="password"]') as HTMLElement | null;
@@ -605,10 +603,10 @@ async function handleLoginPage(
           } else {
             // 页面未变化，再次尝试
             emailClickRetryCount++;
-            if (emailClickRetryCount > 5) {
+            if (emailClickRetryCount > 7) {
               log("邮筱按钮点击后页面始终未跳转，刷新重试...", "warn"); break;
             }
-            log(`邮箱按钮已点击但页面未变化，第 ${emailClickRetryCount} 次重试...`, "warn");
+            log(`邮筱按钮已点击但页面未变化，第 ${emailClickRetryCount} 次重试...`, "warn");
           }
         } else {
           stepStallCount++;
@@ -653,8 +651,8 @@ async function handleLoginPage(
           log("密码步骤已通过", "success");
           await sleep(500);
         } else if (pwdBtnState === "disabled") {
-          // 情况一：按钮 disabled，先等待 1.5 秒给页面响应时间，再次检测
-          await sleep(1500);
+          // 情况一：按钮 disabled，先等待 3 秒给页面响应时间，再次检测
+          await sleep(3000);
           const pwdBtnStateRetry = await page.evaluate(() => {
             const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
             if (!btn || btn.offsetParent === null) return "no-button";
@@ -666,7 +664,7 @@ async function handleLoginPage(
           }
           // 仍然 disabled，才清空重输
           pwdRetryCount++;
-          if (pwdRetryCount > 6) {
+          if (pwdRetryCount > 8) {
             log("密码按钮持续 disabled，刷新重试...", "warn"); break;
           }
           log(`密码按钮持续 disabled，清空重输（第 ${pwdRetryCount} 次）...`, "warn");
@@ -695,7 +693,7 @@ async function handleLoginPage(
               else log("邮箱验证码获取超时", "warn");
             });
           }
-          await sleep(2500);
+          await sleep(3000);
           // 情况二：点击后检测验证码输入框是否出现
           const afterPwdClick = await page.evaluate(() => {
             const el = document.querySelector('input#verifyCode[name="verifyCode"]') as HTMLElement | null;
@@ -707,7 +705,7 @@ async function handleLoginPage(
             stepStallCount = 0;
           } else {
             pwdClickRetryCount++;
-            if (pwdClickRetryCount > 5) {
+            if (pwdClickRetryCount > 7) {
               log("密码按钮点击后页面始终未变化，刷新重试...", "warn"); break;
             }
             log(`密码按钮已点击但页面未变化，第 ${pwdClickRetryCount} 次重试...`, "warn");
@@ -764,8 +762,8 @@ async function handleLoginPage(
           stepStallCount++;
           if (stepStallCount >= 30) { log("验证码输入框持续为空，刷新重试...", "warn"); break; }
         } else if (verifyBtnState === "disabled") {
-          // 情况一：验证码已输入但按钮 disabled，先等待 1.5 秒给页面响应时间，再次检测
-          await sleep(1500);
+          // 情况一：验证码已输入但按钮 disabled，先等待 3 秒给页面响应时间，再次检测
+          await sleep(3000);
           const verifyBtnStateRetry = await page.evaluate(() => {
             const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
             if (!btn || btn.offsetParent === null) return "no-button";
@@ -777,7 +775,7 @@ async function handleLoginPage(
           }
           // 仍然 disabled，才清空重输
           verifyCodeRetryCount++;
-          if (verifyCodeRetryCount > 6) {
+          if (verifyCodeRetryCount > 8) {
             log("验证码按钮持续 disabled，刷新重试...", "warn"); break;
           }
           log(`验证码按钮持续 disabled，清空重输（第 ${verifyCodeRetryCount} 次）...`, "warn");
@@ -854,8 +852,7 @@ async function handleLoginPage(
       log(`阶段一刷新失败（代理网络错误）：${reloadErr.message}`, "error");
       return "error";
     }
-    log("阶段一刷新完成，等待 20 秒让页面稳定...");
-    await sleep(20000);
+
   }
 
   return "timeout";
@@ -1188,8 +1185,7 @@ async function handleVerifyPhonePage(
       log(`阶段二刷新失败（代理网络错误）：${reloadErr.message}`, "error");
       return { result: "error" };
     }
-    log("阶段二刷新完成，等待 20 秒让页面稳定...");
-    await sleep(20000);
+
 
     // 刷新后检查是否已在 /app
     const afterReloadUrl = page.url();
