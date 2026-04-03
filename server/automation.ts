@@ -477,8 +477,9 @@ async function handleLoginPage(
 
     let emailFilled = false;
     let emailContinueClicked = false;
-    let emailRetryCount = 0;          // 情况一：邮箱输入后按钮仍 disabled 的清空重输次数
-    let emailClickRetryCount = 0;     // 情况二：邮箱按钮点击后页面未变化的重试次数
+    let emailRequestSent = false;     // 邮筱按钮已点击请求发送中，此时不能清空邮筱
+    let emailRetryCount = 0;          // 情况一：邮筱输入后按钮仍 disabled 的清空重输次数
+    let emailClickRetryCount = 0;     // 情况二：邮筱按钮点击后页面未变化的重试次数
     let pwdFilled = false;
     let pwdContinueClicked = false;
     let pwdRetryCount = 0;            // 情况一：密码输入后按钮仍 disabled 的清空重输次数
@@ -555,7 +556,13 @@ async function handleLoginPage(
           log("邮箱步骤已通过", "success");
           await sleep(500);
         } else if (btnState === "disabled") {
-          // 情况一：按钮 disabled，先等待 3 秒给页面响应时间，再次检测
+          // 情况一：按钮 disabled
+          // 如果请求已发送（emailRequestSent=true），说明请求还在进行中，不能清空邮筱，只等待
+          if (emailRequestSent) {
+            // 请求还在发送中，等待即可，不做任何操作
+            continue;
+          }
+          // 请求未发送，先等待 3 秒给页面响应时间，再次检测
           await sleep(3000);
           const btnStateRetry = await page.evaluate(() => {
             const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
@@ -589,7 +596,8 @@ async function handleLoginPage(
             const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
             if (btn) { await new Promise((r) => setTimeout(r, 800)); btn.click(); }
           });
-          log("邮箱确认按钮已点击", "success");
+          log("邮筱确认按钮已点击", "success");
+          emailRequestSent = true; // 标记请求已发送，防止后续清空邮筱
           await sleep(3000);
           // 情况二：点击后检测页面是否有变化（密码框是否出现）
           const afterClick = await page.evaluate(() => {
@@ -598,12 +606,14 @@ async function handleLoginPage(
           });
           if (afterClick) {
             emailContinueClicked = true;
+            emailRequestSent = false;
             emailClickRetryCount = 0;
             stepStallCount = 0;
           } else {
             // 页面未变化，再次尝试
             emailClickRetryCount++;
             if (emailClickRetryCount > 7) {
+              emailRequestSent = false;
               log("邮筱按钮点击后页面始终未跳转，刷新重试...", "warn"); break;
             }
             log(`邮筱按钮已点击但页面未变化，第 ${emailClickRetryCount} 次重试...`, "warn");
@@ -1227,36 +1237,6 @@ async function finishRegistration(
   log: Logger
 ) {
   log("注册成功！开始执行注册后续步骤...", "success");
-
-  // ── Step 0: 验证邀请码 (CheckInvitationCode) ──
-  // 对应 Python 脚本 step10：用注册时使用的邀请码调用验证接口
-  // 邀请码验证失败则抛出 InviteCodeFailedError，不插入数据库，并由 scheduler 停止所有任务
-  if (capturedToken && referrerCode) {
-    log(`正在验证邀请码：${referrerCode}...`);
-    try {
-      const checkResp = await fetch("https://api.manus.im/user.v1.UserService/CheckInvitationCode", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "authorization": `Bearer ${capturedToken}`,
-        },
-        body: JSON.stringify({ code: referrerCode }),
-      });
-      if (checkResp.ok) {
-        log(`邀请码验证成功：${referrerCode}`, "success");
-      } else {
-        const errText = await checkResp.text().catch(() => "");
-        log(`邀请码验证失败（HTTP ${checkResp.status})：${errText}，停止所有任务`, "error");
-        throw new InviteCodeFailedError(`CheckInvitationCode 返回 ${checkResp.status}: ${errText}`);
-      }
-    } catch (e: any) {
-      if (e instanceof InviteCodeFailedError) throw e; // 原样抛出
-      log(`邀请码验证请求异常：${e.message}，停止所有任务`, "error");
-      throw new InviteCodeFailedError(`CheckInvitationCode 请求异常: ${e.message}`);
-    }
-  } else {
-    log("无 token 或无邀请码，跳过 CheckInvitationCode", "warn");
-  }
 
   // ── Step 1: 兼换推广码 ──
   // 注意：BindPhoneTrait 成功后 token 已捕获，直接用 token 调用 API，无需刷新页面
