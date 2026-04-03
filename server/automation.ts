@@ -97,7 +97,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
 
   try {
     // ── 连接 AdsPower 浏览器 ──
-    log("Connecting to AdsPower browser via CDP...");
+    log("正在通过 CDP 连接 AdsPower 浏览器...");
     browser = await chromium.connectOverCDP(wsEndpoint, { timeout: 30000 });
     const contexts = browser.contexts();
     const context = contexts[0] || await browser.newContext();
@@ -105,10 +105,10 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     // 获取初始页面（AdsPower 起始页）
     let pages = context.pages();
     let page = pages.length > 0 ? pages[0] : await context.newPage();
-    log(`Connected. Current URL: ${page.url()}`, "info");
+    log(`连接成功，当前页面：${page.url()}`, "info");
 
     // ── Step -1: 通过浏览器内部检测出口 IP（确保代理已生效，且 IP 与注册用 IP 完全一致）──
-    log("Detecting exit IP via browser...");
+    log("正在通过浏览器检测出口 IP...");
     let detectedExitIp: string | undefined;
     try {
       const ipPage = await context.newPage();
@@ -117,11 +117,11 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
       await ipPage.close();
       if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ipText)) {
         detectedExitIp = ipText;
-        log(`Exit IP detected: ${detectedExitIp}`, "success");
+        log(`出口 IP 检测成功：${detectedExitIp}`, "success");
         // 检查 IP 是否已使用过
         const used = await isIpUsed(detectedExitIp);
         if (used) {
-          log(`Exit IP ${detectedExitIp} already used, aborting`, "warn");
+          log(`出口 IP ${detectedExitIp} 已被使用过，跳过本次注册`, "warn");
           await updateTaskLog(logId, {
             status: "skipped",
             errorMessage: `出口IP ${detectedExitIp} 已被使用过，跳过本次注册`,
@@ -131,12 +131,12 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
           await cleanupBrowser(browser, adspowerConfig, profileId);
           return;
         }
-        log(`Exit IP ${detectedExitIp} is fresh, proceeding`, "success");
+        log(`出口 IP ${detectedExitIp} 未使用，继续注册`, "success");
       } else {
-        log(`Could not parse exit IP from browser response: "${ipText}", proceeding without IP check`, "warn");
+        log(`无法解析出口 IP（响应内容："${ipText}"），跳过 IP 检查继续注册`, "warn");
       }
     } catch (ipErr: any) {
-      log(`Exit IP detection failed: ${ipErr.message}, proceeding without IP check`, "warn");
+      log(`出口 IP 检测失败：${ipErr.message}，跳过 IP 检查继续注册`, "warn");
     }
 
     // ── IP 检测完成后重新获取活跃页面（防止 AdsPower 起始页关闭导致原 page 对象失效）──
@@ -144,27 +144,27 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     if (pages.length === 0) {
       // 所有页面已关闭，新建一个
       page = await context.newPage();
-      log("All pages closed after IP check, created new page", "info");
+      log("IP 检测后所有页面已关闭，已新建空白页面", "info");
     } else {
       // 取最后一个活跃页面（跳过已关闭的页面）
       const activePage = pages.find(p => !p.isClosed()) ?? pages[pages.length - 1];
       if (activePage !== page) {
         page = activePage;
-        log(`Switched to active page: ${page.url()}`, "info");
+        log(`已切换到活跃页面：${page.url()}`, "info");
       }
     }
 
     // ── 设置网络响应拦截（替代 chrome.debugger）──
     setupResponseInterception(page, capturedUserData, (token) => {
       capturedToken = token;
-      log(`[Token] Captured: ${token.substring(0, 30)}...`);
+      log(`[Token] 已捕获：${token.substring(0, 30)}...`);
     });
 
     // ── Step 0: 获取邀请码（原子锁）──
-    log("Claiming invite code...");
+    log("正在获取邀请码...");
     const inviteCodeData = await claimNextInviteCode();
     if (!inviteCodeData) {
-      log("No available invite codes, skipping");
+      log("暂无可用邀请码，跳过本次注册");
       await updateTaskLog(logId, {
         status: "skipped",
         errorMessage: "暂无可用邀请码",
@@ -178,15 +178,15 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     inviterAccountId = inviteCodeData.id;
     inviteCode = inviteCodeData.inviteCode!;
     const inviteUrl = `https://manus.im/invitation/${inviteCode}`;
-    log(`Invite code acquired: ${inviteCode}`, "success");
+    log(`邀请码获取成功：${inviteCode}`, "success");
 
     // ── Step 1: 购买邮箱 ──
-    log("Buying email...");
+    log("正在购买邮箱...");
     let email: string;
     let codeUrl: string;
     try {
       ({ email, codeUrl } = await buyEmail());
-      log(`Email purchased: ${email}`, "success");
+      log(`邮箱购买成功：${email}`, "success");
     } catch (e: any) {
       await resetInviteCodeStatus(inviterAccountId);
       throw new Error(`购买邮箱失败: ${e.message}`);
@@ -194,22 +194,26 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
 
     // ── Step 2: 生成密码 ──
     const password = generatePassword();
-    log(`Password generated`);
+    log(`密码已生成`);
 
     // ── Step 3: 打开邀请链接 ──
-    log(`Opening invite URL: ${inviteUrl}`);
-    await page.goto(inviteUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+    log(`正在打开邀请链接：${inviteUrl}`);
+    try {
+      await page.goto(inviteUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+    } catch (gotoErr: any) {
+      throw new Error(`打开邀请链接失败（代理网络错误）：${gotoErr.message}`);
+    }
     await sleep(3000);
 
     // 如果在邀请页面，点击注册入口
     const currentUrl = page.url();
     if (currentUrl.includes("manus.im/invitation") || currentUrl.includes("manus.im/register") || currentUrl.includes("manus.im/signup")) {
-      log("On invitation page, looking for registration entry...");
+      log("已进入邀请页面，正在寻找注册入口...");
       await clickRegistrationEntry(page);
     }
 
     // ── 阶段一：login 页面 ──
-    log("=== Phase 1: Email + Password + Verify Code ===");
+    log("=== 阶段一：邮箱 + 密码 + 邮箱验证码 ===");
     const loginResult = await handleLoginPage(page, email, password, codeUrl, log);
 
     if (loginResult === "app") {
@@ -224,7 +228,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     }
 
     // ── 阶段二：verify-phone 页面 ──
-    log("=== Phase 2: Phone number + SMS code ===");
+    log("=== 阶段二：手机号 + 短信验证码 ===");
     const phoneResult = await handleVerifyPhonePage(page, logId, log);
 
     if (phoneResult.result === "app" && phoneResult.phoneInfo) {
@@ -242,7 +246,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
 
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
-    log(`Registration failed: ${msg}`, "error");
+    log(`注册失败：${msg}`, "error");
 
     if (inviterAccountId) {
       await resetInviteCodeStatus(inviterAccountId).catch(() => {});
@@ -377,7 +381,7 @@ async function handleLoginPage(
     const url = page.url();
     if (!url.includes("manus.im/login") && !url.includes("manus.im/register") &&
         !url.includes("manus.im/signup") && !url.includes("manus.im/invitation")) {
-      log(`Phase 1: unexpected URL ${url}, waiting...`);
+      log(`阶段一：当前 URL 异常（${url}），等待跳转...`);
       await sleep(2000);
     }
     let emailFilled = false;
@@ -395,7 +399,7 @@ async function handleLoginPage(
       await sleep(1000);
 
       if (Date.now() - roundStart > PHASE_TIMEOUT) {
-        log("Phase 1 timeout, refreshing...", "warn");
+        log("阶段一超时，正在刷新重试...", "warn");
         break;
       }
 
@@ -420,16 +424,16 @@ async function handleLoginPage(
 
       // 1. 输入邮箱
       if (!emailFilled) {
-        log("Filling email...");
+        log("正在填写邮箱...");
         await simulateMouseMove(page, 'input#email[autocomplete="email"], input#email[type="email"], input#email');
         const ok = await typeIntoField(page, 'input#email[autocomplete="email"], input#email[type="email"], input#email', email);
         if (ok) {
           emailFilled = true;
           stepStallCount = 0;
-          log(`Email filled: ${email}`, "success");
+          log(`邮箱已填写：${email}`, "success");
         } else {
           stepStallCount++;
-          if (stepStallCount >= 20) { log("Stalled on email input, refreshing...", "warn"); break; }
+          if (stepStallCount >= 20) { log("邮箱输入框卡住，刷新重试...", "warn"); break; }
         }
         continue;
       }
@@ -450,11 +454,11 @@ async function handleLoginPage(
         if (clicked) {
           emailContinueClicked = true;
           stepStallCount = 0;
-          log("Email Continue clicked", "success");
+          log("邮箱确认按钮已点击", "success");
           await sleep(2000);
         } else {
           stepStallCount++;
-          if (stepStallCount >= 20) { log("Stalled on email Continue, refreshing...", "warn"); break; }
+          if (stepStallCount >= 20) { log("邮箱确认按钮卡住，刷新重试...", "warn"); break; }
         }
         continue;
       }
@@ -466,10 +470,10 @@ async function handleLoginPage(
         if (ok) {
           pwdFilled = true;
           stepStallCount = 0;
-          log("Password filled", "success");
+          log("密码已填写", "success");
         } else {
           stepStallCount++;
-          if (stepStallCount >= 20) { log("Stalled on password input, refreshing...", "warn"); break; }
+          if (stepStallCount >= 20) { log("密码输入框卡住，刷新重试...", "warn"); break; }
         }
         continue;
       }
@@ -490,19 +494,19 @@ async function handleLoginPage(
         if (clicked) {
           pwdContinueClicked = true;
           stepStallCount = 0;
-          log("Password Continue clicked, fetching email verify code in background...", "success");
+          log("密码确认按钮已点击，后台获取邮箱验证码中...", "success");
           if (!verifyCodeFetching) {
             verifyCodeFetching = true;
             fetchVerifyCode(codeUrl).then((code) => {
               verifyCode = code;
-              if (code) log(`Email verify code ready: ${code}`, "success");
-              else log("Email verify code timeout", "warn");
+              if (code) log(`邮箱验证码已就绪：${code}`, "success");
+              else log("邮箱验证码获取超时", "warn");
             });
           }
           await sleep(2000);
         } else {
           stepStallCount++;
-          if (stepStallCount >= 20) { log("Stalled on password Continue, refreshing...", "warn"); break; }
+          if (stepStallCount >= 20) { log("密码确认按钮卡住，刷新重试...", "warn"); break; }
         }
         continue;
       }
@@ -520,15 +524,15 @@ async function handleLoginPage(
             if (ok) {
               verifyCodeFilled = true;
               stepStallCount = 0;
-              log(`Email verify code filled: ${verifyCode}`);
+              log(`邮箱验证码已填入：${verifyCode}`);
               await sleep(800);
             }
           } else {
-            if (i % 5 === 0) log("Waiting for email verify code...");
+            if (i % 5 === 0) log("等待邮箱验证码...");
           }
         } else {
           stepStallCount++;
-          if (stepStallCount >= 20) { log("Stalled on verify code input, refreshing...", "warn"); break; }
+          if (stepStallCount >= 20) { log("邮箱验证码输入框卡住，刷新重试...", "warn"); break; }
         }
         continue;
       }
@@ -548,38 +552,38 @@ async function handleLoginPage(
         if (confirmed) {
           verifyConfirmClicked = true;
           stepStallCount = 0;
-          log("Verify code confirmed, waiting for navigation...");
+          log("验证码已确认，等待页面跳转...");
           try {
             await page.waitForURL((url: URL) => url.toString().includes("manus.im/") && !url.toString().includes("manus.im/login") && !url.toString().includes("manus.im/register"), { timeout: 120000 });
             const navUrl = page.url();
-            log(`Navigated to: ${navUrl}`);
+              log(`页面已跳转至：${navUrl}`);
             if (navUrl.includes("manus.im/verify-phone")) {
-              log("Phase 1 complete → verify-phone");
+              log("阶段一完成 → 跳转至手机验证页");
               return "verify-phone";
             }
             if (navUrl.includes("manus.im/app")) {
-              log("Phase 1 complete → /app (no phone verification needed)");
+              log("阶段一完成 → 直接进入 /app（无需手机验证）");
               return "app";
             }
             if (navUrl.includes("manus.im/auth_landing")) {
-              log("Detected auth_landing, waiting for final redirect...");
+              log("检测到 auth_landing 中转页，等待最终跳转...");
               await page.waitForURL((url: URL) => url.toString().includes("manus.im/") && !url.toString().includes("auth_landing"), { timeout: 60000 });
               const finalUrl = page.url();
               if (finalUrl.includes("manus.im/verify-phone")) return "verify-phone";
               if (finalUrl.includes("manus.im/app")) return "app";
-              log(`Unknown redirect after auth_landing: ${finalUrl}`, "warn");
+              log(`auth_landing 后跳转到未知页面：${finalUrl}`, "warn");
               break;
             }
-            log(`Unknown navigation target: ${navUrl}`, "warn");
+            log(`跳转到未知目标页面：${navUrl}`, "warn");
             break;
           } catch {
-            log("Navigation timeout after verify code confirm", "warn");
+            log("确认验证码后等待跳转超时", "warn");
             verifyConfirmClicked = false;  // 超时后允许重试
             break;
           }
         } else {
           stepStallCount++;
-          if (stepStallCount >= 20) { log("Stalled on confirm button, refreshing...", "warn"); break; }
+          if (stepStallCount >= 20) { log("确认按钮卡住，刷新重试...", "warn"); break; }
           continue;
         }
       }
@@ -588,11 +592,16 @@ async function handleLoginPage(
     // 内层循环退出，刷新重试
     refreshCount++;
     if (refreshCount > MAX_REFRESHES) {
-      log(`Phase 1 exhausted ${MAX_REFRESHES} refreshes`, "error");
+      log(`阶段一已刷新 ${MAX_REFRESHES} 次仍未完成，放弃`, "error");
       return "timeout";
     }
-    log(`Phase 1 refresh #${refreshCount}...`, "warn");
-    await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
+    log(`阶段一第 ${refreshCount} 次刷新重试...`, "warn");
+    try {
+      await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
+    } catch (reloadErr: any) {
+      log(`阶段一刷新失败（代理网络错误）：${reloadErr.message}`, "error");
+      return "error";
+    }
     await sleep(2000);
   }
 
@@ -615,18 +624,18 @@ async function handleVerifyPhonePage(
   logId: number,
   log: Logger
 ): Promise<{ result: "app" | "timeout" | "no-phone" | "error"; phoneInfo?: PhoneInfo }> {
-  log("Phase 2: Fetching phone number from backend...");
+  log("阶段二：正在从数据库获取手机号...");
 
   // 从数据库获取手机号
   const phoneData = await getNextAvailablePhone();
   if (!phoneData) {
-    log("No available phone numbers", "error");
+    log("暂无可用手机号", "error");
     return { result: "no-phone" };
   }
 
   const phoneInfo = parseBackendPhone(phoneData);
   const acquiredPhoneId = phoneData.id; // 记录获取的手机号 id，失败时用于归还
-  log(`Phone: ${phoneInfo.phoneRaw} (${phoneInfo.iso})`);
+  log(`手机号已获取：${phoneInfo.phoneRaw}（${phoneInfo.iso}）`);
 
   // 立即将手机号 ID 写入 task_log，供浏览器异常关闭时 scheduler 归还手机号
   await updateTaskLog(logId, { acquiredPhoneId }).catch(() => {});
@@ -663,7 +672,7 @@ async function handleVerifyPhonePage(
 
     const url = page.url();
     if (!url.includes("manus.im/verify-phone")) {
-      log(`Phase 2: unexpected URL ${url}, waiting...`);
+      log(`阶段二：当前 URL 异常（${url}），等待跳转...`);
       await sleep(2000);
     }
 
@@ -678,7 +687,7 @@ async function handleVerifyPhonePage(
       await sleep(1000);
 
       if (Date.now() - roundStart > PHASE_TIMEOUT) {
-        log("Phase 2 timeout, refreshing...", "warn");
+        log("阶段二超时，正在刷新重试...", "warn");
         break;
       }
 
@@ -688,11 +697,11 @@ async function handleVerifyPhonePage(
         if (result) {
           countrySelected = true;
           stepStallCount = 0;
-          log(`Country selected: ${phoneInfo.iso} (${phoneInfo.dialCode})`);
+          log(`国家已选择：${phoneInfo.iso}（${phoneInfo.dialCode}）`);
           await sleep(800);
         } else {
           stepStallCount++;
-          if (stepStallCount >= 20) { log("Stalled on country select, refreshing...", "warn"); break; }
+          if (stepStallCount >= 20) { log("国家选择卡住，刷新重试...", "warn"); break; }
         }
         continue;
       }
@@ -704,11 +713,11 @@ async function handleVerifyPhonePage(
         if (ok) {
           phoneFilled = true;
           stepStallCount = 0;
-          log(`Phone filled: ${phoneInfo.phoneNumber}`);
+          log(`手机号已填写：${phoneInfo.phoneNumber}`);
           await sleep(800);
         } else {
           stepStallCount++;
-          if (stepStallCount >= 20) { log("Stalled on phone input, refreshing...", "warn"); break; }
+          if (stepStallCount >= 20) { log("手机号输入框卡住，刷新重试...", "warn"); break; }
         }
         continue;
       }
@@ -740,26 +749,26 @@ async function handleVerifyPhonePage(
         if (clicked) {
           phoneSendClicked = true;
           stepStallCount = 0;
-          log("Send code clicked, fetching SMS code in background...");
+          log("发送验证码按钮已点击，后台获取短信验证码中...");
           await sleep(2000);
           if (!smsCodeFetching) {
             smsCodeFetching = true;
             fetchSmsCode(phoneInfo.smsUrl).then(async (code) => {
               smsCode = code;
               if (code) {
-                log(`SMS code ready: ${code}`);
+                log(`短信验证码已就绪：${code}`);
                 if (!phoneMarkedUsed) {
                   await markPhoneUsedById(phoneInfo.backendPhoneId).catch(() => {});
                   phoneMarkedUsed = true;
                 }
               } else {
-                log("SMS code timeout", "warn");
+                log("短信验证码获取超时", "warn");
               }
             });
           }
         } else {
           stepStallCount++;
-          if (stepStallCount >= 20) { log("Stalled on Send code, refreshing...", "warn"); break; }
+          if (stepStallCount >= 20) { log("发送验证码按钮卡住，刷新重试...", "warn"); break; }
         }
         continue;
       }
@@ -777,15 +786,15 @@ async function handleVerifyPhonePage(
             if (ok) {
               smsCodeFilled = true;
               stepStallCount = 0;
-              log(`SMS code filled: ${smsCode}`);
+              log(`短信验证码已填入：${smsCode}`);
               await sleep(800);
             }
           } else {
-            if (i % 5 === 0) log("Waiting for SMS code...");
+            if (i % 5 === 0) log("等待短信验证码...");
           }
         } else {
           stepStallCount++;
-          if (stepStallCount >= 20) { log("Stalled on SMS code input, refreshing...", "warn"); break; }
+          if (stepStallCount >= 20) { log("短信验证码输入框卡住，刷新重试...", "warn"); break; }
         }
         continue;
       }
@@ -801,18 +810,18 @@ async function handleVerifyPhonePage(
       });
 
       if (confirmed) {
-        log("Phone confirm clicked, waiting for /app...");
+        log("手机号确认按钮已点击，等待跳转至 /app...");
         try {
           await page.waitForURL((url: URL) => url.toString().includes("manus.im/app"), { timeout: 120000 });
-          log("Phase 2 complete → /app");
+          log("阶段二完成 → 已进入 /app");
           return { result: "app", phoneInfo };
         } catch {
-          log("Timeout waiting for /app after phone confirm", "warn");
+          log("等待跳转至 /app 超时", "warn");
           break;
         }
       } else {
         stepStallCount++;
-        if (stepStallCount >= 20) { log("Stalled on phone confirm, refreshing...", "warn"); break; }
+          if (stepStallCount >= 20) { log("手机号确认按钮卡住，刷新重试...", "warn"); break; }
         continue;
       }
     }
@@ -820,17 +829,22 @@ async function handleVerifyPhonePage(
     // 内层循环退出，刷新重试
     refreshCount++;
     if (refreshCount > MAX_REFRESHES) {
-      log(`Phase 2 exhausted ${MAX_REFRESHES} refreshes`, "error");
+      log(`阶段二已刷新 ${MAX_REFRESHES} 次仍未完成，放弃`, "error");
       return { result: "timeout" };
     }
-    log(`Phase 2 refresh #${refreshCount}...`, "warn");
-    await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
+    log(`阶段二第 ${refreshCount} 次刷新重试...`, "warn");
+    try {
+      await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
+    } catch (reloadErr: any) {
+      log(`阶段二刷新失败（代理网络错误）：${reloadErr.message}`, "error");
+      return { result: "error" };
+    }
     await sleep(2000);
 
     // 刷新后检查是否已在 /app
     const afterReloadUrl = page.url();
     if (afterReloadUrl.includes("manus.im/app")) {
-      log("After reload, already on /app!");
+      log("刷新后已在 /app 页面，注册成功！");
       return { result: "app", phoneInfo };
     }
   }
@@ -839,10 +853,10 @@ async function handleVerifyPhonePage(
   // - 如果短信已收到并标记使用（phoneMarkedUsed=true），保持已使用状态，不允许再次使用
   // - 如果按钮点了但短信未收到（phoneMarkedUsed=false），归还手机号供下次使用
   if (!phoneMarkedUsed) {
-    log(`Phase 2 timeout, phone not marked used, resetting phone ${acquiredPhoneId} back to unused`, "warn");
+    log(`阶段二超时，短信未收到，手机号 ${acquiredPhoneId} 已归还`, "warn");
     await resetPhoneStatusById(acquiredPhoneId).catch(() => {});
   } else {
-    log(`Phase 2 timeout, phone ${acquiredPhoneId} already marked used (SMS received), keeping used status`, "warn");
+    log(`阶段二超时，短信已收到，手机号 ${acquiredPhoneId} 保持已使用状态`, "warn");
   }
   return { result: "timeout" };
 }
@@ -866,28 +880,28 @@ async function finishRegistration(
   startTime: number,
   log: Logger
 ) {
-  log("Registration successful! Starting post-registration steps...", "success");
+  log("注册成功！开始执行注册后续步骤...", "success");
 
   // Step 1: 刷新 + 兑换推广码
-  log("Reloading page and redeeming promotion code...");
-  await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 });
+  log("正在刷新页面并兑换推广码...");
+  await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
   await sleep(2000);
   await redeemPromotion(page, capturedToken, log);
 
   // Step 2: 再次刷新，等待 API 数据
-  log("Reloading to collect user data...");
+  log("正在刷新页面，采集用户数据...");
   capturedUserData.membershipVersion = null;
   capturedUserData.totalCredits = null;
   capturedUserData.inviteCode = null;
 
-  await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 });
+  await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
   await sleep(3000);
 
   // 等待 3 个 API 数据（最多 30 秒）
   const dataWaitStart = Date.now();
   while (Date.now() - dataWaitStart < 30000) {
     if (capturedUserData.membershipVersion && capturedUserData.totalCredits !== null && capturedUserData.inviteCode) {
-      log("All user data collected");
+      log("所有用户数据采集完成");
       break;
     }
     await sleep(1000);
@@ -897,7 +911,7 @@ async function finishRegistration(
   const clientId = await page.evaluate(() => localStorage.getItem("client_id_v2")).catch(() => null);
   capturedUserData.clientId = clientId;
 
-  log(`Data: membership=${capturedUserData.membershipVersion}, credits=${capturedUserData.totalCredits}, inviteCode=${capturedUserData.inviteCode}`);
+  log(`数据采集：会员版本=${capturedUserData.membershipVersion}，积分=${capturedUserData.totalCredits}，邀请码=${capturedUserData.inviteCode}`);
 
   // Step 3: 上报注册数据到后端数据库（直接调用 DB，不走 HTTP）
   const phoneStr = phoneInfo ? phoneInfo.dialCode + phoneInfo.phoneNumber : "";
@@ -934,10 +948,10 @@ async function finishRegistration(
     });
 
     await incrementTaskCounters(taskId, { totalSuccess: 1, totalAccountsCreated: 1 });
-    log(`Registration complete! email=${email}, duration=${Math.round(durationMs / 1000)}s`, "success");
+    log(`注册完成！邮箱=${email}，耗时=${Math.round(durationMs / 1000)}秒`, "success");
 
   } catch (e: any) {
-    log(`Failed to save registration result: ${e.message}`, "error");
+    log(`注册结果保存失败：${e.message}`, "error");
     await updateTaskLog(logId, {
       status: "failed",
       errorMessage: `注册成功但保存失败: ${e.message}`,
@@ -954,13 +968,13 @@ async function finishRegistration(
 // ─── 兑换推广码 ──────────────────────────────────────────────────────────────
 
 async function redeemPromotion(page: Page, token: string | null, log: Logger) {
-  if (!token) { log("No token, skipping promotion code redemption", "warn"); return; }
+  if (!token) { log("未获取到 Token，跳过推广码兑换", "warn"); return; }
 
   const clientId = await page.evaluate(() => localStorage.getItem("client_id_v2")).catch(() => null);
-  if (!clientId) { log("No clientId, skipping promotion code redemption", "warn"); return; }
+  if (!clientId) { log("未获取到 clientId，跳过推广码兑换", "warn"); return; }
 
   const promotionCode = "techtiff";
-  log(`Redeeming promotion code: ${promotionCode}`);
+  log(`正在兑换推广码：${promotionCode}`);
 
   const redeemResult = await page.evaluate(async ({ tkn, cid, code }: { tkn: string; cid: string; code: string }) => {
     try {
@@ -981,11 +995,11 @@ async function redeemPromotion(page: Page, token: string | null, log: Logger) {
   }, { tkn: token, cid: clientId, code: promotionCode });
 
   if (!redeemResult?.ok && redeemResult?.status === 0) {
-    log(`Promotion code redeem failed: ${redeemResult?.body}`, "warn");
+    log(`推广码兑换请求失败：${redeemResult?.body}`, "warn");
     return;
   }
 
-  log(`Promotion code submitted (${redeemResult?.status}), polling status...`);
+  log(`推广码已提交（状态码 ${redeemResult?.status}），轮询兑换结果...`);
 
   for (let i = 1; i <= 10; i++) {
     await sleep(2000);
@@ -1010,11 +1024,11 @@ async function redeemPromotion(page: Page, token: string | null, log: Logger) {
     try {
       const json = JSON.parse(pollResult?.body || "{}");
       const st = json.status || "";
-      if (st.includes("SUCCESS")) { log("Promotion code redeemed successfully!"); return; }
-      if (st.includes("FAILED")) { log(`Promotion code failed: ${pollResult?.body}`, "warn"); return; }
+      if (st.includes("SUCCESS")) { log("推广码兑换成功！"); return; }
+      if (st.includes("FAILED")) { log(`推广码兑换失败：${pollResult?.body}`, "warn"); return; }
     } catch {}
   }
-  log("Promotion code poll timeout (may still be processing)", "warn");
+  log("推广码兑换轮询超时（可能仍在处理中）", "warn");
 }
 
 // ─── 工具函数 ─────────────────────────────────────────────────────────────────

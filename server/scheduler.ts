@@ -52,13 +52,13 @@ const BROWSER_MONITOR_INTERVAL = 15000; // 每 15 秒檢查一次
 
 function startBrowserMonitor(): void {
   if (browserMonitorTimer) return;
-  console.log(`[BrowserMonitor] Started | interval: ${BROWSER_MONITOR_INTERVAL / 1000}s`);
+  console.log(`[浏览器监控] 已启动 | 检查间隔: ${BROWSER_MONITOR_INTERVAL / 1000}s`);
   browserMonitorTimer = setInterval(async () => {
     try {
       await checkBrowserStatus();
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
-      console.error(`[BrowserMonitor] Error: ${msg}`);
+      console.error(`[浏览器监控] 检查出错: ${msg}`);
     }
   }, BROWSER_MONITOR_INTERVAL);
 }
@@ -67,7 +67,7 @@ function stopBrowserMonitor(): void {
   if (browserMonitorTimer) {
     clearInterval(browserMonitorTimer);
     browserMonitorTimer = null;
-    console.log(`[BrowserMonitor] Stopped`);
+    console.log(`[浏览器监控] 已停止`);
   }
 }
 
@@ -89,7 +89,7 @@ async function checkBrowserStatus(): Promise<void> {
     const activeIds = new Set(activeBrowsers.map((b) => b.browserId));
 
     console.log(
-      `[BrowserMonitor] Task ${taskId}: checking ${logs.length} browser(s) | ${activeIds.size} active in AdsPower`
+      `[浏览器监控] 任务 ${taskId}: 检查 ${logs.length} 个浏览器 | AdsPower 活跃数: ${activeIds.size}`
     );
 
     const BROWSER_STARTUP_GRACE_MS = 3 * 60 * 1000; // 3 分钟保护窗口期
@@ -108,7 +108,7 @@ async function checkBrowserStatus(): Promise<void> {
           ? Date.now() - new Date(log.startedAt).getTime()
           : undefined;
 
-        console.log(`[BrowserMonitor] Browser ${browserId} (log #${log.id}) is no longer active → marking failed`);
+        console.log(`[浏览器监控] 浏览器 ${browserId}（日志 #${log.id}）已不活跃 → 标记为失败`);
 
         // 如果手机号尚未收到短信（in_use 状态），归还手机号
         await releasePhoneIfNeeded(log.id).catch(() => {});
@@ -129,7 +129,7 @@ async function checkBrowserStatus(): Promise<void> {
           if (!executeTaskLocks.get(taskId)) {
             executeTaskLocks.set(taskId, true);
             executeTask(taskId)
-              .catch((e) => console.error(`[BrowserMonitor] Failed to trigger next task: ${e}`))
+              .catch((e) => console.error(`[浏览器监控] 触发下一次任务失败: ${e}`))
               .finally(() => executeTaskLocks.delete(taskId));
           }
         }
@@ -153,7 +153,7 @@ async function cleanupTaskBrowsers(taskId: number, reason: string): Promise<void
 
   const affected = await failAllRunningLogsForTask(taskId, reason);
   if (affected > 0) {
-    console.log(`[Scheduler] Task ${taskId}: marked ${affected} running log(s) as failed (${reason})`);
+    console.log(`[调度器] 任务 ${taskId}: 已将 ${affected} 条运行日志标记为失败（${reason}）`);
   }
 
   const browserIds = runningLogs
@@ -162,18 +162,18 @@ async function cleanupTaskBrowsers(taskId: number, reason: string): Promise<void
 
   if (browserIds.length === 0) return;
 
-  console.log(`[Scheduler] Task ${taskId}: closing ${browserIds.length} browser(s): [${browserIds.join(", ")}]`);
+  console.log(`[调度器] 任务 ${taskId}: 正在关闭 ${browserIds.length} 个浏览器: [${browserIds.join(", ")}]`);
 
   await Promise.all(
     browserIds.map((browserId) =>
       closeAdsPowerBrowser(adspowerConfig, browserId).catch((e) =>
-        console.error(`[Scheduler] Failed to close browser ${browserId}: ${e}`)
+        console.error(`[调度器] 关闭浏览器 ${browserId} 失败: ${e}`)
       )
     )
   );
 
   await deleteAdsPowerBrowsers(adspowerConfig, browserIds).catch((e) =>
-    console.error(`[Scheduler] Failed to batch-delete browsers: ${e}`)
+    console.error(`[调度器] 批量删除浏览器失败: ${e}`)
   );
 }
 
@@ -181,7 +181,7 @@ async function cleanupTaskBrowsers(taskId: number, reason: string): Promise<void
 
 export async function startScheduler(taskId: number): Promise<void> {
   if (schedulerTimers.has(taskId)) {
-    console.log(`[Scheduler] Task ${taskId} is already running`);
+    console.log(`[调度器] 任务 ${taskId} 已在运行中`);
     return;
   }
 
@@ -197,7 +197,7 @@ export async function startScheduler(taskId: number): Promise<void> {
   });
 
   console.log(
-    `[Scheduler] Starting task ${taskId} "${task.name}" | interval: ${task.scanIntervalSeconds}s | single-thread mode`
+    `[调度器] 启动任务 ${taskId} "${task.name}" | 检查间隔: ${task.scanIntervalSeconds}s | 单线程模式`
   );
 
   // 立即執行一次
@@ -231,7 +231,7 @@ export async function pauseScheduler(taskId: number): Promise<void> {
 
   await cleanupTaskBrowsers(taskId, "任务已暂停，浏览器被强制关闭");
   await updateAutomationTask(taskId, { status: "paused" });
-  console.log(`[Scheduler] Task ${taskId} paused`);
+  console.log(`[调度器] 任务 ${taskId} 已暂停`);
 
   if (schedulerTimers.size === 0) {
     taskApiUrls.delete(taskId);
@@ -250,7 +250,7 @@ export async function stopScheduler(taskId: number): Promise<void> {
 
   await cleanupTaskBrowsers(taskId, "任务已停止，浏览器被强制关闭");
   await updateAutomationTask(taskId, { status: "stopped" });
-  console.log(`[Scheduler] Task ${taskId} stopped`);
+  console.log(`[调度器] 任务 ${taskId} 已停止`);
 
   taskApiUrls.delete(taskId);
   if (schedulerTimers.size === 0) stopBrowserMonitor();
@@ -268,12 +268,12 @@ export async function handlePluginError(
   browserId: string,
   errorMessage: string
 ): Promise<{ success: boolean; message: string }> {
-  console.log(`[Scheduler] Received error report for browser ${browserId}: ${errorMessage}`);
+  console.log(`[调度器] 收到浏览器 ${browserId} 的错误上报: ${errorMessage}`);
 
   const log = await getRunningLogByBrowserId(browserId);
 
   if (!log) {
-    console.warn(`[Scheduler] No running log found for browser ${browserId}, ignoring`);
+    console.warn(`[调度器] 未找到浏览器 ${browserId} 对应的运行日志，忽略`);
     return { success: false, message: `未找到对应的运行中任务（browserId: ${browserId}）` };
   }
 
@@ -295,9 +295,9 @@ export async function handlePluginError(
 
   stopAndDeleteAdsPowerBrowser(adspowerConfig, browserId)
     .then((r) => {
-      if (!r.success) console.error(`[Scheduler] Failed to cleanup browser ${browserId}: ${r.error}`);
+      if (!r.success) console.error(`[调度器] 清理浏览器 ${browserId} 失败: ${r.error}`);
     })
-    .catch((e) => console.error(`[Scheduler] Failed to cleanup browser ${browserId}: ${e}`));
+    .catch((e) => console.error(`[调度器] 清理浏览器 ${browserId} 失败: ${e}`));
 
   await incrementTaskCounters(taskId, { totalFailed: 1 });
 
@@ -305,12 +305,12 @@ export async function handlePluginError(
   const task = await getAutomationTaskById(taskId);
   if (task && task.status === "running") {
     if (executeTaskLocks.get(taskId)) {
-      console.log(`[Scheduler] Task ${taskId} executeTask already in progress, skipping`);
+      console.log(`[调度器] 任务 ${taskId} 已有执行中的注册流程，跳过`);
     } else {
-      console.log(`[Scheduler] Task ${taskId} triggering next execution`);
+      console.log(`[调度器] 任务 ${taskId} 触发下一次执行`);
       executeTaskLocks.set(taskId, true);
       executeTask(taskId)
-        .catch((e) => console.error(`[Scheduler] Failed to trigger next execution: ${e}`))
+        .catch((e) => console.error(`[调度器] 触发下一次执行失败: ${e}`))
         .finally(() => executeTaskLocks.delete(taskId));
     }
   }
@@ -322,7 +322,7 @@ export async function handlePluginError(
 
 async function executeTask(taskId: number): Promise<void> {
   if (executeTaskLocks.get(taskId)) {
-    console.log(`[Scheduler] Task ${taskId}: executeTask already in progress, skipping`);
+    console.log(`[调度器] 任务 ${taskId}: 已有执行中的注册流程，跳过`);
     return;
   }
   executeTaskLocks.set(taskId, true);
@@ -341,7 +341,7 @@ async function _executeTask(taskId: number): Promise<void> {
   // 检查是否已达到注册目标总数
   if (task.targetCount && (task.totalAccountsCreated ?? 0) >= task.targetCount) {
     console.log(
-      `[Scheduler] Task ${taskId}: Target count reached (${task.totalAccountsCreated}/${task.targetCount}), auto-stopping`
+      `[调度器] 任务 ${taskId}: 已达到目标数量（${task.totalAccountsCreated}/${task.targetCount}），自动停止`
     );
     await stopScheduler(taskId);
     return;
@@ -357,7 +357,7 @@ async function _executeTask(taskId: number): Promise<void> {
     // 1. 检查是否有未使用的邀请码
     const unusedCount = await getUnusedInviteCodeCount();
     if (unusedCount === 0) {
-      console.log(`[Scheduler] Task ${taskId}: No unused invite codes available`);
+      console.log(`[调度器] 任务 ${taskId}: 暂无可用邀请码`);
       await updateAutomationTask(taskId, { lastExecutedAt: new Date() });
       return;
     }
@@ -366,13 +366,13 @@ async function _executeTask(taskId: number): Promise<void> {
     const runningLogs = await getRunningLogsForTask(taskId);
     if (runningLogs.length >= 1) {
       console.log(
-        `[Scheduler] Task ${taskId}: A registration task is already running (single-thread mode), skipping`
+        `[调度器] 任务 ${taskId}: 已有注册任务运行中（单线程模式），跳过`
       );
       await updateAutomationTask(taskId, { lastExecutedAt: new Date() });
       return;
     }
 
-    console.log(`[Scheduler] Task ${taskId}: Starting new registration task`);
+    console.log(`[调度器] 任务 ${taskId}: 开始创建新的注册任务`);
 
     // 3. 创建单个浏览器并启动注册（IP 检测已移入浏览器内部执行，确保代理已生效且 IP 一致）
     await createOneBrowser(taskId, task, adspowerConfig);
@@ -380,7 +380,7 @@ async function _executeTask(taskId: number): Promise<void> {
 
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
-    console.error(`[Scheduler] Task ${taskId}: Unexpected error - ${msg}`);
+    console.error(`[调度器] 任务 ${taskId}: 意外错误 - ${msg}`);
     await incrementTaskCounters(taskId, { totalFailed: 1 });
   }
 }
@@ -397,7 +397,7 @@ async function createOneBrowser(
   let profileId: string | undefined;
 
   try {
-    console.log(`[Scheduler] Task ${taskId}: Creating browser instance`);
+    console.log(`[调度器] 任务 ${taskId}: 正在创建浏览器实例`);
 
     // 创建任务日志（exitIp 将由浏览器内部检测后写入）
     const logResult = await createTaskLog({
@@ -468,7 +468,7 @@ async function createOneBrowser(
 
     // 本地运行：AdsPower 返回的 wsEndpoint 中 127.0.0.1 就是本机，直接使用
     const wsEndpointFixed = startResult.wsEndpoint;
-    console.log(`[Scheduler] Task ${taskId}: Browser started | profile: ${profileId} | ws: ${wsEndpointFixed}`);
+    console.log(`[调度器] 任务 ${taskId}: 浏览器已启动 | 配置ID: ${profileId} | WS: ${wsEndpointFixed}`);
 
     // 异步启动注册流程（不阻塞调度器）
     runRegistration({
@@ -478,7 +478,7 @@ async function createOneBrowser(
       wsEndpoint: wsEndpointFixed,
       adspowerConfig,
     }).catch(async (e) => {
-      console.error(`[Scheduler] Task ${taskId}: Registration failed unexpectedly: ${e}`);
+      console.error(`[调度器] 任务 ${taskId}: 注册流程意外失败: ${e}`);
       // 异步失败时也要清理浏览器，防止残留
       if (profileId) await stopAndDeleteAdsPowerBrowser(adspowerConfig, profileId).catch(() => {});
       if (logId) {
@@ -514,7 +514,7 @@ async function createOneBrowser(
     }
 
     await incrementTaskCounters(taskId, { totalFailed: 1 });
-    console.error(`[Scheduler] Task ${taskId}: Failed to create/start browser - ${msg}`);
+    console.error(`[调度器] 任务 ${taskId}: 创建/启动浏览器失败 - ${msg}`);
 
     // 失败后触发下一次尝试
     const currentTask = await getAutomationTaskById(taskId);
@@ -523,7 +523,7 @@ async function createOneBrowser(
         if (!executeTaskLocks.get(taskId)) {
           executeTaskLocks.set(taskId, true);
           executeTask(taskId)
-            .catch((e) => console.error(`[Scheduler] Retry trigger failed: ${e}`))
+            .catch((e) => console.error(`[调度器] 重试触发失败: ${e}`))
             .finally(() => executeTaskLocks.delete(taskId));
         }
       }, 5000);
