@@ -161,9 +161,16 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
       const resourceType = req.resourceType();
       const url = req.url();
 
-      // 屏蔽：图片（Cloudflare Turnstile 不依赖图片）
+      // 屏蔽：仅屏蔽 manus.im 自身的图片（装饰性图片、头像、背景图等）
+      // 放行 Cloudflare 及其他第三方域名的图片，确保 Turnstile 验证正常
       if (resourceType === "image") {
-        route.abort();
+        const isManusImage = url.includes("manus.im") || url.includes("manus-assets") || url.includes("cdn.manus");
+        if (isManusImage) {
+          route.abort();
+          return;
+        }
+        // 非 manus.im 的图片（Cloudflare、第三方等）正常放行
+        route.continue();
         return;
       }
       // 屏蔽：字体文件
