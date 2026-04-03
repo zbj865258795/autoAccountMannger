@@ -475,8 +475,8 @@ async function handleLoginPage(
     // 页面加载后模拟真人浏览行为（随机滚动 + 鼠标漫游）
     await humanBrowse(page);
     // 页面加载完成后等待 10 秒，让页面完全稳定后再开始检测
-    log("页面已加载，等待 10 秒让页面稳定...");
-    await sleep(10000);
+    log("页面已加载，等待 20 秒让页面稳定...");
+    await sleep(20000);
     let emailFilled = false;
     let emailContinueClicked = false;
     let emailRetryCount = 0;          // 情况一：邮箱输入后按钮仍 disabled 的清空重输次数
@@ -854,8 +854,8 @@ async function handleLoginPage(
       log(`阶段一刷新失败（代理网络错误）：${reloadErr.message}`, "error");
       return "error";
     }
-    log("阶段一刷新完成，等待 10 秒让页面稳定...");
-    await sleep(10000);
+    log("阶段一刷新完成，等待 20 秒让页面稳定...");
+    await sleep(20000);
   }
 
   return "timeout";
@@ -1188,8 +1188,8 @@ async function handleVerifyPhonePage(
       log(`阶段二刷新失败（代理网络错误）：${reloadErr.message}`, "error");
       return { result: "error" };
     }
-    log("阶段二刷新完成，等待 10 秒让页面稳定...");
-    await sleep(10000);
+    log("阶段二刷新完成，等待 20 秒让页面稳定...");
+    await sleep(20000);
 
     // 刷新后检查是否已在 /app
     const afterReloadUrl = page.url();
