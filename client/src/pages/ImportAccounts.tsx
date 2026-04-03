@@ -67,7 +67,8 @@ function parseAndTransform(raw: string): { items: any[]; error: string } {
 
 export default function ImportAccounts() {
   const [, setLocation] = useLocation();
-  const [jsonText, setJsonText] = useState("");
+  const DEFAULT_TEMPLATE = JSON.stringify({ email: "", password: "", inviteCode: "" }, null, 2);
+  const [jsonText, setJsonText] = useState(DEFAULT_TEMPLATE);
   const [preview, setPreview] = useState<any[]>([]);
   const [parseError, setParseError] = useState("");
   const [result, setResult] = useState<{ successCount: number; skipCount: number; failCount: number; errors: string[]; skipped: string[] } | null>(null);
