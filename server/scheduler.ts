@@ -33,7 +33,7 @@ import {
   stopAndDeleteAdsPowerBrowser,
 } from "./adspower";
 import { ADSPOWER_CONFIG } from "./config";
-import { runRegistration } from "./automation";
+import { runRegistration, InviteCodeFailedError } from "./automation";
 
 // ─── 全局調度器狀態 ───────────────────────────────────────────────────────────
 
@@ -519,7 +519,6 @@ async function createOneBrowser(
       wsEndpoint: wsEndpointFixed,
       adspowerConfig,
     }).catch(async (e) => {
-      console.error(`[调度器] 任务 ${taskId}: 注册流程意外失败: ${e}`);
       // 异步失败时也要清理浏览器，防止残留
       if (profileId) await stopAndDeleteAdsPowerBrowser(adspowerConfig, profileId).catch(() => {});
       if (logId) {
@@ -530,7 +529,16 @@ async function createOneBrowser(
         }).catch(() => {});
       }
       await incrementTaskCounters(taskId, { totalFailed: 1 }).catch(() => {});
-      // 失败后继续下一次
+
+      // 邀请码验证失败：停止当前任务，不再继续下一次
+      if (e instanceof InviteCodeFailedError) {
+        console.error(`[调度器] 任务 ${taskId}: 邀请码验证失败，主动停止所有任务: ${e.message}`);
+        await stopScheduler(taskId);
+        return;
+      }
+
+      console.error(`[调度器] 任务 ${taskId}: 注册流程意外失败: ${e}`);
+      // 其他失败后继续下一次
       const currentTask = await getAutomationTaskById(taskId);
       if (currentTask && currentTask.status === "running") {
         setTimeout(() => executeTask(taskId), 3000);

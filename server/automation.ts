@@ -30,7 +30,19 @@ import {
 } from "./db";
 import { stopAndDeleteAdsPowerBrowser } from "./adspower";
 
-// ─── 常量 ─────────────────────────────────────────────────────────────────────
+// ─── 自定义错误类型 ───────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 邀请码验证失败错误：由 finishRegistration 抛出，由 scheduler.ts 捕获后停止所有任务
+ */
+export class InviteCodeFailedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InviteCodeFailedError";
+  }
+}
+
+// ─── 常量 ─────────────────────────────────────────────────────────────────────────────────
 
 const BUY_EMAIL_API =
   "https://888-mail.com/api/goods/buy?key=45934c0edb8ada894890d349ba6405871d43ba0bd509a650336defca822b6d47&goods_code=77929&quantity=1";
@@ -86,7 +98,6 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
   let inviterAccountId: number | null = null;
   let inviteCode: string | null = null;
   let capturedToken: string | null = null;
-  let bindPhoneSucceeded = false; // BindPhoneTrait 成功标志，用于跳过 waitForURL 检测
   let capturedUserData = {
     membershipVersion: null as string | null,
     totalCredits: null as number | null,
@@ -195,14 +206,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
         log(`[Token] 已捕获：${token.substring(0, 30)}...`);
       },
       undefined, // onSendPhoneError 由阶段二内部单独监听，这里不传
-      () => {
-        // BindPhoneTrait 成功：标记成功，让阶段二跳过 waitForURL 检测
-        // 注意：不拦截页面跳转，允许浏览器正常跳转到 /app
-        // 后续的 redeemPromotion 依赖 page.evaluate 里的 fetch，需要浏览器处于正常状态
-        // 所有后续接口完成后，由 cleanupBrowser 关闭浏览器
-        bindPhoneSucceeded = true;
-        log("手机号绑定成功，等待页面跳转后继续执行后续操作...");
-      }
+      undefined  // onBindPhoneSuccess 不需要，允许浏览器正常跳转到 /app
     );
 
     // ── Step 0: 获取邀请码（原子锁）──
@@ -274,7 +278,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
 
     // ── 阶段二：verify-phone 页面 ──
     log("=== 阶段二：手机号 + 短信验证码 ===");
-    const phoneResult = await handleVerifyPhonePage(page, logId, log, () => bindPhoneSucceeded);
+    const phoneResult = await handleVerifyPhonePage(page, logId, log);
 
     if (phoneResult.result === "app" && phoneResult.phoneInfo) {
       await finishRegistration(page, email, password, phoneResult.phoneInfo, inviteCode, inviterAccountId, capturedToken, capturedUserData, taskId, logId, profileId, detectedExitIp, adspowerConfig, startTime, log);
@@ -867,8 +871,7 @@ interface PhoneInfo {
 async function handleVerifyPhonePage(
   page: Page,
   logId: number,
-  log: Logger,
-  getBindPhoneSucceeded: () => boolean  // 获取 BindPhoneTrait 成功标志（由外部闭包提供）
+  log: Logger
 ): Promise<{ result: "app" | "timeout" | "no-phone" | "error"; phoneInfo?: PhoneInfo }> {
   log("阶段二：正在从数据库获取手机号...");
 
@@ -1149,36 +1152,18 @@ async function handleVerifyPhonePage(
           const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
           if (btn) { await new Promise((r) => setTimeout(r, 500)); btn.click(); }
         });
-        log("手机号确认按钮已点击，等待 BindPhoneTrait 响应...");
-
-        // 等待最多 30 秒：如果 BindPhoneTrait 成功（页面跳转已被拦截）或 URL 跳转到 /app 均认为成功
-        const waitStart = Date.now();
-        let phase2Done = false;
-        while (Date.now() - waitStart < 30000) {
-          await sleep(500);
-          // 情况A：BindPhoneTrait 成功回调已被触发（页面跳转已被拦截）
-          if (getBindPhoneSucceeded()) {
-            log("阶段二完成 → BindPhoneTrait 成功，页面跳转已拦截");
-            phase2Done = true;
-            break;
-          }
-          // 情况B：页面正常跳转到 /app（未拦截的情况）
-          if (page.url().includes("manus.im/app")) {
-            log("阶段二完成 → 已进入 /app");
-            phase2Done = true;
-            break;
-          }
-        }
-
-        if (phase2Done) {
+        log("手机号确认按钮已点击，等待跳转至 /app...");
+        try {
+          await page.waitForURL((url: URL) => url.toString().includes("manus.im/app"), { timeout: 30000 });
+          log("阶段二完成 → 已进入 /app");
           return { result: "app", phoneInfo };
-        } else {
-          // 情况二：30 秒内无响应，重置允许重试
+        } catch {
+          // 情况二：点击后 30 秒内页面未跳转，重置允许重试
           smsClickRetryCount++;
           if (smsClickRetryCount > 3) {
-            log("手机号确认按钮点击后始终无响应，刷新重试...", "warn"); break;
+            log("手机号确认按钮点击后页面始终未跳转，刷新重试...", "warn"); break;
           }
-          log(`手机号确认按钮已点击但无响应，第 ${smsClickRetryCount} 次重试...`, "warn");
+          log(`手机号确认按钮已点击但页面未跳转，第 ${smsClickRetryCount} 次重试...`, "warn");
         }
       } else {
         stepStallCount++;
@@ -1244,6 +1229,7 @@ async function finishRegistration(
 
   // ── Step 0: 验证邀请码 (CheckInvitationCode) ──
   // 对应 Python 脚本 step10：用注册时使用的邀请码调用验证接口
+  // 邀请码验证失败则抛出 InviteCodeFailedError，不插入数据库，并由 scheduler 停止所有任务
   if (capturedToken && referrerCode) {
     log(`正在验证邀请码：${referrerCode}...`);
     try {
@@ -1258,10 +1244,14 @@ async function finishRegistration(
       if (checkResp.ok) {
         log(`邀请码验证成功：${referrerCode}`, "success");
       } else {
-        log(`邀请码验证返回 ${checkResp.status}，继续执行后续步骤`, "warn");
+        const errText = await checkResp.text().catch(() => "");
+        log(`邀请码验证失败（HTTP ${checkResp.status})：${errText}，停止所有任务`, "error");
+        throw new InviteCodeFailedError(`CheckInvitationCode 返回 ${checkResp.status}: ${errText}`);
       }
     } catch (e: any) {
-      log(`邀请码验证失败：${e.message}，继续执行后续步骤`, "warn");
+      if (e instanceof InviteCodeFailedError) throw e; // 原样抛出
+      log(`邀请码验证请求异常：${e.message}，停止所有任务`, "error");
+      throw new InviteCodeFailedError(`CheckInvitationCode 请求异常: ${e.message}`);
     }
   } else {
     log("无 token 或无邀请码，跳过 CheckInvitationCode", "warn");
