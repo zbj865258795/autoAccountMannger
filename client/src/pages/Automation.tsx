@@ -54,12 +54,11 @@ const statusConfig: Record<TaskStatus, { label: string; class: string; icon: Rea
 // ─── 创建任务弹窗 ─────────────────────────────────────────────────────────────
 
 function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: () => void }) {
+  const DEFAULT_PROXY = "socks5://pZAY1voZ9z6AbN4c:DIXJkakL9gbeNoju_country-us_session-qkCyZ9SE_lifetime-30m_streaming-1@geo.iproyal.com:12321";
   const [name, setName] = useState("自动注册任务");
   const [interval, setInterval] = useState(60);
-  const [apiUrl, setApiUrl] = useState("http://host.docker.internal:50325");
-  const [groupId, setGroupId] = useState("");
-  const [targetUrl, setTargetUrl] = useState("");
-  const [proxyUrl, setProxyUrl] = useState("");
+  const [apiUrl, setApiUrl] = useState("http://127.0.0.1:50325");
+  const [proxyUrl, setProxyUrl] = useState(DEFAULT_PROXY);
   const [targetCount, setTargetCount] = useState<string>("");
 
   const createTask = trpc.automation.create.useMutation({
@@ -87,46 +86,18 @@ function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose
             />
           </div>
           <div className="space-y-2">
-            <Label className="text-xs text-muted-foreground">AdsPower API 地址</Label>
-            <Input
-              value={apiUrl}
-              onChange={(e) => setApiUrl(e.target.value)}
-              placeholder="http://host.docker.internal:50325"
-              className="bg-muted/50 border-border/50 text-foreground font-mono text-sm"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label className="text-xs text-muted-foreground">注册目标 URL（可选）</Label>
-            <Input
-              value={targetUrl}
-              onChange={(e) => setTargetUrl(e.target.value)}
-              placeholder="https://example.com/register"
-              className="bg-muted/50 border-border/50 text-foreground font-mono text-sm"
-            />
-            <p className="text-xs text-muted-foreground">浏览器打开后自动跳转到此 URL，邀请码会自动附加到 URL 参数</p>
-          </div>
-          <div className="space-y-2">
-            <Label className="text-xs text-muted-foreground">分组 ID（可选）</Label>
-            <Input
-              value={groupId}
-              onChange={(e) => setGroupId(e.target.value)}
-              placeholder="AdsPower 浏览器分组 ID"
-              className="bg-muted/50 border-border/50 text-foreground"
-            />
-          </div>
-          <div className="space-y-2">
             <Label className="text-xs text-muted-foreground flex items-center gap-1.5">
               <Shield className="w-3 h-3" />
-              代理地址（可选）
+              代理地址
             </Label>
             <Input
               value={proxyUrl}
               onChange={(e) => setProxyUrl(e.target.value)}
-              placeholder="socks5h://user:pass@gate.example.com:7000"
+              placeholder="socks5://user:pass@host:port"
               className="bg-muted/50 border-border/50 text-foreground font-mono text-sm"
             />
             <p className="text-xs text-muted-foreground">
-              支持 socks5h:// / socks5:// / http:// 格式。每次注册前会检测出口 IP，确保未被使用过。
+              支持 socks5:// / http:// 格式。每次注册前会检测出口 IP，确保未被使用过。
             </p>
           </div>
           <div className="space-y-3">
@@ -168,8 +139,6 @@ function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose
               name,
               scanIntervalSeconds: interval,
               adspowerApiUrl: apiUrl,
-              adspowerGroupId: groupId || undefined,
-              targetUrl: targetUrl || undefined,
               proxyUrl: proxyUrl || undefined,
               targetCount: targetCount ? Number(targetCount) : undefined,
             })}
@@ -209,10 +178,9 @@ function EditTaskDialog({
 }) {
   const [name, setName] = useState(task.name);
   const [interval, setInterval] = useState(task.scanIntervalSeconds ?? 60);
-  const [apiUrl, setApiUrl] = useState(task.adspowerApiUrl ?? "http://host.docker.internal:50325");
-  const [groupId, setGroupId] = useState(task.adspowerGroupId ?? "");
-  const [targetUrl, setTargetUrl] = useState(task.targetUrl ?? "");
-  const [proxyUrl, setProxyUrl] = useState((task.proxyUrl as string) ?? "");
+  const DEFAULT_PROXY = "socks5://pZAY1voZ9z6AbN4c:DIXJkakL9gbeNoju_country-us_session-qkCyZ9SE_lifetime-30m_streaming-1@geo.iproyal.com:12321";
+  const [apiUrl, setApiUrl] = useState(task.adspowerApiUrl ?? "http://127.0.0.1:50325");
+  const [proxyUrl, setProxyUrl] = useState((task.proxyUrl as string) || DEFAULT_PROXY);
   const [targetCount, setTargetCount] = useState<string>(
     task.targetCount != null ? String(task.targetCount) : ""
   );
@@ -242,44 +210,18 @@ function EditTaskDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label className="text-xs text-muted-foreground">AdsPower API 地址</Label>
-            <Input
-              value={apiUrl}
-              onChange={(e) => setApiUrl(e.target.value)}
-              className="bg-muted/50 border-border/50 text-foreground font-mono text-sm"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label className="text-xs text-muted-foreground">注册目标 URL（可选）</Label>
-            <Input
-              value={targetUrl}
-              onChange={(e) => setTargetUrl(e.target.value)}
-              placeholder="https://example.com/register"
-              className="bg-muted/50 border-border/50 text-foreground font-mono text-sm"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label className="text-xs text-muted-foreground">分组 ID（可选）</Label>
-            <Input
-              value={groupId}
-              onChange={(e) => setGroupId(e.target.value)}
-              placeholder="AdsPower 浏览器分组 ID"
-              className="bg-muted/50 border-border/50 text-foreground"
-            />
-          </div>
-          <div className="space-y-2">
             <Label className="text-xs text-muted-foreground flex items-center gap-1.5">
               <Shield className="w-3 h-3" />
-              代理地址（可选）
+              代理地址
             </Label>
             <Input
               value={proxyUrl}
               onChange={(e) => setProxyUrl(e.target.value)}
-              placeholder="socks5h://user:pass@gate.example.com:7000"
+              placeholder="socks5://user:pass@host:port"
               className="bg-muted/50 border-border/50 text-foreground font-mono text-sm"
             />
             <p className="text-xs text-muted-foreground">
-              支持 socks5h:// / socks5:// / http:// 格式。每次注册前会检测出口 IP，确保未被使用过。
+              支持 socks5:// / http:// 格式。每次注册前会检测出口 IP，确保未被使用过。
             </p>
           </div>
           <div className="space-y-3">
@@ -321,8 +263,6 @@ function EditTaskDialog({
                   name,
                   scanIntervalSeconds: interval,
                   adspowerApiUrl: apiUrl,
-                  adspowerGroupId: groupId || undefined,
-                  targetUrl: targetUrl || undefined,
                   proxyUrl: proxyUrl || null,
                   targetCount: targetCount ? Number(targetCount) : null,
                 },
@@ -503,7 +443,7 @@ export default function Automation() {
                           </Badge>
                         )}
                       </div>
-                      <AdsPowerStatus apiUrl={task.adspowerApiUrl ?? "http://host.docker.internal:50325"} />
+                      <AdsPowerStatus apiUrl={task.adspowerApiUrl ?? "http://127.0.0.1:50325"} />
                     </div>
                     <div className="flex gap-1.5 ml-3 flex-wrap justify-end">
                       {(task.status === "idle" || task.status === "paused" || task.status === "stopped") && (

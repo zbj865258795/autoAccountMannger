@@ -479,11 +479,8 @@ async function createOneBrowser(
       });
     }
 
-    // Docker 容器内无法通过 127.0.0.1 访问宿主机，需替换为 host.docker.internal
-    const wsEndpointFixed = startResult.wsEndpoint.replace(
-      /127\.0\.0\.1/g,
-      "host.docker.internal"
-    );
+    // 本地运行：AdsPower 返回的 wsEndpoint 中 127.0.0.1 就是本机，直接使用
+    const wsEndpointFixed = startResult.wsEndpoint;
     console.log(`[Scheduler] Task ${taskId}: Browser started | profile: ${profileId} | ws: ${wsEndpointFixed}`);
 
     // 异步启动注册流程（不阻塞调度器）

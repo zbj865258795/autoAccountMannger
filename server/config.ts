@@ -4,8 +4,8 @@
  */
 
 export const ADSPOWER_CONFIG = {
-  /** AdsPower 本地 API 地址（默认端口 50325） */
-  apiUrl: process.env.ADSPOWER_API_URL || "http://host.docker.internal:50325",
+  /** AdsPower 本地 API 地址（本地运行，固定端口 50325） */
+  apiUrl: "http://127.0.0.1:50325",
 
   /** AdsPower API Key（开启安全校验时必须，CLI 模式必须） */
   apiKey: "1dd5aa65da0c22934e189faa672ed1240063f1d06082b6d7",
