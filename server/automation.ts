@@ -303,16 +303,33 @@ async function handleLoginPage(
   const MAX_REFRESHES = 3;
   let refreshCount = 0;
 
+  // API 错误监听（对齐插件的 getRecentApiError 机制）
+  type ApiError = { api: string; status: number; time: number };
+  let lastApiError: ApiError | null = null;
+  page.on("response", (response) => {
+    const url = response.url();
+    const status = response.status();
+    if (status >= 200 && status < 300) return;
+    const WATCHED = ["GetUserPlatforms", "SendEmailVerifyCodeWithCaptcha", "RegisterByEmail"];
+    for (const api of WATCHED) {
+      if (url.includes(api)) {
+        lastApiError = { api, status, time: Date.now() } as ApiError;
+        log(`[API错误] ${api} 返回 ${status}`, "warn");
+        break;
+      }
+    }
+  });
+
   while (refreshCount <= MAX_REFRESHES) {
     await sleep(1500);
-
+    // 每轮开始清除上一轮遗留的 API 错误状态（对齐插件的 lastApiResult = null）
+    lastApiError = null;
     const url = page.url();
     if (!url.includes("manus.im/login") && !url.includes("manus.im/register") &&
         !url.includes("manus.im/signup") && !url.includes("manus.im/invitation")) {
       log(`Phase 1: unexpected URL ${url}, waiting...`);
       await sleep(2000);
     }
-
     let emailFilled = false;
     let emailContinueClicked = false;
     let pwdFilled = false;
@@ -320,6 +337,7 @@ async function handleLoginPage(
     let verifyCodeFetching = false;
     let verifyCode: string | null = null;
     let verifyCodeFilled = false;
+    let verifyConfirmClicked = false;  // 插件的 verifyConfirmClicked 标志
     let stepStallCount = 0;
     const roundStart = Date.now();
 
@@ -331,9 +349,29 @@ async function handleLoginPage(
         break;
       }
 
+      // API 错误处理（对齐插件的 getRecentApiError 机制）
+      const _err1 = lastApiError as ApiError | null;
+      if (_err1 && (Date.now() - _err1.time) < 5000) {
+        lastApiError = null;
+        log(`[API错误] ${_err1.api} 返回 ${_err1.status}，等待 3 秒后重试...`, "warn");
+        if (_err1.api === "GetUserPlatforms") {
+          // 插件逻辑：GetUserPlatforms 失败时同时重置 emailFilled 和 emailContinueClicked
+          emailFilled = false;
+          emailContinueClicked = false;
+        } else if (_err1.api === "SendEmailVerifyCodeWithCaptcha") {
+          pwdContinueClicked = false;
+        } else if (_err1.api === "RegisterByEmail") {
+          verifyConfirmClicked = false;
+          verifyCodeFilled = false;
+        }
+        await sleep(3000);
+        continue;
+      }
+
       // 1. 输入邮箱
       if (!emailFilled) {
         log("Filling email...");
+        await simulateMouseMove(page, 'input#email[autocomplete="email"], input#email[type="email"], input#email');
         const ok = await typeIntoField(page, 'input#email[autocomplete="email"], input#email[type="email"], input#email', email);
         if (ok) {
           emailFilled = true;
@@ -348,6 +386,7 @@ async function handleLoginPage(
 
       // 2. 点击邮箱 Continue
       if (!emailContinueClicked) {
+        await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
         const clicked = await page.evaluate(async () => {
           const pwdEl = document.querySelector('input[name="password"][type="password"]') as HTMLElement | null;
           const inEmailStep = !pwdEl || pwdEl.classList.contains("hidden") || pwdEl.offsetParent === null;
@@ -372,6 +411,7 @@ async function handleLoginPage(
 
       // 3. 输入密码
       if (!pwdFilled) {
+        await simulateMouseMove(page, 'input[name="password"][type="password"]');
         const ok = await typeIntoField(page, 'input[name="password"][type="password"]', password);
         if (ok) {
           pwdFilled = true;
@@ -386,6 +426,7 @@ async function handleLoginPage(
 
       // 4. 点击密码 Continue
       if (!pwdContinueClicked) {
+        await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
         const clicked = await page.evaluate(async () => {
           const pwdEl = document.querySelector('input[name="password"][type="password"]') as HTMLElement | null;
           const inPwdStep = pwdEl && !pwdEl.classList.contains("hidden") && pwdEl.offsetParent !== null;
@@ -424,6 +465,7 @@ async function handleLoginPage(
         });
         if (verifyVisible) {
           if (verifyCode) {
+            await simulateMouseMove(page, 'input#verifyCode[name="verifyCode"]');
             const ok = await typeIntoField(page, 'input#verifyCode[name="verifyCode"]', verifyCode);
             if (ok) {
               verifyCodeFilled = true;
@@ -441,51 +483,55 @@ async function handleLoginPage(
         continue;
       }
 
-      // 6. 点击验证码确认，等待跳转
-      const confirmed = await page.evaluate(async () => {
-        const codeEl = document.querySelector('input#verifyCode[name="verifyCode"]') as HTMLInputElement | null;
-        if (!codeEl || !codeEl.value.trim()) return false;
-        const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
-        if (!btn || btn.offsetParent === null) return false;
-        await new Promise((r) => setTimeout(r, 800));
-        btn.click();
-        return true;
-      });
-
-      if (confirmed) {
-        log("Verify code confirmed, waiting for navigation...");
-        try {
-          await page.waitForURL((url: URL) => url.toString().includes("manus.im/") && !url.toString().includes("manus.im/login") && !url.toString().includes("manus.im/register"), { timeout: 120000 });
-          const navUrl = page.url();
-          log(`Navigated to: ${navUrl}`);
-
-          if (navUrl.includes("manus.im/verify-phone")) {
-            log("Phase 1 complete → verify-phone");
-            return "verify-phone";
-          }
-          if (navUrl.includes("manus.im/app")) {
-            log("Phase 1 complete → /app (no phone verification needed)");
-            return "app";
-          }
-          if (navUrl.includes("manus.im/auth_landing")) {
-            log("Detected auth_landing, waiting for final redirect...");
-            await page.waitForURL((url: URL) => url.toString().includes("manus.im/") && !url.toString().includes("auth_landing"), { timeout: 60000 });
-            const finalUrl = page.url();
-            if (finalUrl.includes("manus.im/verify-phone")) return "verify-phone";
-            if (finalUrl.includes("manus.im/app")) return "app";
-            log(`Unknown redirect after auth_landing: ${finalUrl}`, "warn");
+      // 6. 点击验证码确认，等待跳转（使用 verifyConfirmClicked 标志，对齐插件逻辑）
+      if (!verifyConfirmClicked) {
+        await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
+        const confirmed = await page.evaluate(async () => {
+          const codeEl = document.querySelector('input#verifyCode[name="verifyCode"]') as HTMLInputElement | null;
+          if (!codeEl || !codeEl.value.trim()) return false;
+          const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
+          if (!btn || btn.offsetParent === null) return false;
+          await new Promise((r) => setTimeout(r, 800));
+          btn.click();
+          return true;
+        });
+        if (confirmed) {
+          verifyConfirmClicked = true;
+          stepStallCount = 0;
+          log("Verify code confirmed, waiting for navigation...");
+          try {
+            await page.waitForURL((url: URL) => url.toString().includes("manus.im/") && !url.toString().includes("manus.im/login") && !url.toString().includes("manus.im/register"), { timeout: 120000 });
+            const navUrl = page.url();
+            log(`Navigated to: ${navUrl}`);
+            if (navUrl.includes("manus.im/verify-phone")) {
+              log("Phase 1 complete → verify-phone");
+              return "verify-phone";
+            }
+            if (navUrl.includes("manus.im/app")) {
+              log("Phase 1 complete → /app (no phone verification needed)");
+              return "app";
+            }
+            if (navUrl.includes("manus.im/auth_landing")) {
+              log("Detected auth_landing, waiting for final redirect...");
+              await page.waitForURL((url: URL) => url.toString().includes("manus.im/") && !url.toString().includes("auth_landing"), { timeout: 60000 });
+              const finalUrl = page.url();
+              if (finalUrl.includes("manus.im/verify-phone")) return "verify-phone";
+              if (finalUrl.includes("manus.im/app")) return "app";
+              log(`Unknown redirect after auth_landing: ${finalUrl}`, "warn");
+              break;
+            }
+            log(`Unknown navigation target: ${navUrl}`, "warn");
+            break;
+          } catch {
+            log("Navigation timeout after verify code confirm", "warn");
+            verifyConfirmClicked = false;  // 超时后允许重试
             break;
           }
-          log(`Unknown navigation target: ${navUrl}`, "warn");
-          break;
-        } catch {
-          log("Navigation timeout after verify code confirm", "warn");
-          break;
+        } else {
+          stepStallCount++;
+          if (stepStallCount >= 20) { log("Stalled on confirm button, refreshing...", "warn"); break; }
+          continue;
         }
-      } else {
-        stepStallCount++;
-        if (stepStallCount >= 20) { log("Stalled on confirm button, refreshing...", "warn"); break; }
-        continue;
       }
     }
 
@@ -538,19 +584,28 @@ async function handleVerifyPhonePage(
   let smsCodeFetching = false;
   let smsCode: string | null = null;
   let phoneMarkedUsed = false; // 提升到外层，超时时可读取
-  let sendPhoneError = false;  // SendPhoneVerificationCode 接口失败标志
 
-  // 监听 SendPhoneVerificationCode 接口失败，对齐插件逻辑
-  const onSendPhoneError = () => { sendPhoneError = true; };
-  page.on("response", async (response) => {
-    if (response.url().includes("SendPhoneVerificationCode")) {
-      const s = response.status();
-      if (s < 200 || s >= 300) onSendPhoneError();
+  // API 错误监听（对齐插件的 getRecentApiError 机制）
+  type ApiError2 = { api: string; status: number; time: number };
+  let lastApiError2: ApiError2 | null = null;
+  page.on("response", (response) => {
+    const url = response.url();
+    const status = response.status();
+    if (status >= 200 && status < 300) return;
+    const WATCHED2 = ["SendPhoneVerificationCode", "BindPhoneTrait"];
+    for (const api of WATCHED2) {
+      if (url.includes(api)) {
+        lastApiError2 = { api, status, time: Date.now() } as ApiError2;
+        log(`[API错误] ${api} 返回 ${status}`, "warn");
+        break;
+      }
     }
   });
 
   while (refreshCount <= MAX_REFRESHES) {
     await sleep(1500);
+    // 每轮开始清除上一轮遗留的 API 错误状态（对齐插件的 lastApiResult = null）
+    lastApiError2 = null;
 
     const url = page.url();
     if (!url.includes("manus.im/verify-phone")) {
@@ -590,6 +645,7 @@ async function handleVerifyPhonePage(
 
       // B. 输入手机号
       if (!phoneFilled) {
+        await simulateMouseMove(page, 'input#phone[type="tel"]');
         const ok = await typeIntoField(page, 'input#phone[type="tel"]', phoneInfo.phoneNumber);
         if (ok) {
           phoneFilled = true;
@@ -603,17 +659,23 @@ async function handleVerifyPhonePage(
         continue;
       }
 
-      // 处理 SendPhoneVerificationCode 接口失败：重置发送状态，对齐插件逻辑
-      if (sendPhoneError) {
-        log("SendPhoneVerificationCode API error, resetting send state...", "warn");
-        phoneSendClicked = false;
-        sendPhoneError = false;
+      // API 错误处理（对齐插件的 getRecentApiError 机制）
+      const _err2 = lastApiError2 as ApiError2 | null;
+      if (_err2 && (Date.now() - _err2.time) < 5000) {
+        lastApiError2 = null;
+        log(`[API错误] ${_err2.api} 返回 ${_err2.status}，等待 3 秒后重试...`, "warn");
+        if (_err2.api === "SendPhoneVerificationCode") {
+          phoneSendClicked = false;  // 插件逻辑：发送失败重置发送状态
+        } else if (_err2.api === "BindPhoneTrait") {
+          smsCodeFilled = false;  // 插件逻辑：BindPhoneTrait 失败重置短信验证码填写状态
+        }
         await sleep(3000);
         continue;
       }
 
       // C. 点击 Send code
       if (!phoneSendClicked) {
+        await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
         const clicked = await page.evaluate(async () => {
           const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
           if (!btn || btn.offsetParent === null) return false;
@@ -656,6 +718,7 @@ async function handleVerifyPhonePage(
         });
         if (phoneCodeVisible) {
           if (smsCode) {
+            await simulateMouseMove(page, "input#phone-code");
             const ok = await typeIntoField(page, "input#phone-code", smsCode);
             if (ok) {
               smsCodeFilled = true;
@@ -674,6 +737,7 @@ async function handleVerifyPhonePage(
       }
 
       // E. 点击确认，等待跳转到 /app
+      await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
       const confirmed = await page.evaluate(async () => {
         const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
         if (!btn || btn.offsetParent === null) return false;
@@ -900,47 +964,104 @@ async function redeemPromotion(page: Page, token: string | null, log: Logger) {
 
 // ─── 工具函数 ─────────────────────────────────────────────────────────────────
 
-/** 模拟逐字打字（与插件的 injectTyping 等效） */
-async function typeIntoField(page: Page, selector: string, value: string): Promise<boolean> {
-  try {
-    const visible = await page.evaluate((sel: string) => {
-      const el = document.querySelector(sel) as HTMLElement | null;
-      return !!(el && el.offsetParent !== null);
-    }, selector);
-    if (!visible) return false;
-
-    // 使用 Playwright 内置的逐字打字（带随机延迟，模拟真人）
-    const locator = page.locator(selector).first();
-    await locator.click({ delay: 100 });
-    await sleep(300 + Math.random() * 200);
-
-    // 清空现有内容
-    await locator.fill("");
-    await sleep(100);
-
-    // 逐字输入
-    await locator.pressSequentially(value, { delay: 40 + Math.random() * 60 });
-    return true;
-  } catch {
-    return false;
-  }
+/** 模拟鼠标移动（与插件的 simulateMouseMove 完全对齐） */
+async function simulateMouseMove(page: Page, selector: string): Promise<void> {
+  await page.evaluate(async (sel: string) => {
+    const el = sel ? document.querySelector(sel) as HTMLElement | null : null;
+    const rect = el ? el.getBoundingClientRect() : null;
+    const targetX = rect
+      ? rect.left + rect.width  / 2 + (Math.random() - 0.5) * Math.min(rect.width  * 0.3, 10)
+      : Math.random() * window.innerWidth;
+    const targetY = rect
+      ? rect.top  + rect.height / 2 + (Math.random() - 0.5) * Math.min(rect.height * 0.3, 6)
+      : Math.random() * window.innerHeight;
+    let x = (window as any)._mouseX ?? Math.random() * window.innerWidth;
+    let y = (window as any)._mouseY ?? Math.random() * window.innerHeight;
+    const cx = x + (targetX - x) * (0.3 + Math.random() * 0.4) + (Math.random() - 0.5) * 60;
+    const cy = y + (targetY - y) * (0.3 + Math.random() * 0.4) + (Math.random() - 0.5) * 60;
+    const dist = Math.hypot(targetX - x, targetY - y);
+    const steps = Math.max(8, Math.min(30, Math.floor(dist / 20)));
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const bx = (1 - t) * (1 - t) * x + 2 * (1 - t) * t * cx + t * t * targetX;
+      const by = (1 - t) * (1 - t) * y + 2 * (1 - t) * t * cy + t * t * targetY;
+      document.dispatchEvent(new MouseEvent("mousemove", {
+        bubbles: true, cancelable: true,
+        clientX: Math.round(bx), clientY: Math.round(by)
+      }));
+      await new Promise((r) => setTimeout(r, 8 + Math.random() * 12));
+    }
+    (window as any)._mouseX = targetX;
+    (window as any)._mouseY = targetY;
+  }, selector);
 }
 
-/** 选择国家（与插件的国家选择逻辑等效） */
+/** 模拟逐字打字（与插件的 injectTyping 完全对齐：React setter + 逐字 dispatch） */
+async function typeIntoField(page: Page, selector: string, value: string): Promise<boolean> {
+  return await page.evaluate(async ({ sel, val }: { sel: string; val: string }) => {
+    const el = document.querySelector(sel) as HTMLInputElement | null;
+    if (!el || el.offsetParent === null) return false;
+    // 插件的点击激活逐字
+    el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    el.dispatchEvent(new MouseEvent("mouseup",   { bubbles: true, cancelable: true }));
+    el.dispatchEvent(new MouseEvent("click",     { bubbles: true, cancelable: true }));
+    el.focus();
+    await new Promise((r) => setTimeout(r, 500 + Math.random() * 300));
+    // 插件的 React setter 逐字输入
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+    let current = "";
+    for (let i = 0; i < val.length; i++) {
+      current += val[i];
+      if (setter) setter.call(el, current); else el.value = current;
+      el.dispatchEvent(new KeyboardEvent("keydown", { key: val[i], bubbles: true }));
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new KeyboardEvent("keyup", { key: val[i], bubbles: true }));
+      await new Promise((r) => setTimeout(r, 40 + Math.random() * 60));
+    }
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }, { sel: selector, val: value });
+}
+
+/** 选择国家（与插件的国家选择逻辑完全对齐） */
 async function selectCountry(page: Page, iso: string, dialCode: string, log: Logger): Promise<boolean> {
   return await page.evaluate(async ({ isoCode, dc }: { isoCode: string; dc: string }) => {
-    // 检查是否已选中
-    const selectedEl = document.querySelector('[class*="PhoneInput"] [class*="selected"], [class*="country-select"] [class*="selected"]');
-    if (selectedEl?.textContent?.includes(dc)) return true;
+    // 检查是否已选中（匹配区号文本）
+    const spans = Array.from(document.querySelectorAll('span'));
+    for (const sp of spans) {
+      const txt = sp.textContent?.trim();
+      if (txt === dc || txt === "+1") return true;
+    }
 
-    // 找到国家选择触发器并点击
-    const trigger = document.querySelector('[class*="PhoneInput"] button, [class*="country-select"] button, [class*="flag-dropdown"]') as HTMLElement | null;
+    // 插件的 4 层 fallback 触发器查找逻辑
+    let trigger: HTMLElement | null = null;
+    trigger = document.querySelector('div[aria-expanded][aria-haspopup="dialog"]');
+    if (!trigger) trigger = document.querySelector('div.inline-flex.cursor-pointer[aria-expanded]');
+    if (!trigger) {
+      const divs = Array.from(document.querySelectorAll('div.inline-flex'));
+      for (const d of divs) {
+        if (d.querySelector('img[alt]') && d.querySelector('svg')) { trigger = d as HTMLElement; break; }
+      }
+    }
+    if (!trigger) {
+      const imgs = Array.from(document.querySelectorAll('img[alt]'));
+      for (const img of imgs) {
+        const p = img.closest('div[class*="cursor-pointer"], div[class*="inline-flex"], button') as HTMLElement | null;
+        if (p && p.offsetParent !== null) { trigger = p; break; }
+      }
+    }
     if (!trigger) return false;
     trigger.click();
-    await new Promise((r) => setTimeout(r, 800));
+    await new Promise((r) => setTimeout(r, 1000));
 
-    // 找搜索框
-    const searchInput = document.querySelector('input[type="search"], input[placeholder*="search"], input[placeholder*="Search"]') as HTMLInputElement | null;
+    // 插件的搜索框循环等待（30次 × 200ms）
+    let searchInput: HTMLInputElement | null = null;
+    for (let si = 0; si < 30; si++) {
+      searchInput = document.querySelector('input[placeholder="Search"], input[placeholder*="search" i], input[placeholder*="\u691c\u7d22" i], input[placeholder*="\u641c\u7d22" i], input[placeholder*="\u641c\u5c0b" i]') as HTMLInputElement | null;
+      if (searchInput && searchInput.offsetParent !== null) break;
+      searchInput = null;
+      await new Promise((r) => setTimeout(r, 200));
+    }
     if (!searchInput) return false;
 
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
@@ -956,7 +1077,15 @@ async function selectCountry(page: Page, iso: string, dialCode: string, log: Log
 
     function getVisibleItems() {
       const items: HTMLElement[] = [];
-      const selectors = ["[data-close-when-click=\"true\"] > *", "[role=\"listbox\"] > *", "[role=\"option\"]", "[role=\"menuitem\"]", "ul > li"];
+      // 插件的完整选择器列表（包含 radix scroll area）
+      const selectors = [
+        "[data-close-when-click=\"true\"] > *",
+        "[role=\"listbox\"] > *",
+        "[role=\"option\"]",
+        "[role=\"menuitem\"]",
+        "ul > li",
+        "div[data-radix-scroll-area-viewport] > div > div",
+      ];
       for (const sel of selectors) {
         const els = Array.from(document.querySelectorAll(sel));
         for (const el of els) {
@@ -967,20 +1096,20 @@ async function selectCountry(page: Page, iso: string, dialCode: string, log: Log
       return items;
     }
 
-       // 手机号固定为美国，硬编码搜索 United States，匹配 +1
+    // 手机号固定为美国，硬编码搜索 United States，匹配 +1
     for (const term of ["United States", isoCode]) {
       await typeSearch(term);
       const items = getVisibleItems();
       for (const item of items) {
         const t = item.textContent || "";
-        if ((t.includes("United States") || t.includes("美国")) && t.includes("+1")) {
+        if ((t.includes("United States") || t.includes("美国") || t.includes("美國")) && t.includes("+1")) {
           item.click();
           return true;
         }
       }
       for (const item of items) {
         const t = item.textContent || "";
-        if (t.includes("+1") && (t.includes("US") || t.includes("United States"))) {
+        if (t.includes("+1") && (t.includes("US") || t.includes("United States") || t.includes("美国") || t.includes("美國"))) {
           item.click();
           return true;
         }
@@ -1004,6 +1133,14 @@ async function clickRegistrationEntry(page: Page): Promise<void> {
             (btn as HTMLElement).click();
             return true;
           }
+        }
+      }
+      // 插件的 fallback：尝试点击登录/注册链接
+      const links = Array.from(document.querySelectorAll('a[href*="login"], a[href*="register"], a[href*="signup"]'));
+      for (const link of links) {
+        if ((link as HTMLElement).offsetParent !== null) {
+          (link as HTMLElement).click();
+          return true;
         }
       }
       return false;
@@ -1032,15 +1169,31 @@ async function buyEmail(): Promise<{ email: string; codeUrl: string }> {
   return { email, codeUrl };
 }
 
-/** 轮询获取邮箱验证码（最多 3 分钟） */
+/** 轮询获取邮箱验证码（与插件完全对齐：36次 × 5秒 = 3分钟） */
 async function fetchVerifyCode(codeUrl: string): Promise<string | null> {
-  for (let i = 0; i < 36; i++) {
+  for (let i = 1; i <= 36; i++) {
     await sleep(5000);
     try {
       const resp = await fetchWithTimeout(codeUrl, {}, 15000);
-      const json = await resp.json() as any;
-      const code = json.code || json.verify_code || json.verifyCode || json.data?.code;
-      if (code && /^\d{4,8}$/.test(String(code))) return String(code);
+      const text = await resp.text();
+      try {
+        const json = JSON.parse(text);
+        // 插件优先：json.status === 'success' && json.code
+        if (json.status === "success" && json.code && String(json.code).trim()) {
+          return String(json.code).trim();
+        }
+        // 其次：json.message 中提取数字
+        if (json.message) {
+          const m = String(json.message).match(/\b(\d{4,8})\b/);
+          if (m) return m[1];
+        }
+      } catch {}
+      // html/纯文本：独立6位数字（插件 htmlMatch）
+      const htmlMatch = text.match(/\b(\d{6})\b/);
+      if (htmlMatch) return htmlMatch[1];
+      // 纯文本："code is: XXXX" 或 "code: XXXX"（插件 numMatch）
+      const numMatch = text.match(/(?:code\s*(?:is|:)?\s*)(\d{4,8})/i);
+      if (numMatch) return numMatch[1];
     } catch {}
   }
   return null;
