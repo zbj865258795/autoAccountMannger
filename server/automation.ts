@@ -186,10 +186,31 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     });
 
     // ── 设置网络响应拦截（替代 chrome.debugger）──
-    setupResponseInterception(page, capturedUserData, (token) => {
-      capturedToken = token;
-      log(`[Token] 已捕获：${token.substring(0, 30)}...`);
-    });
+    setupResponseInterception(
+      page,
+      capturedUserData,
+      (token) => {
+        capturedToken = token;
+        log(`[Token] 已捕获：${token.substring(0, 30)}...`);
+      },
+      undefined, // onSendPhoneError 由阶段二内部单独监听，这里不传
+      () => {
+        // BindPhoneTrait 成功：立即拦截所有后续请求，防止浏览器跳转到 /app 浪费动态IP流量
+        log("手机号绑定成功，拦截页面跳转节省流量...");
+        // 停止当前页面加载
+        page.evaluate(() => { try { window.stop(); } catch {} }).catch(() => {});
+        // 拦截所有后续网络请求（除了 api.manus.im 接口，后续我们还要用 token 调用）
+        context.route("**/*", (route) => {
+          const url = route.request().url();
+          // 保留 api.manus.im 的请求，后续接口调用需要
+          if (url.includes("api.manus.im")) {
+            route.continue();
+          } else {
+            route.abort();
+          }
+        }).catch(() => {});
+      }
+    );
 
     // ── Step 0: 获取邀请码（原子锁）──
     log("正在获取邀请码...");
@@ -304,7 +325,8 @@ function setupResponseInterception(
   page: Page,
   capturedUserData: any,
   onToken: (token: string) => void,
-  onSendPhoneError?: () => void  // SendPhoneVerificationCode 失败回调
+  onSendPhoneError?: () => void,       // SendPhoneVerificationCode 失败回调
+  onBindPhoneSuccess?: () => void      // BindPhoneTrait 成功回调（用于停止页面跳转）
 ) {
   const WATCHED_APIS = [
     "RegisterByEmail",
@@ -369,6 +391,14 @@ function setupResponseInterception(
         const status = response.status();
         if (status < 200 || status >= 300) {
           if (onSendPhoneError) onSendPhoneError();
+        }
+      }
+
+      // BindPhoneTrait 成功：手机号绑定成功，触发回调停止页面跳转
+      if (matchedApi === "BindPhoneTrait") {
+        const status = response.status();
+        if (status >= 200 && status < 300) {
+          if (onBindPhoneSuccess) onBindPhoneSuccess();
         }
       }
     } catch {}
