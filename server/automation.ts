@@ -101,9 +101,10 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     browser = await chromium.connectOverCDP(wsEndpoint, { timeout: 30000 });
     const contexts = browser.contexts();
     const context = contexts[0] || await browser.newContext();
-    const pages = context.pages();
-    const page = pages.length > 0 ? pages[0] : await context.newPage();
 
+    // 获取初始页面（AdsPower 起始页）
+    let pages = context.pages();
+    let page = pages.length > 0 ? pages[0] : await context.newPage();
     log(`Connected. Current URL: ${page.url()}`, "info");
 
     // ── Step -1: 通过浏览器内部检测出口 IP（确保代理已生效，且 IP 与注册用 IP 完全一致）──
@@ -136,6 +137,21 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
       }
     } catch (ipErr: any) {
       log(`Exit IP detection failed: ${ipErr.message}, proceeding without IP check`, "warn");
+    }
+
+    // ── IP 检测完成后重新获取活跃页面（防止 AdsPower 起始页关闭导致原 page 对象失效）──
+    pages = context.pages();
+    if (pages.length === 0) {
+      // 所有页面已关闭，新建一个
+      page = await context.newPage();
+      log("All pages closed after IP check, created new page", "info");
+    } else {
+      // 取最后一个活跃页面（跳过已关闭的页面）
+      const activePage = pages.find(p => !p.isClosed()) ?? pages[pages.length - 1];
+      if (activePage !== page) {
+        page = activePage;
+        log(`Switched to active page: ${page.url()}`, "info");
+      }
     }
 
     // ── 设置网络响应拦截（替代 chrome.debugger）──
