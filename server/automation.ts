@@ -196,21 +196,12 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
       },
       undefined, // onSendPhoneError 由阶段二内部单独监听，这里不传
       () => {
-        // BindPhoneTrait 成功：立即拦截所有后续请求，防止浏览器跳转到 /app 浪费动态IP流量
-        bindPhoneSucceeded = true; // 标记成功，让阶段二跳过 waitForURL 检测
-        log("手机号绑定成功，拦截页面跳转节省流量...");
-        // 停止当前页面加载
-        page.evaluate(() => { try { window.stop(); } catch {} }).catch(() => {});
-        // 拦截所有后续网络请求（除了 api.manus.im 接口，后续我们还要用 token 调用）
-        context.route("**/*", (route) => {
-          const url = route.request().url();
-          // 保留 api.manus.im 的请求，后续接口调用需要
-          if (url.includes("api.manus.im")) {
-            route.continue();
-          } else {
-            route.abort();
-          }
-        }).catch(() => {});
+        // BindPhoneTrait 成功：标记成功，让阶段二跳过 waitForURL 检测
+        // 注意：不拦截页面跳转，允许浏览器正常跳转到 /app
+        // 后续的 redeemPromotion 依赖 page.evaluate 里的 fetch，需要浏览器处于正常状态
+        // 所有后续接口完成后，由 cleanupBrowser 关闭浏览器
+        bindPhoneSucceeded = true;
+        log("手机号绑定成功，等待页面跳转后继续执行后续操作...");
       }
     );
 
