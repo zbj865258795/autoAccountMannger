@@ -474,6 +474,9 @@ async function handleLoginPage(
     }
     // 页面加载后模拟真人浏览行为（随机滚动 + 鼠标漫游）
     await humanBrowse(page);
+    // 页面加载完成后等待 10 秒，让页面完全稳定后再开始检测
+    log("页面已加载，等待 10 秒让页面稳定...");
+    await sleep(10000);
     let emailFilled = false;
     let emailContinueClicked = false;
     let emailRetryCount = 0;          // 情况一：邮箱输入后按钮仍 disabled 的清空重输次数
@@ -529,7 +532,7 @@ async function handleLoginPage(
           log(`邮箱已填写：${email}`, "success");
         } else {
           stepStallCount++;
-          if (stepStallCount >= 20) { log("邮箱输入框卡住，刷新重试...", "warn"); break; }
+          if (stepStallCount >= 60) { log("邮筱输入框持续干不上，刷新重试...", "warn"); break; }
         }
         continue;
       }
@@ -568,7 +571,7 @@ async function handleLoginPage(
           }
           // 仍然 disabled，才清空重输
           emailRetryCount++;
-          if (emailRetryCount > 3) {
+          if (emailRetryCount > 6) {
             log("邮筱按钮持续 disabled，刷新重试...", "warn"); break;
           }
           log(`邮筱按钮持续 disabled，清空重输（第 ${emailRetryCount} 次）...`, "warn");
@@ -602,14 +605,14 @@ async function handleLoginPage(
           } else {
             // 页面未变化，再次尝试
             emailClickRetryCount++;
-            if (emailClickRetryCount > 3) {
-              log("邮箱按钮点击后页面始终未跳转，刷新重试...", "warn"); break;
+            if (emailClickRetryCount > 5) {
+              log("邮筱按钮点击后页面始终未跳转，刷新重试...", "warn"); break;
             }
             log(`邮箱按钮已点击但页面未变化，第 ${emailClickRetryCount} 次重试...`, "warn");
           }
         } else {
           stepStallCount++;
-          if (stepStallCount >= 20) { log("邮箱确认按钮卡住，刷新重试...", "warn"); break; }
+          if (stepStallCount >= 60) { log("邮筱确认按钮持续干不上，刷新重试...", "warn"); break; }
         }
         continue;
       }
@@ -624,7 +627,7 @@ async function handleLoginPage(
           log("密码已填写", "success");
         } else {
           stepStallCount++;
-          if (stepStallCount >= 20) { log("密码输入框卡住，刷新重试...", "warn"); break; }
+          if (stepStallCount >= 60) { log("密码输入框持续干不上，刷新重试...", "warn"); break; }
         }
         continue;
       }
@@ -663,7 +666,7 @@ async function handleLoginPage(
           }
           // 仍然 disabled，才清空重输
           pwdRetryCount++;
-          if (pwdRetryCount > 3) {
+          if (pwdRetryCount > 6) {
             log("密码按钮持续 disabled，刷新重试...", "warn"); break;
           }
           log(`密码按钮持续 disabled，清空重输（第 ${pwdRetryCount} 次）...`, "warn");
@@ -704,14 +707,14 @@ async function handleLoginPage(
             stepStallCount = 0;
           } else {
             pwdClickRetryCount++;
-            if (pwdClickRetryCount > 3) {
+            if (pwdClickRetryCount > 5) {
               log("密码按钮点击后页面始终未变化，刷新重试...", "warn"); break;
             }
             log(`密码按钮已点击但页面未变化，第 ${pwdClickRetryCount} 次重试...`, "warn");
           }
         } else {
           stepStallCount++;
-          if (stepStallCount >= 20) { log("密码确认按钮卡住，刷新重试...", "warn"); break; }
+          if (stepStallCount >= 60) { log("密码确认按钮持续干不上，刷新重试...", "warn"); break; }
         }
         continue;
       }
@@ -737,7 +740,7 @@ async function handleLoginPage(
           }
         } else {
           stepStallCount++;
-          if (stepStallCount >= 20) { log("邮箱验证码输入框卡住，刷新重试...", "warn"); break; }
+          if (stepStallCount >= 60) { log("邮筱验证码输入框持续干不上，刷新重试...", "warn"); break; }
         }
         continue;
       }
@@ -759,7 +762,7 @@ async function handleLoginPage(
           // 验证码输入框为空，重置允许重新填入
           verifyCodeFilled = false;
           stepStallCount++;
-          if (stepStallCount >= 10) { log("验证码输入框持续为空，刷新重试...", "warn"); break; }
+          if (stepStallCount >= 30) { log("验证码输入框持续为空，刷新重试...", "warn"); break; }
         } else if (verifyBtnState === "disabled") {
           // 情况一：验证码已输入但按钮 disabled，先等待 1.5 秒给页面响应时间，再次检测
           await sleep(1500);
@@ -774,7 +777,7 @@ async function handleLoginPage(
           }
           // 仍然 disabled，才清空重输
           verifyCodeRetryCount++;
-          if (verifyCodeRetryCount > 3) {
+          if (verifyCodeRetryCount > 6) {
             log("验证码按钮持续 disabled，刷新重试...", "warn"); break;
           }
           log(`验证码按钮持续 disabled，清空重输（第 ${verifyCodeRetryCount} 次）...`, "warn");
@@ -823,7 +826,7 @@ async function handleLoginPage(
           } catch {
             // 情况二：点击后 30 秒内页面未跳转，重置允许重试
             verifyClickRetryCount++;
-            if (verifyClickRetryCount > 3) {
+            if (verifyClickRetryCount > 5) {
               log("验证码确认按钮点击后页面始终未跳转，刷新重试...", "warn"); break;
             }
             log(`验证码确认后页面未跳转，第 ${verifyClickRetryCount} 次重试...`, "warn");
@@ -831,7 +834,7 @@ async function handleLoginPage(
           }
         } else {
           stepStallCount++;
-          if (stepStallCount >= 20) { log("确认按钮卡住，刷新重试...", "warn"); break; }
+          if (stepStallCount >= 60) { log("确认按钮持续干不上，刷新重试...", "warn"); break; }
           continue;
         }
       }
@@ -851,7 +854,8 @@ async function handleLoginPage(
       log(`阶段一刷新失败（代理网络错误）：${reloadErr.message}`, "error");
       return "error";
     }
-    await sleep(2000);
+    log("阶段一刷新完成，等待 10 秒让页面稳定...");
+    await sleep(10000);
   }
 
   return "timeout";
@@ -1184,7 +1188,8 @@ async function handleVerifyPhonePage(
       log(`阶段二刷新失败（代理网络错误）：${reloadErr.message}`, "error");
       return { result: "error" };
     }
-    await sleep(2000);
+    log("阶段二刷新完成，等待 10 秒让页面稳定...");
+    await sleep(10000);
 
     // 刷新后检查是否已在 /app
     const afterReloadUrl = page.url();
