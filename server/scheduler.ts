@@ -424,7 +424,17 @@ async function createOneBrowser(
     let proxyConfig: { proxyType: string; host?: string; port?: string; user?: string; password?: string } | undefined;
 
     if (proxyUrl && proxyUrl.trim()) {
-      const parsed = parseProxyUrl(proxyUrl);
+      // 动态替换 session ID：支持 _session-XXXXX 格式（iProyal 粘性 IP）
+      // 每次注册生成新的随机 session ID，确保不同注册使用不同出口 IP
+      const dynamicProxyUrl = proxyUrl.replace(
+        /(_session-)([a-zA-Z0-9_-]+)/,
+        (_match, prefix) => `${prefix}${Math.random().toString(36).slice(2, 14)}`
+      );
+      if (dynamicProxyUrl !== proxyUrl) {
+        console.log(`[调度器] 任务 ${taskId}: 已动态替换代理 session ID`);
+      }
+
+      const parsed = parseProxyUrl(dynamicProxyUrl);
       if (parsed) {
         proxyConfig = {
           proxyType: parsed.proxyType,
