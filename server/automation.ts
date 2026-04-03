@@ -1145,9 +1145,34 @@ async function finishRegistration(
 ) {
   log("注册成功！开始执行注册后续步骤...", "success");
 
-  // ── Step 1: 兑换推广码 ──
+  // ── Step 0: 验证邀请码 (CheckInvitationCode) ──
+  // 对应 Python 脚本 step10：用注册时使用的邀请码调用验证接口
+  if (capturedToken && referrerCode) {
+    log(`正在验证邀请码：${referrerCode}...`);
+    try {
+      const checkResp = await fetch("https://api.manus.im/user.v1.UserService/CheckInvitationCode", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "authorization": `Bearer ${capturedToken}`,
+        },
+        body: JSON.stringify({ code: referrerCode }),
+      });
+      if (checkResp.ok) {
+        log(`邀请码验证成功：${referrerCode}`, "success");
+      } else {
+        log(`邀请码验证返回 ${checkResp.status}，继续执行后续步骤`, "warn");
+      }
+    } catch (e: any) {
+      log(`邀请码验证失败：${e.message}，继续执行后续步骤`, "warn");
+    }
+  } else {
+    log("无 token 或无邀请码，跳过 CheckInvitationCode", "warn");
+  }
+
+  // ── Step 1: 兼换推广码 ──
   // 注意：BindPhoneTrait 成功后 token 已捕获，直接用 token 调用 API，无需刷新页面
-  log("正在兑换推广码...");
+  log("正在兼换推广码...");
   await redeemPromotion(page, capturedToken, log);
 
   // ── Step 2: 直接用 token 调用 API 采集用户数据（跳过页面刷新等待）──
