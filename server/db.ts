@@ -651,6 +651,37 @@ export async function resetPhoneStatus(phone: string): Promise<void> {
 }
 
 /**
+ * 按 id 获取单条 task_log
+ */
+export async function getTaskLogById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(taskLogs).where(eq(taskLogs.id, id)).limit(1);
+  return rows[0] ?? null;
+}
+
+/**
+ * 如果 task_log 占用了手机号（acquiredPhoneId 不为 null）且手机号尚未标记为 used，则归还手机号
+ * 供 scheduler 的浏览器监控 / 强制停止路径调用
+ */
+export async function releasePhoneIfNeeded(taskLogId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  const log = await getTaskLogById(taskLogId);
+  if (!log || !log.acquiredPhoneId) return;
+  // 只当手机号处于 in_use 状态时才归还（used 说明短信已收到，不应归还）
+  const phones = await db.select().from(phoneNumbers).where(eq(phoneNumbers.id, log.acquiredPhoneId)).limit(1);
+  const phone = phones[0];
+  if (phone && phone.status === "in_use") {
+    await db
+      .update(phoneNumbers)
+      .set({ status: "unused", usedByEmail: null, usedAt: null, updatedAt: new Date() })
+      .where(eq(phoneNumbers.id, log.acquiredPhoneId));
+    console.log(`[DB] Phone ${log.acquiredPhoneId} released back to unused (task_log ${taskLogId} failed/stopped)`);
+  }
+}
+
+/**
  * 按 id 重置手机号状态为 unused（阶段二超时且短信未收到时归还）
  */
 export async function resetPhoneStatusById(id: number): Promise<void> {

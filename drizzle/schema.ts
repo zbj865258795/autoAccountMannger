@@ -143,6 +143,9 @@ export const taskLogs = mysqlTable("task_logs", {
   // 本次注册使用的出口IP（代理检测后记录）
   exitIp: varchar("exitIp", { length: 64 }),
 
+  // 本次注册占用的手机号 ID（用于异常退出时归还手机号）
+  acquiredPhoneId: int("acquiredPhoneId"),
+
   // 執行詳情
   errorMessage: text("errorMessage"),
   durationMs: int("durationMs"),  // 耗時（毫秒）

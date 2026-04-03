@@ -37,11 +37,11 @@ const statusConfig: Record<LogStatus, { label: string; class: string; icon: Reac
   skipped: { label: "跳过", class: "border-gray-500/30 text-gray-400 bg-gray-500/10", icon: Clock },
 };
 
-const stepLevelConfig: Record<StepLevel, { icon: React.ElementType; class: string }> = {
-  info:    { icon: Info,          class: "text-blue-400" },
-  success: { icon: CheckCircle2,  class: "text-green-400" },
-  warning: { icon: AlertTriangle, class: "text-yellow-400" },
-  error:   { icon: XCircle,       class: "text-red-400" },
+const stepLevelConfig: Record<StepLevel, { icon: React.ElementType; iconClass: string; textClass: string }> = {
+  info:    { icon: Info,          iconClass: "text-blue-400",   textClass: "text-slate-200" },
+  success: { icon: CheckCircle2,  iconClass: "text-green-400",  textClass: "text-green-300" },
+  warning: { icon: AlertTriangle, iconClass: "text-yellow-400", textClass: "text-yellow-300" },
+  error:   { icon: XCircle,       iconClass: "text-red-400",    textClass: "text-red-300" },
 };
 
 // ── 步骤日志展开面板 ──────────────────────────────────────────────────────────
@@ -75,10 +75,10 @@ function StepLogsPanel({ taskLogId, isRunning }: { taskLogId: number; isRunning:
 
   return (
     <div className="px-4 pb-3">
-      <div className="bg-black/40 rounded-md border border-border/30 overflow-hidden">
-        <div className="px-3 py-1.5 border-b border-border/30 flex items-center justify-between">
-          <span className="text-xs font-medium text-muted-foreground">步骤日志</span>
-          <span className="text-xs text-muted-foreground">{data.length} 条</span>
+      <div className="bg-zinc-950 rounded-md border border-zinc-700 overflow-hidden">
+        <div className="px-3 py-1.5 border-b border-zinc-700 flex items-center justify-between bg-zinc-900">
+          <span className="text-xs font-medium text-zinc-400">步骤日志</span>
+          <span className="text-xs text-zinc-500">{data.length} 条</span>
         </div>
         <div className="max-h-72 overflow-y-auto font-mono text-xs">
           {data.map((step) => {
@@ -93,12 +93,12 @@ function StepLogsPanel({ taskLogId, isRunning }: { taskLogId: number; isRunning:
                 key={step.id}
                 className="flex items-start gap-2 px-3 py-1 hover:bg-white/5 transition-colors"
               >
-                <StepIcon className={`w-3 h-3 mt-0.5 shrink-0 ${cfg.class}`} />
-                <span className="text-muted-foreground shrink-0">{ts}</span>
-                <span className="text-xs text-muted-foreground shrink-0">
+                <StepIcon className={`w-3 h-3 mt-0.5 shrink-0 ${cfg.iconClass}`} />
+                <span className="text-zinc-500 shrink-0">{ts}</span>
+                <span className="text-xs text-zinc-500 shrink-0">
                   [{step.source ?? "Automation"}]
                 </span>
-                <span className={`flex-1 break-all ${cfg.class}`}>{step.message}</span>
+                <span className={`flex-1 break-all ${cfg.textClass}`}>{step.message}</span>
               </div>
             );
           })}

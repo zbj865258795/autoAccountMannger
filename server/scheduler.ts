@@ -22,6 +22,7 @@ import {
   updateTaskLog,
   parseProxyUrl,
   getProxyAccountById,
+  releasePhoneIfNeeded,
 } from "./db";
 import {
   closeAdsPowerBrowser,
@@ -109,6 +110,9 @@ async function checkBrowserStatus(): Promise<void> {
 
         console.log(`[BrowserMonitor] Browser ${browserId} (log #${log.id}) is no longer active → marking failed`);
 
+        // 如果手机号尚未收到短信（in_use 状态），归还手机号
+        await releasePhoneIfNeeded(log.id).catch(() => {});
+
         await updateTaskLog(log.id, {
           status: "failed",
           errorMessage: "浏览器被关闭或异常退出（由状态监控检测到）",
@@ -141,6 +145,12 @@ async function cleanupTaskBrowsers(taskId: number, reason: string): Promise<void
   const adspowerConfig = { apiUrl, apiKey: ADSPOWER_CONFIG.apiKey };
 
   const runningLogs = await getRunningLogsForTask(taskId);
+
+  // 强制停止前，先归还所有尚在 in_use 状态的手机号
+  await Promise.all(
+    runningLogs.map((log) => releasePhoneIfNeeded(log.id).catch(() => {}))
+  );
+
   const affected = await failAllRunningLogsForTask(taskId, reason);
   if (affected > 0) {
     console.log(`[Scheduler] Task ${taskId}: marked ${affected} running log(s) as failed (${reason})`);

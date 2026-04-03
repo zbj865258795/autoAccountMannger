@@ -20,6 +20,7 @@ import {
   getNextAvailablePhone,
   markPhoneUsedById,
   resetPhoneStatusById,
+  releasePhoneIfNeeded,
   recordUsedIp,
   isIpUsed,
   updateTaskLog,
@@ -208,7 +209,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
 
     // ── 阶段二：verify-phone 页面 ──
     log("=== Phase 2: Phone number + SMS code ===");
-    const phoneResult = await handleVerifyPhonePage(page, log);
+    const phoneResult = await handleVerifyPhonePage(page, logId, log);
 
     if (phoneResult.result === "app" && phoneResult.phoneInfo) {
       await finishRegistration(page, email, password, phoneResult.phoneInfo, inviteCode, inviterAccountId, capturedToken, capturedUserData, taskId, logId, profileId, detectedExitIp, adspowerConfig, startTime, log);
@@ -595,6 +596,7 @@ interface PhoneInfo {
 
 async function handleVerifyPhonePage(
   page: Page,
+  logId: number,
   log: Logger
 ): Promise<{ result: "app" | "timeout" | "no-phone" | "error"; phoneInfo?: PhoneInfo }> {
   log("Phase 2: Fetching phone number from backend...");
@@ -609,6 +611,9 @@ async function handleVerifyPhonePage(
   const phoneInfo = parseBackendPhone(phoneData);
   const acquiredPhoneId = phoneData.id; // 记录获取的手机号 id，失败时用于归还
   log(`Phone: ${phoneInfo.phoneRaw} (${phoneInfo.iso})`);
+
+  // 立即将手机号 ID 写入 task_log，供浏览器异常关闭时 scheduler 归还手机号
+  await updateTaskLog(logId, { acquiredPhoneId }).catch(() => {});
 
   const MAX_REFRESHES = 3;
   let refreshCount = 0;
@@ -1099,7 +1104,7 @@ async function selectCountry(page: Page, iso: string, dialCode: string, log: Log
     if (!searchInput) return false;
 
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
-    async function typeSearch(term: string) {
+    const typeSearch = async (term: string) => {
       if (setter) setter.call(searchInput!, ""); else searchInput!.value = "";
       searchInput!.dispatchEvent(new Event("input", { bubbles: true }));
       await new Promise((r) => setTimeout(r, 300));
@@ -1107,9 +1112,9 @@ async function selectCountry(page: Page, iso: string, dialCode: string, log: Log
       searchInput!.dispatchEvent(new Event("input", { bubbles: true }));
       searchInput!.dispatchEvent(new Event("change", { bubbles: true }));
       await new Promise((r) => setTimeout(r, 1000));
-    }
+    };
 
-    function getVisibleItems() {
+    const getVisibleItems = () => {
       const items: HTMLElement[] = [];
       // 插件的完整选择器列表（包含 radix scroll area）
       const selectors = [
@@ -1128,7 +1133,7 @@ async function selectCountry(page: Page, iso: string, dialCode: string, log: Log
         if (items.length > 0) break;
       }
       return items;
-    }
+    };
 
     // 手机号固定为美国，硬编码搜索 United States，匹配 +1
     for (const term of ["United States", isoCode]) {

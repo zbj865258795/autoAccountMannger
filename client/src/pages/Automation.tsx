@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Select,
   SelectContent,
@@ -62,12 +62,19 @@ const statusConfig: Record<TaskStatus, { label: string; class: string; icon: Rea
 
 function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: () => void }) {
   const [name, setName] = useState("自动注册任务");
-  const [interval, setInterval] = useState(60);
+  const [interval] = useState(60);
   const apiUrl = "http://127.0.0.1:50325";
   const [proxyAccountId, setProxyAccountId] = useState<string>("");
   const [targetCount, setTargetCount] = useState<string>("");
 
   const { data: proxyAccounts } = trpc.proxyAccounts.list.useQuery();
+
+  // 代理账号加载完成后，默认选中第一个
+  useEffect(() => {
+    if (proxyAccounts && proxyAccounts.length > 0 && !proxyAccountId) {
+      setProxyAccountId(String(proxyAccounts[0].id));
+    }
+  }, [proxyAccounts]);
   const createTask = trpc.automation.create.useMutation({
     onSuccess: () => {
       toast.success("任务已创建");
@@ -113,23 +120,6 @@ function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose
             <p className="text-xs text-muted-foreground">
               在「代理账号管理」页面添加代理账号后，这里就会出现对应选项
             </p>
-          </div>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs text-muted-foreground">扫描间隔</Label>
-              <span className="text-sm font-medium text-foreground">{interval} 秒</span>
-            </div>
-            <Slider
-              value={[interval]}
-              onValueChange={([v]) => setInterval(v)}
-              min={10}
-              max={300}
-              step={10}
-              className="w-full"
-            />
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>10s</span><span>5分钟</span>
-            </div>
           </div>
           <div className="space-y-2">
             <Label className="text-xs text-muted-foreground">注册目标总数（可选）</Label>
@@ -191,7 +181,7 @@ function EditTaskDialog({
   onUpdated: () => void;
 }) {
   const [name, setName] = useState(task.name);
-  const [interval, setInterval] = useState(task.scanIntervalSeconds ?? 60);
+  const interval = task.scanIntervalSeconds ?? 60;
   const apiUrl = "http://127.0.0.1:50325";
   const [proxyAccountId, setProxyAccountId] = useState<string>(
     task.proxyAccountId != null ? String(task.proxyAccountId) : ""
@@ -247,23 +237,6 @@ function EditTaskDialog({
             <p className="text-xs text-muted-foreground">
               在「代理账号管理」页面添加代理账号后，这里就会出现对应选项
             </p>
-          </div>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs text-muted-foreground">扫描间隔</Label>
-              <span className="text-sm font-medium text-foreground">{interval} 秒</span>
-            </div>
-            <Slider
-              value={[interval]}
-              onValueChange={([v]) => setInterval(v)}
-              min={10}
-              max={300}
-              step={10}
-              className="w-full"
-            />
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>10s</span><span>5分钟</span>
-            </div>
           </div>
           <div className="space-y-2">
             <Label className="text-xs text-muted-foreground">注册目标总数（可选）</Label>
