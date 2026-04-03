@@ -25,6 +25,7 @@ import {
   updateTaskLog,
   incrementTaskCounters,
   saveRegistrationResult,
+  appendStepLog,
 } from "./db";
 import { stopAndDeleteAdsPowerBrowser } from "./adspower";
 
@@ -78,7 +79,7 @@ export interface RegistrationParams {
 export async function runRegistration(params: RegistrationParams): Promise<void> {
   const { taskId, logId, profileId, wsEndpoint, adspowerConfig } = params;
   const startTime = Date.now();
-  const log = makeLogger(taskId, profileId);
+  const log = makeLogger(taskId, profileId, logId);
 
   let browser: Browser | null = null;
   let inviterAccountId: number | null = null;
@@ -102,7 +103,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     const pages = context.pages();
     const page = pages.length > 0 ? pages[0] : await context.newPage();
 
-    log(`Connected. Current URL: ${page.url()}`);
+    log(`Connected. Current URL: ${page.url()}`, "info");
 
     // ── Step -1: 通过浏览器内部检测出口 IP（确保代理已生效，且 IP 与注册用 IP 完全一致）──
     log("Detecting exit IP via browser...");
@@ -114,7 +115,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
       await ipPage.close();
       if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ipText)) {
         detectedExitIp = ipText;
-        log(`Exit IP detected via browser: ${detectedExitIp}`);
+        log(`Exit IP detected: ${detectedExitIp}`, "success");
         // 检查 IP 是否已使用过
         const used = await isIpUsed(detectedExitIp);
         if (used) {
@@ -128,7 +129,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
           await cleanupBrowser(browser, adspowerConfig, profileId);
           return;
         }
-        log(`Exit IP ${detectedExitIp} is fresh, proceeding`);
+        log(`Exit IP ${detectedExitIp} is fresh, proceeding`, "success");
       } else {
         log(`Could not parse exit IP from browser response: "${ipText}", proceeding without IP check`, "warn");
       }
@@ -160,7 +161,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     inviterAccountId = inviteCodeData.id;
     inviteCode = inviteCodeData.inviteCode!;
     const inviteUrl = `https://manus.im/invitation/${inviteCode}`;
-    log(`Invite code: ${inviteCode} (from ${inviteCodeData.email}, id=${inviterAccountId})`);
+    log(`Invite code acquired: ${inviteCode}`, "success");
 
     // ── Step 1: 购买邮箱 ──
     log("Buying email...");
@@ -168,7 +169,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     let codeUrl: string;
     try {
       ({ email, codeUrl } = await buyEmail());
-      log(`Email purchased: ${email}`);
+      log(`Email purchased: ${email}`, "success");
     } catch (e: any) {
       await resetInviteCodeStatus(inviterAccountId);
       throw new Error(`购买邮箱失败: ${e.message}`);
@@ -191,7 +192,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     }
 
     // ── 阶段一：login 页面 ──
-    log("=== Phase 1: Login page ===");
+    log("=== Phase 1: Email + Password + Verify Code ===");
     const loginResult = await handleLoginPage(page, email, password, codeUrl, log);
 
     if (loginResult === "app") {
@@ -206,7 +207,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     }
 
     // ── 阶段二：verify-phone 页面 ──
-    log("=== Phase 2: Phone verification page ===");
+    log("=== Phase 2: Phone number + SMS code ===");
     const phoneResult = await handleVerifyPhonePage(page, log);
 
     if (phoneResult.result === "app" && phoneResult.phoneInfo) {
@@ -408,7 +409,7 @@ async function handleLoginPage(
         if (ok) {
           emailFilled = true;
           stepStallCount = 0;
-          log(`Email filled: ${email}`);
+          log(`Email filled: ${email}`, "success");
         } else {
           stepStallCount++;
           if (stepStallCount >= 20) { log("Stalled on email input, refreshing...", "warn"); break; }
@@ -432,7 +433,7 @@ async function handleLoginPage(
         if (clicked) {
           emailContinueClicked = true;
           stepStallCount = 0;
-          log("Email Continue clicked");
+          log("Email Continue clicked", "success");
           await sleep(2000);
         } else {
           stepStallCount++;
@@ -448,7 +449,7 @@ async function handleLoginPage(
         if (ok) {
           pwdFilled = true;
           stepStallCount = 0;
-          log("Password filled");
+          log("Password filled", "success");
         } else {
           stepStallCount++;
           if (stepStallCount >= 20) { log("Stalled on password input, refreshing...", "warn"); break; }
@@ -472,12 +473,12 @@ async function handleLoginPage(
         if (clicked) {
           pwdContinueClicked = true;
           stepStallCount = 0;
-          log("Password Continue clicked, fetching email verify code in background...");
+          log("Password Continue clicked, fetching email verify code in background...", "success");
           if (!verifyCodeFetching) {
             verifyCodeFetching = true;
             fetchVerifyCode(codeUrl).then((code) => {
               verifyCode = code;
-              if (code) log(`Email verify code ready: ${code}`);
+              if (code) log(`Email verify code ready: ${code}`, "success");
               else log("Email verify code timeout", "warn");
             });
           }
@@ -844,7 +845,7 @@ async function finishRegistration(
   startTime: number,
   log: Logger
 ) {
-  log("Registration successful! Starting post-registration steps...");
+  log("Registration successful! Starting post-registration steps...", "success");
 
   // Step 1: 刷新 + 兑换推广码
   log("Reloading page and redeeming promotion code...");
@@ -912,7 +913,7 @@ async function finishRegistration(
     });
 
     await incrementTaskCounters(taskId, { totalSuccess: 1, totalAccountsCreated: 1 });
-    log(`Registration complete! email=${email}, duration=${Math.round(durationMs / 1000)}s`);
+    log(`Registration complete! email=${email}, duration=${Math.round(durationMs / 1000)}s`, "success");
 
   } catch (e: any) {
     log(`Failed to save registration result: ${e.message}`, "error");
@@ -1350,14 +1351,20 @@ function sleep(ms: number) {
 }
 
 /** 日志函数类型 */
-type Logger = (msg: string, level?: "info" | "warn" | "error") => void;
+type Logger = (msg: string, level?: "info" | "success" | "warn" | "error") => void;
 
-/** 创建带前缀的日志函数 */
-function makeLogger(taskId: number, profileId: string): Logger {
-  return (msg: string, level: "info" | "warn" | "error" = "info") => {
+/**
+ * 创建带前缀的日志函数
+ * 同时写入控制台 + 数据库 task_step_logs（非阻塞，失败不影响主流程）
+ */
+function makeLogger(taskId: number, profileId: string, logId: number): Logger {
+  return (msg: string, level: "info" | "success" | "warn" | "error" = "info") => {
     const prefix = `[Automation][Task ${taskId}][${profileId.substring(0, 8)}]`;
     if (level === "error") console.error(`${prefix} ${msg}`);
     else if (level === "warn") console.warn(`${prefix} ${msg}`);
     else console.log(`${prefix} ${msg}`);
+    // 异步写入数据库（不 await，不阻塞主流程）
+    const dbLevel = level === "warn" ? "warning" : level;
+    appendStepLog(logId, msg, dbLevel as "info" | "success" | "warning" | "error").catch(() => {});
   };
 }

@@ -486,6 +486,8 @@ export async function startAdsPowerBrowser(
       profile_id: profileId,
       last_opened_tabs: "0",    // 0 = 不继续上次标签，每次从头开始
       proxy_detection: "1",     // 1 = 打开 IP 检测页（start.adspower.net 启动页）
+      // Chrome 原生参数禁用图片加载（底层内核层面屏蔽，不产生网络请求记录，无指纹风险）
+      launch_args: ["--blink-settings=imagesEnabled=false"],
     });
     const data = response.data;
 

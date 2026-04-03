@@ -41,6 +41,7 @@ import {
   updateProxyAccount,
   deleteProxyAccount,
   getProxyAccountById,
+  getStepLogs,
 } from "./db";
 import { checkAdsPowerConnection, getActiveBrowsers } from "./adspower";
 import { ADSPOWER_CONFIG } from "./config";
@@ -321,6 +322,13 @@ const taskLogsRouter = router({
     }))
     .query(async ({ input }) => {
       return getTaskLogs(input);
+    }),
+
+  // 查询某条 task_log 的所有步骤日志（按时间升序）
+  steps: publicProcedure
+    .input(z.object({ taskLogId: z.number() }))
+    .query(async ({ input }) => {
+      return getStepLogs(input.taskLogId);
     }),
 });
 

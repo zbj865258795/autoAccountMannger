@@ -272,3 +272,29 @@ export const proxyAccounts = mysqlTable("proxy_accounts", {
 
 export type ProxyAccount = typeof proxyAccounts.$inferSelect;
 export type InsertProxyAccount = typeof proxyAccounts.$inferInsert;
+
+/**
+ * 任务步骤日志表：记录每次注册任务的详细步骤进度
+ * 每条记录对应一个步骤，通过 taskLogId 关联到 task_logs 表
+ */
+export const taskStepLogs = mysqlTable("task_step_logs", {
+  id: int("id").autoincrement().primaryKey(),
+
+  // 关联的任务日志 ID
+  taskLogId: int("taskLogId").notNull(),
+
+  // 来源模块：Scheduler / Automation
+  source: varchar("source", { length: 32 }).notNull().default("Automation"),
+
+  // 步骤级别：info / success / warning / error
+  level: mysqlEnum("level", ["info", "success", "warning", "error"]).default("info").notNull(),
+
+  // 日志消息
+  message: text("message").notNull(),
+
+  // 时间
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type TaskStepLog = typeof taskStepLogs.$inferSelect;
+export type InsertTaskStepLog = typeof taskStepLogs.$inferInsert;

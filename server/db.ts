@@ -1,7 +1,7 @@
 import { and, asc, count, desc, eq, gte, inArray, like, lte, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { accounts, automationTasks, exportLogs, phoneNumbers, taskLogs, users, usedIpPool, proxyAccounts } from "../drizzle/schema";
-import type { InsertAccount, InsertAutomationTask, InsertExportLog, InsertPhoneNumber, InsertTaskLog, InsertProxyAccount } from "../drizzle/schema";
+import { accounts, automationTasks, exportLogs, phoneNumbers, taskLogs, taskStepLogs, users, usedIpPool, proxyAccounts } from "../drizzle/schema";
+import type { InsertAccount, InsertAutomationTask, InsertExportLog, InsertPhoneNumber, InsertTaskLog, InsertProxyAccount, InsertTaskStepLog } from "../drizzle/schema";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -1259,4 +1259,55 @@ export async function deleteProxyAccount(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   return db.delete(proxyAccounts).where(eq(proxyAccounts.id, id));
+}
+
+// ─── Task Step Logs ──────────────────────────────────────────────────────────
+
+/**
+ * 写入一条步骤日志（非阻塞，失败不抛出）
+ */
+export async function appendStepLog(
+  taskLogId: number,
+  message: string,
+  level: "info" | "success" | "warning" | "error" = "info",
+  source: string = "Automation"
+): Promise<void> {
+  try {
+    const db = await getDb();
+    if (!db) return;
+    const data: InsertTaskStepLog = { taskLogId, message, level, source };
+    await db.insert(taskStepLogs).values(data);
+    // 同时打印到控制台
+    const ts = new Date().toTimeString().slice(0, 8);
+    const icon = level === "success" ? "✅" : level === "error" ? "❌" : level === "warning" ? "⚠️" : "ℹ️";
+    console.log(`${icon} [${ts}] [${source}] ${message}`);
+  } catch {
+    // 日志写入失败不影响主流程
+  }
+}
+
+/**
+ * 查询某个 taskLogId 的所有步骤日志（按时间升序）
+ */
+export async function getStepLogs(taskLogId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(taskStepLogs)
+    .where(eq(taskStepLogs.taskLogId, taskLogId))
+    .orderBy(asc(taskStepLogs.createdAt));
+}
+
+/**
+ * 查询最近 N 条步骤日志（跨任务，用于全局日志页面）
+ */
+export async function getRecentStepLogs(limit = 200) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(taskStepLogs)
+    .orderBy(desc(taskStepLogs.createdAt))
+    .limit(limit);
 }

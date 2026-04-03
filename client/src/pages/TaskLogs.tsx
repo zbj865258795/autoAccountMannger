@@ -13,16 +13,21 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Clock,
   FileText,
+  Info,
   Loader2,
   RefreshCw,
   XCircle,
+  AlertTriangle,
 } from "lucide-react";
 
 type LogStatus = "pending" | "running" | "success" | "failed" | "skipped";
+type StepLevel = "info" | "success" | "warning" | "error";
 
 const statusConfig: Record<LogStatus, { label: string; class: string; icon: React.ElementType }> = {
   pending: { label: "等待中", class: "border-blue-500/30 text-blue-400 bg-blue-500/10", icon: Clock },
@@ -32,9 +37,83 @@ const statusConfig: Record<LogStatus, { label: string; class: string; icon: Reac
   skipped: { label: "跳过", class: "border-gray-500/30 text-gray-400 bg-gray-500/10", icon: Clock },
 };
 
+const stepLevelConfig: Record<StepLevel, { icon: React.ElementType; class: string }> = {
+  info:    { icon: Info,          class: "text-blue-400" },
+  success: { icon: CheckCircle2,  class: "text-green-400" },
+  warning: { icon: AlertTriangle, class: "text-yellow-400" },
+  error:   { icon: XCircle,       class: "text-red-400" },
+};
+
+// ── 步骤日志展开面板 ──────────────────────────────────────────────────────────
+
+function StepLogsPanel({ taskLogId, isRunning }: { taskLogId: number; isRunning: boolean }) {
+  const { data, isLoading } = trpc.taskLogs.steps.useQuery(
+    { taskLogId },
+    {
+      // 任务执行中每 3 秒刷新一次，完成后停止轮询
+      refetchInterval: isRunning ? 3000 : false,
+    }
+  );
+
+  if (isLoading) {
+    return (
+      <div className="px-4 pb-3 space-y-1.5">
+        {[...Array(3)].map((_, i) => (
+          <Skeleton key={i} className="h-5 w-full" />
+        ))}
+      </div>
+    );
+  }
+
+  if (!data || data.length === 0) {
+    return (
+      <div className="px-4 pb-3 text-xs text-muted-foreground italic">
+        暂无步骤日志
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-4 pb-3">
+      <div className="bg-black/40 rounded-md border border-border/30 overflow-hidden">
+        <div className="px-3 py-1.5 border-b border-border/30 flex items-center justify-between">
+          <span className="text-xs font-medium text-muted-foreground">步骤日志</span>
+          <span className="text-xs text-muted-foreground">{data.length} 条</span>
+        </div>
+        <div className="max-h-72 overflow-y-auto font-mono text-xs">
+          {data.map((step) => {
+            const lvl = (step.level ?? "info") as StepLevel;
+            const cfg = stepLevelConfig[lvl] ?? stepLevelConfig.info;
+            const StepIcon = cfg.icon;
+            const ts = step.createdAt
+              ? new Date(step.createdAt).toTimeString().slice(0, 8)
+              : "";
+            return (
+              <div
+                key={step.id}
+                className="flex items-start gap-2 px-3 py-1 hover:bg-white/5 transition-colors"
+              >
+                <StepIcon className={`w-3 h-3 mt-0.5 shrink-0 ${cfg.class}`} />
+                <span className="text-muted-foreground shrink-0">{ts}</span>
+                <span className="text-xs text-muted-foreground shrink-0">
+                  [{step.source ?? "Automation"}]
+                </span>
+                <span className={`flex-1 break-all ${cfg.class}`}>{step.message}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── 主页面 ────────────────────────────────────────────────────────────────────
+
 export default function TaskLogs() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
   const pageSize = 50;
 
   const { data, isLoading, refetch } = trpc.taskLogs.list.useQuery(
@@ -48,13 +127,17 @@ export default function TaskLogs() {
 
   const totalPages = Math.ceil((data?.total ?? 0) / pageSize);
 
+  function toggleExpand(id: number) {
+    setExpandedId((prev) => (prev === id ? null : id));
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-foreground">执行日志</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            共 {data?.total ?? 0} 条记录
+            共 {data?.total ?? 0} 条记录，点击任意行可展开步骤详情
           </p>
         </div>
         <div className="flex gap-2">
@@ -96,50 +179,70 @@ export default function TaskLogs() {
               {data?.items?.map((log) => {
                 const sc = statusConfig[log.status as LogStatus] ?? statusConfig.pending;
                 const StatusIcon = sc.icon;
+                const isExpanded = expandedId === log.id;
+                const isRunning = log.status === "running" || log.status === "pending";
+
                 return (
-                  <div key={log.id} className="p-4 hover:bg-muted/10 transition-colors">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-start gap-3 flex-1 min-w-0">
-                        <StatusIcon
-                          className={`w-4 h-4 mt-0.5 shrink-0 ${
-                            log.status === "success" ? "text-green-400" :
-                            log.status === "failed" ? "text-red-400" :
-                            log.status === "running" ? "text-yellow-400 animate-spin" :
-                            "text-muted-foreground"
-                          }`}
-                        />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <Badge variant="outline" className={`text-xs ${sc.class}`}>
-                              {sc.label}
-                            </Badge>
-                            {log.usedInviteCode && (
-                              <code className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded">
-                                {log.usedInviteCode}
-                              </code>
+                  <div key={log.id} className="hover:bg-muted/10 transition-colors">
+                    {/* 主行：点击展开/收起 */}
+                    <div
+                      className="p-4 cursor-pointer select-none"
+                      onClick={() => toggleExpand(log.id)}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-3 flex-1 min-w-0">
+                          <StatusIcon
+                            className={`w-4 h-4 mt-0.5 shrink-0 ${
+                              log.status === "success" ? "text-green-400" :
+                              log.status === "failed" ? "text-red-400" :
+                              log.status === "running" ? "text-yellow-400 animate-spin" :
+                              "text-muted-foreground"
+                            }`}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <Badge variant="outline" className={`text-xs ${sc.class}`}>
+                                {sc.label}
+                              </Badge>
+                              {log.usedInviteCode && (
+                                <code className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded">
+                                  {log.usedInviteCode}
+                                </code>
+                              )}
+                              {log.adspowerBrowserId && (
+                                <span className="text-xs text-muted-foreground font-mono">
+                                  Browser: {log.adspowerBrowserId}
+                                </span>
+                              )}
+                            </div>
+                            {log.errorMessage && (
+                              <p className="text-xs text-red-400 mt-1.5 font-mono bg-red-500/5 px-2 py-1 rounded">
+                                {log.errorMessage}
+                              </p>
                             )}
-                            {log.adspowerBrowserId && (
-                              <span className="text-xs text-muted-foreground font-mono">
-                                Browser: {log.adspowerBrowserId}
-                              </span>
-                            )}
+                            <div className="flex gap-4 mt-1.5 text-xs text-muted-foreground">
+                              {log.durationMs && (
+                                <span>耗时：{(log.durationMs / 1000).toFixed(1)}s</span>
+                              )}
+                              {log.startedAt && (
+                                <span>{new Date(log.startedAt).toLocaleString("zh-CN")}</span>
+                              )}
+                            </div>
                           </div>
-                          {log.errorMessage && (
-                            <p className="text-xs text-red-400 mt-1.5 font-mono bg-red-500/5 px-2 py-1 rounded">
-                              {log.errorMessage}
-                            </p>
-                          )}
-                          <div className="flex gap-4 mt-1.5 text-xs text-muted-foreground">
-                            {log.durationMs && (
-                              <span>耗时：{(log.durationMs / 1000).toFixed(1)}s</span>
-                            )}
-                            {log.startedAt && (
-                              <span>{new Date(log.startedAt).toLocaleString("zh-CN")}</span>
-                            )}
-                          </div>
+                        </div>
+                        {/* 展开/收起箭头 */}
+                        <div className="shrink-0 text-muted-foreground mt-0.5">
+                          {isExpanded
+                            ? <ChevronUp className="w-4 h-4" />
+                            : <ChevronDown className="w-4 h-4" />}
                         </div>
                       </div>
                     </div>
+
+                    {/* 步骤日志展开面板 */}
+                    {isExpanded && (
+                      <StepLogsPanel taskLogId={log.id} isRunning={isRunning} />
+                    )}
                   </div>
                 );
               })}
