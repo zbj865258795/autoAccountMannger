@@ -354,20 +354,22 @@ async function _executeTask(taskId: number): Promise<void> {
   };
 
   try {
-    // 1. 检查是否有未使用的邀请码
-    const unusedCount = await getUnusedInviteCodeCount();
-    if (unusedCount === 0) {
-      console.log(`[调度器] 任务 ${taskId}: 暂无可用邀请码`);
-      await updateAutomationTask(taskId, { lastExecutedAt: new Date() });
-      return;
-    }
-
-    // 2. 检查当前是否已有正在运行的浏览器（单线程：最多1个）
+    // 1. 先检查当前是否已有正在运行的浏览器（单线程：最多1个）
+    // 注意：必须先检查运行中任务，再检查邀请码
+    // 原因：邀请码被锁定为 in_progress 后 unused 数量为 0，如果先检查邀请码会误打“暂无可用邀请码”
     const runningLogs = await getRunningLogsForTask(taskId);
     if (runningLogs.length >= 1) {
       console.log(
         `[调度器] 任务 ${taskId}: 已有注册任务运行中（单线程模式），跳过`
       );
+      await updateAutomationTask(taskId, { lastExecutedAt: new Date() });
+      return;
+    }
+
+    // 2. 检查是否有未使用的邀请码
+    const unusedCount = await getUnusedInviteCodeCount();
+    if (unusedCount === 0) {
+      console.log(`[调度器] 任务 ${taskId}: 暂无可用邀请码`);
       await updateAutomationTask(taskId, { lastExecutedAt: new Date() });
       return;
     }

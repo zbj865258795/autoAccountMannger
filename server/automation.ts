@@ -86,6 +86,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
   let inviterAccountId: number | null = null;
   let inviteCode: string | null = null;
   let capturedToken: string | null = null;
+  let bindPhoneSucceeded = false; // BindPhoneTrait 成功标志，用于跳过 waitForURL 检测
   let capturedUserData = {
     membershipVersion: null as string | null,
     totalCredits: null as number | null,
@@ -196,6 +197,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
       undefined, // onSendPhoneError 由阶段二内部单独监听，这里不传
       () => {
         // BindPhoneTrait 成功：立即拦截所有后续请求，防止浏览器跳转到 /app 浪费动态IP流量
+        bindPhoneSucceeded = true; // 标记成功，让阶段二跳过 waitForURL 检测
         log("手机号绑定成功，拦截页面跳转节省流量...");
         // 停止当前页面加载
         page.evaluate(() => { try { window.stop(); } catch {} }).catch(() => {});
@@ -281,7 +283,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
 
     // ── 阶段二：verify-phone 页面 ──
     log("=== 阶段二：手机号 + 短信验证码 ===");
-    const phoneResult = await handleVerifyPhonePage(page, logId, log);
+    const phoneResult = await handleVerifyPhonePage(page, logId, log, () => bindPhoneSucceeded);
 
     if (phoneResult.result === "app" && phoneResult.phoneInfo) {
       await finishRegistration(page, email, password, phoneResult.phoneInfo, inviteCode, inviterAccountId, capturedToken, capturedUserData, taskId, logId, profileId, detectedExitIp, adspowerConfig, startTime, log);
@@ -841,7 +843,8 @@ interface PhoneInfo {
 async function handleVerifyPhonePage(
   page: Page,
   logId: number,
-  log: Logger
+  log: Logger,
+  getBindPhoneSucceeded: () => boolean  // 获取 BindPhoneTrait 成功标志（由外部闭包提供）
 ): Promise<{ result: "app" | "timeout" | "no-phone" | "error"; phoneInfo?: PhoneInfo }> {
   log("阶段二：正在从数据库获取手机号...");
 
@@ -1100,18 +1103,36 @@ async function handleVerifyPhonePage(
           const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
           if (btn) { await new Promise((r) => setTimeout(r, 500)); btn.click(); }
         });
-        log("手机号确认按钮已点击，等待跳转至 /app...");
-        try {
-          await page.waitForURL((url: URL) => url.toString().includes("manus.im/app"), { timeout: 30000 });
-          log("阶段二完成 → 已进入 /app");
+        log("手机号确认按钮已点击，等待 BindPhoneTrait 响应...");
+
+        // 等待最多 30 秒：如果 BindPhoneTrait 成功（页面跳转已被拦截）或 URL 跳转到 /app 均认为成功
+        const waitStart = Date.now();
+        let phase2Done = false;
+        while (Date.now() - waitStart < 30000) {
+          await sleep(500);
+          // 情况A：BindPhoneTrait 成功回调已被触发（页面跳转已被拦截）
+          if (getBindPhoneSucceeded()) {
+            log("阶段二完成 → BindPhoneTrait 成功，页面跳转已拦截");
+            phase2Done = true;
+            break;
+          }
+          // 情况B：页面正常跳转到 /app（未拦截的情况）
+          if (page.url().includes("manus.im/app")) {
+            log("阶段二完成 → 已进入 /app");
+            phase2Done = true;
+            break;
+          }
+        }
+
+        if (phase2Done) {
           return { result: "app", phoneInfo };
-        } catch {
-          // 情况二：点击后 30 秒内页面未跳转，重置允许重试
+        } else {
+          // 情况二：30 秒内无响应，重置允许重试
           smsClickRetryCount++;
           if (smsClickRetryCount > 3) {
-            log("手机号确认按钮点击后页面始终未跳转，刷新重试...", "warn"); break;
+            log("手机号确认按钮点击后始终无响应，刷新重试...", "warn"); break;
           }
-          log(`手机号确认按钮已点击但页面未跳转，第 ${smsClickRetryCount} 次重试...`, "warn");
+          log(`手机号确认按钮已点击但无响应，第 ${smsClickRetryCount} 次重试...`, "warn");
         }
       } else {
         stepStallCount++;
