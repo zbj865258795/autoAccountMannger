@@ -173,24 +173,49 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
       const resourceType = req.resourceType();
       const url = req.url();
 
-      // 屏蔽：字体文件
+      // 屏蔽：字体文件（.woff2 / .ttf 等）
       if (resourceType === "font") {
+        route.abort();
+        return;
+      }
+      // 屏蔽：files.manuscdn.com 下的 CSS
+      if (url.includes("files.manuscdn.com") && resourceType === "stylesheet") {
+        route.abort();
+        return;
+      }
+      // 屏蔽：files.manuscdn.com 下的图片（png/webp/gif）
+      if (url.includes("files.manuscdn.com") && resourceType === "image") {
+        route.abort();
+        return;
+      }
+      // 屏蔽：d1oupeiobkpcny.cloudfront.net 下的 png/webp
+      if (url.includes("d1oupeiobkpcny.cloudfront.net") && resourceType === "image") {
+        route.abort();
+        return;
+      }
+      // 屏蔽：favicon.ico
+      if (url.includes("manus.im/favicon.ico")) {
+        route.abort();
+        return;
+      }
+      // 屏蔽：国旗 SVG 图标
+      if (url.includes("purecatamphetamine.github.io/country-flag-icons")) {
+        route.abort();
+        return;
+      }
+      // 屏蔽：Facebook / connect.facebook.net 相关接口
+      if (url.includes("connect.facebook.net") || url.includes("www.facebook.com")) {
         route.abort();
         return;
       }
       // 屏蔽：广告/追踪/分析域名
       const blockedDomains = [
         "google-analytics.com", "googletagmanager.com", "doubleclick.net",
-        "facebook.com", "twitter.com", "hotjar.com", "segment.com",
+        "twitter.com", "hotjar.com", "segment.com",
         "amplitude.com", "mixpanel.com", "intercom.io", "crisp.chat",
         "sentry.io", "bugsnag.com", "fullstory.com", "logrocket.com",
       ];
       if (blockedDomains.some((d) => url.includes(d))) {
-        route.abort();
-        return;
-      }
-      // 屏蔽：files.manuscdn.com 图片资源（节省代理流量）
-      if (url.includes("files.manuscdn.com") && resourceType === "image") {
         route.abort();
         return;
       }
