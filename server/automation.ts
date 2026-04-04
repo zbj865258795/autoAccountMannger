@@ -463,6 +463,13 @@ async function handleLoginPage(
   });
 
   while (refreshCount <= MAX_REFRESHES) {
+    // 等待页面 DOM 加载完成，再等待网络空闲（最多 20 秒），确保页面完全就绪后再操作
+    try {
+      await page.waitForLoadState("domcontentloaded", { timeout: 30000 });
+    } catch { /* 超时不影响后续 */ }
+    try {
+      await page.waitForLoadState("networkidle", { timeout: 20000 });
+    } catch { /* 网络慢时容错，不阻塞 */ }
     await sleep(1500);
     // 每轮开始清除上一轮遗留的 API 错误状态（对齐插件的 lastApiResult = null）
     lastApiError = null;
@@ -832,6 +839,10 @@ async function handleLoginPage(
       log(`阶段一刷新失败（代理网络错误）：${reloadErr.message}`, "error");
       return "error";
     }
+    // 刷新后等待网络空闲，确保页面完全就绪
+    try {
+      await page.waitForLoadState("networkidle", { timeout: 20000 });
+    } catch { /* 网络慢时容错 */ }
 
   }
 
@@ -896,6 +907,13 @@ async function handleVerifyPhonePage(
   });
 
   while (refreshCount <= MAX_REFRESHES) {
+    // 等待页面 DOM 加载完成，再等待网络空闲（最多 20 秒），确保页面完全就绪后再操作
+    try {
+      await page.waitForLoadState("domcontentloaded", { timeout: 30000 });
+    } catch { /* 超时不影响后续 */ }
+    try {
+      await page.waitForLoadState("networkidle", { timeout: 20000 });
+    } catch { /* 网络慢时容错，不阻塞 */ }
     await sleep(1500);
     // 每轮开始清除上一轮遗留的 API 错误状态（对齐插件的 lastApiResult = null）
     lastApiError2 = null;
@@ -1145,6 +1163,10 @@ async function handleVerifyPhonePage(
       log(`阶段二刷新失败（代理网络错误）：${reloadErr.message}`, "error");
       return { result: "error" };
     }
+    // 刷新后等待网络空闲，确保页面完全就绪
+    try {
+      await page.waitForLoadState("networkidle", { timeout: 20000 });
+    } catch { /* 网络慢时容错 */ }
 
 
     // 刷新后检查是否已在 /app
