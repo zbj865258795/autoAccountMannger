@@ -1038,21 +1038,24 @@ async function handleLoginPage(
       }
     }
 
-    // 内层循环退出，刷新当前页面重试
-    // 注意：邀请码已在 Step 0 被原子锁定，不依赖 URL 参数，直接刷新当前页面即可
+    // 内层循环退出，重新打开邀请链接重试
+    // 注意：不能用 page.reload() 刷新 /login 页面！
+    // 邀请上下文（invitation token）是 Manus 前端 JS 在跳转过程中写入内存/sessionStorage 的，
+    // 直接刷新 /login 会丢失这个上下文，导致注册后账号无法关联到邀请人。
+    // 必须重新 goto inviteUrl，让前端重新走一遍邀请跳转流程。
     refreshCount++;
     if (refreshCount > MAX_REFRESHES) {
       log(`阶段一已刷新 ${MAX_REFRESHES} 次仍未完成，放弃`, "error");
       return "timeout";
     }
-    log(`阶段一第 ${refreshCount} 次刷新重试（当前页面：${page.url()}）...`, "warn");
+    log(`阶段一第 ${refreshCount} 次重试，重新打开邀请链接：${inviteUrl}`, "warn");
     try {
-      await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
-    } catch (reloadErr: any) {
-      log(`阶段一刷新失败（代理网络错误）：${reloadErr.message}`, "error");
+      await page.goto(inviteUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+    } catch (gotoErr: any) {
+      log(`阶段一重新打开邀请链接失败（代理网络错误）：${gotoErr.message}`, "error");
       return "error";
     }
-    // 刷新后等待网络空闲，确保页面完全就绪
+    // 重新打开后等待网络空闲，确保页面完全就绪
     try {
       await page.waitForLoadState("networkidle", { timeout: 20000 });
     } catch { /* 网络慢时容错 */ }
