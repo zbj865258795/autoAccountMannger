@@ -479,6 +479,22 @@ async function handleLoginPage(
   let codeUrl = "";
   let emailPurchased = false; // 标记是否已购买邮箱（全局仅购买一次）
 
+  // ── API 请求发出时间戳（用于判断按钮点击是否生效）──
+  // 监听 request（不是 response），这样可以在请求发出的第一时间就知道按钮点击已生效
+  let sendEmailCodeRequestTime = 0;   // SendEmailVerifyCodeWithCaptcha 请求发出时间
+  let registerByEmailRequestTime = 0; // RegisterByEmail 请求发出时间
+  page.on("request", (request) => {
+    const url = request.url();
+    if (url.includes("SendEmailVerifyCodeWithCaptcha")) {
+      sendEmailCodeRequestTime = Date.now();
+      log("[请求监听] SendEmailVerifyCodeWithCaptcha 已发出");
+    }
+    if (url.includes("RegisterByEmail")) {
+      registerByEmailRequestTime = Date.now();
+      log("[请求监听] RegisterByEmail 已发出");
+    }
+  });
+
   // API 错误监听（对齐插件的 getRecentApiError 机制）
   type ApiError = { api: string; status: number; time: number };
   let lastApiError: ApiError | null = null;
@@ -572,21 +588,23 @@ async function handleLoginPage(
 
     let emailFilled = false;
     let emailContinueClicked = false;
-    let emailRequestSent = false;     // 邮筱按钮已点击请求发送中，此时不能清空邮筱
-    let emailRetryCount = 0;          // 情况一：邮筱输入后按钮仍 disabled 的清空重输次数
-    let emailClickRetryCount = 0;     // 情况二：邮筱按钮点击后页面未变化的重试次数
+    let emailBtnClickTime = 0;        // 邮筱 Continue 按钮点击时间（等待 SendEmailVerifyCodeWithCaptcha 请求发出）
+    let emailBtnRetryCount = 0;       // 邮筱按钮点击后 3s 无请求的重试次数
     let pwdFilled = false;
     let pwdContinueClicked = false;
-    let pwdRetryCount = 0;            // 情况一：密码输入后按钮仍 disabled 的清空重输次数
-    let pwdClickRetryCount = 0;       // 情况二：密码按钮点击后页面未变化的重试次数
+    let pwdBtnClickTime = 0;          // 密码 Continue 按钮点击时间（等待 SendEmailVerifyCodeWithCaptcha 请求发出）
+    let pwdBtnRetryCount = 0;         // 密码按钮点击后 3s 无请求的重试次数
     let verifyCodeFetching = false;
     let verifyCode: string | null = null;
     let verifyCodeFilled = false;
-    let verifyCodeRetryCount = 0;     // 情况一：验证码输入后按钮仍 disabled 的清空重输次数
+    let verifyBtnClickTime = 0;       // 验证码确认按钮点击时间（等待 RegisterByEmail 请求发出）
+    let verifyBtnRetryCount = 0;      // 验证码按钮点击后 3s 无请求的重试次数
     let verifyConfirmClicked = false;  // 插件的 verifyConfirmClicked 标志
-    let verifyClickRetryCount = 0;    // 情况二：验证码按钮点击后页面未变化的重试次数
     let stepStallCount = 0;
     const roundStart = Date.now();
+    // 每轮开始重置请求时间戳（防止上一轮的旧请求干扰当前轮）
+    sendEmailCodeRequestTime = 0;
+    registerByEmailRequestTime = 0;
 
     for (let i = 0; i < 300; i++) {
       await sleep(1000);
@@ -638,80 +656,50 @@ async function handleLoginPage(
       }
 
       // 2. 点击邮箱 Continue
+      // 判断成功依据：SendEmailVerifyCodeWithCaptcha 请求是否发出
+      // 注意：邮箱步骤有第三方验证（Cloudflare Turnstile），按钮 disabled 时只能等待，不能清空输入框
       if (!emailContinueClicked) {
+        // SendEmailVerifyCodeWithCaptcha 已发出 → 按钮点击已生效
+        if (sendEmailCodeRequestTime > 0) {
+          emailContinueClicked = true;
+          stepStallCount = 0;
+          log("邮箱 Continue 已生效（SendEmailVerifyCodeWithCaptcha 已发出）", "success");
+          continue;
+        }
+
         await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
-        // 检测按钮是否可点击，以及当前是否仍在邮箱步骤
         const btnState = await page.evaluate(() => {
           const pwdEl = document.querySelector('input[name="password"][type="password"]') as HTMLElement | null;
           const inEmailStep = !pwdEl || pwdEl.classList.contains("hidden") || pwdEl.offsetParent === null;
-          if (!inEmailStep) return "already-passed"; // 已经过了邮箱步骤
+          if (!inEmailStep) return "already-passed";
           const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
           if (!btn || btn.offsetParent === null) return "no-button";
-          if (btn.disabled) return "disabled"; // 情况一：按钮存在但 disabled
+          if (btn.disabled) return "disabled";
           return "clickable";
         });
 
         if (btnState === "already-passed") {
           emailContinueClicked = true;
           stepStallCount = 0;
-          log("邮箱步骤已通过", "success");
+          log("邮箱步骤已通过（密码框已出现）", "success");
           await sleep(500);
         } else if (btnState === "disabled") {
-          // 情况一：按钮 disabled
-          // 如果请求已发送（emailRequestSent=true），说明请求还在进行中，不能清空邮筱，只等待
-          if (emailRequestSent) {
-            // 请求还在发送中，等待即可，不做任何操作
-            continue;
+          // 第三方验证未完成，只能等待，不能清空输入框
+          emailBtnRetryCount++;
+          if (emailBtnRetryCount > 60) {
+            log("邮箱按钮持续 disabled（第三方验证超时），刷新重试...", "warn"); break;
           }
-          // 请求未发送，先等待 3 秒给页面响应时间，再次检测
-          await sleep(3000);
-          const btnStateRetry = await page.evaluate(() => {
-            const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
-            if (!btn || btn.offsetParent === null) return "no-button";
-            if (btn.disabled) return "disabled";
-            return "clickable";
-          });
-          if (btnStateRetry === "clickable") {
-            // 页面已响应，下次循环直接点击
-            continue;
-          }
-          // 仍然 disabled，继续等待（不清空输入框）
-          emailRetryCount++;
-          if (emailRetryCount > 30) {
-            log("邮筱按钮持续 disabled，刷新重试...", "warn"); break;
-          }
-          log(`邮筱按钮持续 disabled，等待中（第 ${emailRetryCount} 次）...`, "warn");
+          if (emailBtnRetryCount % 10 === 0) log(`等待第三方验证完成（已等 ${emailBtnRetryCount}s）...`, "warn");
         } else if (btnState === "clickable") {
-          // 按钮可点击，执行点击
           await page.evaluate(async () => {
             const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
             if (btn) { await new Promise((r) => setTimeout(r, 800)); btn.click(); }
           });
-          log("邮筱确认按钮已点击", "success");
-          emailRequestSent = true; // 标记请求已发送，防止后续清空邮筱
-          await sleep(3000);
-          // 情况二：点击后检测页面是否有变化（密码框是否出现）
-          const afterClick = await page.evaluate(() => {
-            const pwdEl = document.querySelector('input[name="password"][type="password"]') as HTMLElement | null;
-            return !!(pwdEl && !pwdEl.classList.contains("hidden") && pwdEl.offsetParent !== null);
-          });
-          if (afterClick) {
-            emailContinueClicked = true;
-            emailRequestSent = false;
-            emailClickRetryCount = 0;
-            stepStallCount = 0;
-          } else {
-            // 页面未变化，再次尝试
-            emailClickRetryCount++;
-            if (emailClickRetryCount > 7) {
-              emailRequestSent = false;
-              log("邮筱按钮点击后页面始终未跳转，刷新重试...", "warn"); break;
-            }
-            log(`邮筱按钮已点击但页面未变化，第 ${emailClickRetryCount} 次重试...`, "warn");
-          }
+          emailBtnClickTime = Date.now();
+          log("邮箱 Continue 按钮已点击，等待 SendEmailVerifyCodeWithCaptcha 请求...", "success");
         } else {
           stepStallCount++;
-          if (stepStallCount >= 60) { log("邮筱确认按钮持续干不上，刷新重试...", "warn"); break; }
+          if (stepStallCount >= 60) { log("邮箱 Continue 按钮持续不可用，刷新重试...", "warn"); break; }
         }
         continue;
       }
@@ -732,50 +720,15 @@ async function handleLoginPage(
       }
 
       // 4. 点击密码 Continue
+      // 判断成功依据：SendEmailVerifyCodeWithCaptcha 请求是否发出（密码提交触发发送验证码）
+      // 如果点击后 3s 内无请求发出，清空密码重新输入再点击
       if (!pwdContinueClicked) {
-        await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
-        // 检测密码按钮状态
-        const pwdBtnState = await page.evaluate(() => {
-          const pwdEl = document.querySelector('input[name="password"][type="password"]') as HTMLElement | null;
-          const inPwdStep = pwdEl && !pwdEl.classList.contains("hidden") && pwdEl.offsetParent !== null;
-          if (!inPwdStep) return "not-in-pwd-step";
-          const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
-          if (!btn || btn.offsetParent === null) return "no-button";
-          if (btn.disabled) return "disabled"; // 情况一：按钮 disabled
-          return "clickable";
-        });
-
-        if (pwdBtnState === "not-in-pwd-step") {
-          // 已经不在密码步骤，可能已跳转到验证码步骤
+        // SendEmailVerifyCodeWithCaptcha 已发出 → 密码 Continue 已生效
+        if (sendEmailCodeRequestTime > 0) {
           pwdContinueClicked = true;
           stepStallCount = 0;
-          log("密码步骤已通过", "success");
-          await sleep(500);
-        } else if (pwdBtnState === "disabled") {
-          // 情况一：按钮 disabled，先等待 3 秒给页面响应时间，再次检测
-          await sleep(3000);
-          const pwdBtnStateRetry = await page.evaluate(() => {
-            const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
-            if (!btn || btn.offsetParent === null) return "no-button";
-            if (btn.disabled) return "disabled";
-            return "clickable";
-          });
-          if (pwdBtnStateRetry === "clickable") {
-            continue;
-          }
-          // 仍然 disabled，继续等待（不清空输入框）
-          pwdRetryCount++;
-          if (pwdRetryCount > 30) {
-            log("密码按钮持续 disabled，刷新重试...", "warn"); break;
-          }
-          log(`密码按钮持续 disabled，等待中（第 ${pwdRetryCount} 次）...`, "warn");
-        } else if (pwdBtnState === "clickable") {
-          // 按钮可点击，执行点击
-          await page.evaluate(async () => {
-            const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
-            if (btn) { await new Promise((r) => setTimeout(r, 800)); btn.click(); }
-          });
-          log("密码确认按钮已点击，后台获取邮箱验证码中...", "success");
+          log("密码 Continue 已生效（SendEmailVerifyCodeWithCaptcha 已发出）", "success");
+          // 开始后台获取邮箱验证码
           if (!verifyCodeFetching) {
             verifyCodeFetching = true;
             fetchVerifyCode(codeUrl).then((code) => {
@@ -784,26 +737,54 @@ async function handleLoginPage(
               else log("邮箱验证码获取超时", "warn");
             });
           }
-          await sleep(3000);
-          // 情况二：点击后检测验证码输入框是否出现
-          const afterPwdClick = await page.evaluate(() => {
-            const el = document.querySelector('input#verifyCode[name="verifyCode"]') as HTMLElement | null;
-            return !!(el && el.offsetParent !== null);
-          });
-          if (afterPwdClick) {
-            pwdContinueClicked = true;
-            pwdClickRetryCount = 0;
-            stepStallCount = 0;
-          } else {
-            pwdClickRetryCount++;
-            if (pwdClickRetryCount > 7) {
-              log("密码按钮点击后页面始终未变化，刷新重试...", "warn"); break;
-            }
-            log(`密码按钮已点击但页面未变化，第 ${pwdClickRetryCount} 次重试...`, "warn");
+          continue;
+        }
+
+        // 如果已点击按钮且超过 3s 仍无请求 → 清空密码重新输入
+        if (pwdBtnClickTime > 0 && Date.now() - pwdBtnClickTime > 3000) {
+          log(`密码 Continue 点击后 3s 无 SendEmailVerifyCodeWithCaptcha 请求，清空密码重新输入（第 ${pwdBtnRetryCount + 1} 次）...`, "warn");
+          pwdBtnRetryCount++;
+          if (pwdBtnRetryCount > 5) {
+            log("密码 Continue 多次无效，刷新重试...", "warn"); break;
           }
+          await clearField(page, 'input[name="password"][type="password"]');
+          pwdFilled = false;
+          pwdBtnClickTime = 0;
+          continue;
+        }
+
+        await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
+        const pwdBtnState = await page.evaluate(() => {
+          const pwdEl = document.querySelector('input[name="password"][type="password"]') as HTMLElement | null;
+          const inPwdStep = pwdEl && !pwdEl.classList.contains("hidden") && pwdEl.offsetParent !== null;
+          if (!inPwdStep) return "not-in-pwd-step";
+          const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
+          if (!btn || btn.offsetParent === null) return "no-button";
+          if (btn.disabled) return "disabled";
+          return "clickable";
+        });
+
+        if (pwdBtnState === "not-in-pwd-step") {
+          pwdContinueClicked = true;
+          stepStallCount = 0;
+          log("密码步骤已通过（验证码框已出现）", "success");
+          await sleep(500);
+        } else if (pwdBtnState === "disabled") {
+          pwdBtnRetryCount++;
+          if (pwdBtnRetryCount > 30) {
+            log("密码按钮持续 disabled，刷新重试...", "warn"); break;
+          }
+          if (pwdBtnRetryCount % 5 === 0) log(`密码按钮持续 disabled，等待中（第 ${pwdBtnRetryCount}s）...`, "warn");
+        } else if (pwdBtnState === "clickable") {
+          await page.evaluate(async () => {
+            const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
+            if (btn) { await new Promise((r) => setTimeout(r, 800)); btn.click(); }
+          });
+          pwdBtnClickTime = Date.now();
+          log("密码 Continue 按钮已点击，等待 SendEmailVerifyCodeWithCaptcha 请求（3s 内无请求将清空重输）...", "success");
         } else {
           stepStallCount++;
-          if (stepStallCount >= 60) { log("密码确认按钮持续干不上，刷新重试...", "warn"); break; }
+          if (stepStallCount >= 60) { log("密码 Continue 按钮持续不可用，刷新重试...", "warn"); break; }
         }
         continue;
       }
@@ -834,51 +815,15 @@ async function handleLoginPage(
         continue;
       }
 
-      // 6. 点击验证码确认，等待跳转（使用 verifyConfirmClicked 标志，对齐插件逻辑）
+      // 6. 点击验证码确认
+      // 判断成功依据：RegisterByEmail 请求是否发出
+      // 如果点击后 3s 内无请求发出，清空验证码重新输入再点击
       if (!verifyConfirmClicked) {
-        await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
-        // 检测验证码确认按钮状态
-        const verifyBtnState = await page.evaluate(() => {
-          const codeEl = document.querySelector('input#verifyCode[name="verifyCode"]') as HTMLInputElement | null;
-          if (!codeEl || !codeEl.value.trim()) return "no-code"; // 验证码输入框为空
-          const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
-          if (!btn || btn.offsetParent === null) return "no-button";
-          if (btn.disabled) return "disabled"; // 情况一：按钮 disabled
-          return "clickable";
-        });
-
-        if (verifyBtnState === "no-code") {
-          // 验证码输入框为空，重置允许重新填入
-          verifyCodeFilled = false;
-          stepStallCount++;
-          if (stepStallCount >= 30) { log("验证码输入框持续为空，刷新重试...", "warn"); break; }
-        } else if (verifyBtnState === "disabled") {
-          // 情况一：验证码已输入但按钮 disabled，先等待 3 秒给页面响应时间，再次检测
-          await sleep(3000);
-          const verifyBtnStateRetry = await page.evaluate(() => {
-            const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
-            if (!btn || btn.offsetParent === null) return "no-button";
-            if (btn.disabled) return "disabled";
-            return "clickable";
-          });
-          if (verifyBtnStateRetry === "clickable") {
-            continue;
-          }
-          // 仍然 disabled，继续等待（不清空输入框）
-          verifyCodeRetryCount++;
-          if (verifyCodeRetryCount > 30) {
-            log("验证码按钮持续 disabled，刷新重试...", "warn"); break;
-          }
-          log(`验证码按钮持续 disabled，等待中（第 ${verifyCodeRetryCount} 次）...`, "warn");
-        } else if (verifyBtnState === "clickable") {
-          // 按钮可点击，执行点击
-          await page.evaluate(async () => {
-            const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
-            if (btn) { await new Promise((r) => setTimeout(r, 800)); btn.click(); }
-          });
+        // RegisterByEmail 已发出 → 验证码确认按钮已生效，等待页面跳转
+        if (registerByEmailRequestTime > 0) {
           verifyConfirmClicked = true;
           stepStallCount = 0;
-          log("验证码已确认，等待页面跳转...");
+          log("验证码确认已生效（RegisterByEmail 已发出），等待页面跳转...");
           try {
             await page.waitForURL((url: URL) => url.toString().includes("manus.im/") && !url.toString().includes("manus.im/login") && !url.toString().includes("manus.im/register"), { timeout: 30000 });
             const navUrl = page.url();
@@ -903,17 +848,60 @@ async function handleLoginPage(
             log(`跳转到未知目标页面：${navUrl}`, "warn");
             break;
           } catch {
-            // 情况二：点击后 30 秒内页面未跳转，重置允许重试
-            verifyClickRetryCount++;
-            if (verifyClickRetryCount > 5) {
-              log("验证码确认按钮点击后页面始终未跳转，刷新重试...", "warn"); break;
+            verifyBtnRetryCount++;
+            if (verifyBtnRetryCount > 5) {
+              log("RegisterByEmail 已发出但页面始终未跳转，刷新重试...", "warn"); break;
             }
-            log(`验证码确认后页面未跳转，第 ${verifyClickRetryCount} 次重试...`, "warn");
-            verifyConfirmClicked = false; // 重置，允许再次点击
+            log(`RegisterByEmail 已发出但页面未跳转，第 ${verifyBtnRetryCount} 次等待...`, "warn");
+            verifyConfirmClicked = false;
+            registerByEmailRequestTime = 0; // 重置，允许重新监听
           }
+          continue;
+        }
+
+        // 如果已点击按钮且超过 3s 仍无 RegisterByEmail 请求 → 清空验证码重新输入
+        if (verifyBtnClickTime > 0 && Date.now() - verifyBtnClickTime > 3000) {
+          log(`验证码确认点击后 3s 无 RegisterByEmail 请求，清空验证码重新输入（第 ${verifyBtnRetryCount + 1} 次）...`, "warn");
+          verifyBtnRetryCount++;
+          if (verifyBtnRetryCount > 5) {
+            log("验证码确认多次无效，刷新重试...", "warn"); break;
+          }
+          await clearField(page, 'input#verifyCode[name="verifyCode"]');
+          verifyCodeFilled = false;
+          verifyBtnClickTime = 0;
+          continue;
+        }
+
+        await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
+        const verifyBtnState = await page.evaluate(() => {
+          const codeEl = document.querySelector('input#verifyCode[name="verifyCode"]') as HTMLInputElement | null;
+          if (!codeEl || !codeEl.value.trim()) return "no-code";
+          const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
+          if (!btn || btn.offsetParent === null) return "no-button";
+          if (btn.disabled) return "disabled";
+          return "clickable";
+        });
+
+        if (verifyBtnState === "no-code") {
+          verifyCodeFilled = false;
+          stepStallCount++;
+          if (stepStallCount >= 30) { log("验证码输入框持续为空，刷新重试...", "warn"); break; }
+        } else if (verifyBtnState === "disabled") {
+          verifyBtnRetryCount++;
+          if (verifyBtnRetryCount > 30) {
+            log("验证码按钮持续 disabled，刷新重试...", "warn"); break;
+          }
+          if (verifyBtnRetryCount % 5 === 0) log(`验证码按钮持续 disabled，等待中（第 ${verifyBtnRetryCount}s）...`, "warn");
+        } else if (verifyBtnState === "clickable") {
+          await page.evaluate(async () => {
+            const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
+            if (btn) { await new Promise((r) => setTimeout(r, 800)); btn.click(); }
+          });
+          verifyBtnClickTime = Date.now();
+          log("验证码确认按钮已点击，等待 RegisterByEmail 请求（3s 内无请求将清空重输）...", "success");
         } else {
           stepStallCount++;
-          if (stepStallCount >= 60) { log("确认按钮持续干不上，刷新重试...", "warn"); break; }
+          if (stepStallCount >= 60) { log("验证码确认按钮持续不可用，刷新重试...", "warn"); break; }
           continue;
         }
       }
@@ -983,6 +971,21 @@ async function handleVerifyPhonePage(
   let smsCode: string | null = null;
   let phoneMarkedUsed = false; // 提升到外层，超时时可读取
 
+  // ── API 请求发出时间戳（用于判断按钮点击是否生效）──
+  let sendPhoneCodeRequestTime = 0; // SendPhoneVerificationCode 请求发出时间
+  let bindPhoneRequestTime = 0;     // BindPhoneTrait 请求发出时间
+  page.on("request", (request) => {
+    const url = request.url();
+    if (url.includes("SendPhoneVerificationCode")) {
+      sendPhoneCodeRequestTime = Date.now();
+      log("[请求监听] SendPhoneVerificationCode 已发出");
+    }
+    if (url.includes("BindPhoneTrait")) {
+      bindPhoneRequestTime = Date.now();
+      log("[请求监听] BindPhoneTrait 已发出");
+    }
+  });
+
   // API 错误监听（对齐插件的 getRecentApiError 机制）
   type ApiError2 = { api: string; status: number; time: number };
   let lastApiError2: ApiError2 | null = null;
@@ -1035,14 +1038,17 @@ async function handleVerifyPhonePage(
 
     let countrySelected = false;
     let phoneFilled = false;
-    let phoneRetryCount = 0;      // 情况一：手机号输入后按钮 disabled 的清空重输次数
-    let phoneClickRetryCount = 0; // 情况二： Send code 按钮点击后页面未变化的重试次数
+    let phoneBtnClickTime = 0;    // Send code 按钮点击时间（等待 SendPhoneVerificationCode 请求发出）
+    let phoneBtnRetryCount = 0;   // Send code 按钮点击后 3s 无请求的重试次数
     let phoneSendClicked = false;
     let smsCodeFilled = false;
-    let smsCodeRetryCount = 0;    // 情况一：短信验证码输入后按钮 disabled 的清空重输次数
-    let smsClickRetryCount = 0;   // 情况二：手机号确认按钮点击后页面未跳转的重试次数
+    let smsBtnClickTime = 0;      // 短信验证码确认按钮点击时间（等待 BindPhoneTrait 请求发出）
+    let smsBtnRetryCount = 0;     // 短信验证码按钮点击后 3s 无请求的重试次数
     let stepStallCount = 0;
     const roundStart = Date.now();
+    // 每轮开始重置请求时间戳（防止上一轮的旧请求干扰当前轮）
+    sendPhoneCodeRequestTime = 0;
+    bindPhoneRequestTime = 0;
 
     for (let i = 0; i < 300; i++) {
       await sleep(1000);
@@ -1103,74 +1109,67 @@ async function handleVerifyPhonePage(
       }
 
       // C. 点击 Send code
+      // 判断成功依据：SendPhoneVerificationCode 请求是否发出
+      // 如果点击后 3s 内无请求发出，清空手机号重新输入再点击
       if (!phoneSendClicked) {
+        // SendPhoneVerificationCode 已发出 → Send code 已生效
+        if (sendPhoneCodeRequestTime > 0) {
+          phoneSendClicked = true;
+          stepStallCount = 0;
+          log("Send code 已生效（SendPhoneVerificationCode 已发出）", "success");
+          // 开始后台获取短信验证码
+          if (!smsCodeFetching) {
+            smsCodeFetching = true;
+            fetchSmsCode(phoneInfo.smsUrl).then(async (code) => {
+              smsCode = code;
+              if (code) {
+                log(`短信验证码已就绪：${code}`);
+                if (!phoneMarkedUsed) {
+                  await markPhoneUsedById(phoneInfo.backendPhoneId).catch(() => {});
+                  phoneMarkedUsed = true;
+                }
+              } else {
+                log("短信验证码获取超时", "warn");
+              }
+            });
+          }
+          continue;
+        }
+
+        // 如果已点击按钮且超过 3s 仍无请求 → 清空手机号重新输入
+        if (phoneBtnClickTime > 0 && Date.now() - phoneBtnClickTime > 3000) {
+          log(`Send code 点击后 3s 无 SendPhoneVerificationCode 请求，清空手机号重新输入（第 ${phoneBtnRetryCount + 1} 次）...`, "warn");
+          phoneBtnRetryCount++;
+          if (phoneBtnRetryCount > 5) {
+            log("Send code 多次无效，刷新重试...", "warn"); break;
+          }
+          await clearField(page, 'input#phone[type="tel"]');
+          phoneFilled = false;
+          phoneBtnClickTime = 0;
+          continue;
+        }
+
         await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
-        // 检测手机号发送按钮状态
         const phoneBtnState = await page.evaluate(() => {
           const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
           if (!btn || btn.offsetParent === null) return "no-button";
-          if (btn.disabled) return "disabled"; // 情况一：按钮 disabled
+          if (btn.disabled) return "disabled";
           return "clickable";
         });
 
         if (phoneBtnState === "disabled") {
-          // 情况一：手机号输入后按钮仍 disabled，先等待 1.5 秒给页面响应时间，再次检测
-          await sleep(1500);
-          const phoneBtnStateRetry = await page.evaluate(() => {
-            const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
-            if (!btn || btn.offsetParent === null) return "no-button";
-            if (btn.disabled) return "disabled";
-            return "clickable";
-          });
-          if (phoneBtnStateRetry === "clickable") {
-            continue;
-          }
-          // 仍然 disabled，继续等待（不清空输入框）
-          phoneRetryCount++;
-          if (phoneRetryCount > 30) {
+          phoneBtnRetryCount++;
+          if (phoneBtnRetryCount > 30) {
             log("Send code 按钮持续 disabled，刷新重试...", "warn"); break;
           }
-          log(`Send code 按钮持续 disabled，等待中（第 ${phoneRetryCount} 次）...`, "warn");
+          if (phoneBtnRetryCount % 5 === 0) log(`Send code 按钮持续 disabled，等待中（第 ${phoneBtnRetryCount}s）...`, "warn");
         } else if (phoneBtnState === "clickable") {
-          // 按钮可点击，执行点击
           await page.evaluate(async () => {
             const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
             if (btn) { await new Promise((r) => setTimeout(r, 500)); btn.click(); }
           });
-          log("发送验证码按钮已点击，后台获取短信验证码中...");
-          await sleep(2500);
-          // 情况二：点击后检测短信验证码输入框是否出现
-          const afterPhoneClick = await page.evaluate(() => {
-            const el = document.querySelector("input#phone-code") as HTMLElement | null;
-            return !!(el && el.offsetParent !== null);
-          });
-          if (afterPhoneClick) {
-            phoneSendClicked = true;
-            phoneClickRetryCount = 0;
-            stepStallCount = 0;
-            if (!smsCodeFetching) {
-              smsCodeFetching = true;
-              fetchSmsCode(phoneInfo.smsUrl).then(async (code) => {
-                smsCode = code;
-                if (code) {
-                  log(`短信验证码已就绪：${code}`);
-                  if (!phoneMarkedUsed) {
-                    await markPhoneUsedById(phoneInfo.backendPhoneId).catch(() => {});
-                    phoneMarkedUsed = true;
-                  }
-                } else {
-                  log("短信验证码获取超时", "warn");
-                }
-              });
-            }
-          } else {
-            // 页面未变化，再次尝试
-            phoneClickRetryCount++;
-            if (phoneClickRetryCount > 3) {
-              log("发送验证码按钮点击后页面始终未变化，刷新重试...", "warn"); break;
-            }
-            log(`发送按钮已点击但页面未变化，第 ${phoneClickRetryCount} 次重试...`, "warn");
-          }
+          phoneBtnClickTime = Date.now();
+          log("Send code 按钮已点击，等待 SendPhoneVerificationCode 请求（3s 内无请求将清空重输）...", "success");
         } else {
           stepStallCount++;
           if (stepStallCount >= 20) { log("发送验证码按钮卡住，刷新重试...", "warn"); break; }
@@ -1205,59 +1204,67 @@ async function handleVerifyPhonePage(
       }
 
       // E. 点击确认，等待跳转到 /app
-      await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
-      // 检测短信验证码确认按钮状态
-      const smsBtnState = await page.evaluate(() => {
-        const codeEl = document.querySelector("input#phone-code") as HTMLInputElement | null;
-        if (!codeEl || !codeEl.value.trim()) return "no-code";
-        const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
-        if (!btn || btn.offsetParent === null) return "no-button";
-        if (btn.disabled) return "disabled"; // 情况一：按钮 disabled
-        return "clickable";
-      });
+      // 判断成功依据：BindPhoneTrait 请求是否发出
+      // 如果点击后 3s 内无请求发出，清空短信验证码重新输入再点击
 
-      if (smsBtnState === "no-code") {
-        // 短信验证码输入框为空，重置允许重新填入
-        smsCodeFilled = false;
-        stepStallCount++;
-        if (stepStallCount >= 10) { log("短信验证码输入框持续为空，刷新重试...", "warn"); break; }
-      } else if (smsBtnState === "disabled") {
-        // 情况一：短信验证码已输入但按钮 disabled，先等待 1.5 秒给页面响应时间，再次检测
-        await sleep(1500);
-        const smsBtnStateRetry = await page.evaluate(() => {
-          const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
-          if (!btn || btn.offsetParent === null) return "no-button";
-          if (btn.disabled) return "disabled";
-          return "clickable";
-        });
-        if (smsBtnStateRetry === "clickable") {
-          continue;
-        }
-        // 仍然 disabled，继续等待（不清空输入框）
-        smsCodeRetryCount++;
-        if (smsCodeRetryCount > 30) {
-          log("短信验证码按钮持续 disabled，刷新重试...", "warn"); break;
-        }
-        log(`短信验证码按钮持续 disabled，等待中（第 ${smsCodeRetryCount} 次）...`, "warn");
-      } else if (smsBtnState === "clickable") {
-        // 按钮可点击，执行点击
-        await page.evaluate(async () => {
-          const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
-          if (btn) { await new Promise((r) => setTimeout(r, 500)); btn.click(); }
-        });
-        log("手机号确认按钮已点击，等待跳转至 /app...");
+      // BindPhoneTrait 已发出 → 确认按钮已生效，等待跳转
+      if (bindPhoneRequestTime > 0) {
+        log("BindPhoneTrait 已发出，等待页面跳转到 /app...");
         try {
           await page.waitForURL((url: URL) => url.toString().includes("manus.im/app"), { timeout: 30000 });
           log("阶段二完成 → 已进入 /app");
           return { result: "app", phoneInfo };
         } catch {
-          // 情况二：点击后 30 秒内页面未跳转，重置允许重试
-          smsClickRetryCount++;
-          if (smsClickRetryCount > 3) {
-            log("手机号确认按钮点击后页面始终未跳转，刷新重试...", "warn"); break;
+          smsBtnRetryCount++;
+          if (smsBtnRetryCount > 3) {
+            log("BindPhoneTrait 已发出但页面始终未跳转，刷新重试...", "warn"); break;
           }
-          log(`手机号确认按钮已点击但页面未跳转，第 ${smsClickRetryCount} 次重试...`, "warn");
+          log(`BindPhoneTrait 已发出但页面未跳转，第 ${smsBtnRetryCount} 次等待...`, "warn");
+          bindPhoneRequestTime = 0; // 重置，允许重新监听
         }
+        continue;
+      }
+
+      // 如果已点击按钮且超过 3s 仍无 BindPhoneTrait 请求 → 清空短信验证码重新输入
+      if (smsBtnClickTime > 0 && Date.now() - smsBtnClickTime > 3000) {
+        log(`短信验证码确认点击后 3s 无 BindPhoneTrait 请求，清空短信验证码重新输入（第 ${smsBtnRetryCount + 1} 次）...`, "warn");
+        smsBtnRetryCount++;
+        if (smsBtnRetryCount > 5) {
+          log("短信验证码确认多次无效，刷新重试...", "warn"); break;
+        }
+        await clearField(page, "input#phone-code");
+        smsCodeFilled = false;
+        smsBtnClickTime = 0;
+        continue;
+      }
+
+      await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
+      const smsBtnState = await page.evaluate(() => {
+        const codeEl = document.querySelector("input#phone-code") as HTMLInputElement | null;
+        if (!codeEl || !codeEl.value.trim()) return "no-code";
+        const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
+        if (!btn || btn.offsetParent === null) return "no-button";
+        if (btn.disabled) return "disabled";
+        return "clickable";
+      });
+
+      if (smsBtnState === "no-code") {
+        smsCodeFilled = false;
+        stepStallCount++;
+        if (stepStallCount >= 10) { log("短信验证码输入框持续为空，刷新重试...", "warn"); break; }
+      } else if (smsBtnState === "disabled") {
+        smsBtnRetryCount++;
+        if (smsBtnRetryCount > 30) {
+          log("短信验证码按钮持续 disabled，刷新重试...", "warn"); break;
+        }
+        if (smsBtnRetryCount % 5 === 0) log(`短信验证码按钮持续 disabled，等待中（第 ${smsBtnRetryCount}s）...`, "warn");
+      } else if (smsBtnState === "clickable") {
+        await page.evaluate(async () => {
+          const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
+          if (btn) { await new Promise((r) => setTimeout(r, 500)); btn.click(); }
+        });
+        smsBtnClickTime = Date.now();
+        log("短信验证码确认按钮已点击，等待 BindPhoneTrait 请求（3s 内无请求将清空重输）...", "success");
       } else {
         stepStallCount++;
         if (stepStallCount >= 20) { log("手机号确认按钮卡住，刷新重试...", "warn"); break; }
@@ -1635,6 +1642,19 @@ async function typeIntoField(page: Page, selector: string, value: string): Promi
     el.dispatchEvent(new Event("change", { bubbles: true }));
     return true;
   }, { sel: selector, val: value });
+}
+
+/** 清空输入框（React setter 触发、适用于重新输入前的清除操作） */
+async function clearField(page: Page, selector: string): Promise<void> {
+  await page.evaluate(async (sel: string) => {
+    const el = document.querySelector(sel) as HTMLInputElement | null;
+    if (!el) return;
+    el.focus();
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+    if (setter) setter.call(el, ""); else el.value = "";
+    el.dispatchEvent(new Event("input",  { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }, selector);
 }
 
 /** 选择国家（与插件的国家选择逻辑完全对齐） */
