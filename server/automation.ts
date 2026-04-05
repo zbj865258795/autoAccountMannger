@@ -499,15 +499,26 @@ async function handleLoginPage(
     try {
       await page.waitForFunction(() => document.readyState === "complete", { timeout: 15000 });
     } catch { /* 容错 */ }
+    // 等待 URL 稳定在 /login 页面，防止在跳转过程中执行操作导致 Execution context was destroyed
+    try {
+      await page.waitForURL(
+        (u: URL) => u.toString().includes("manus.im/login") || u.toString().includes("manus.im/register"),
+        { timeout: 30000 }
+      );
+    } catch {
+      const curUrl = page.url();
+      log(`阶段一：等待 /login URL 超时，当前 URL：${curUrl}，继续尝试...`, "warn");
+    }
+    // URL 稳定后再等待页面完全加载
+    try {
+      await page.waitForLoadState("domcontentloaded", { timeout: 15000 });
+    } catch { /* 容错 */ }
+    try {
+      await page.waitForLoadState("networkidle", { timeout: 20000 });
+    } catch { /* 网络慢时容错 */ }
     await sleep(1500);
     // 每轮开始清除上一轮遗留的 API 错误状态（对齐插件的 lastApiResult = null）
     lastApiError = null;
-    const url = page.url();
-    if (!url.includes("manus.im/login") && !url.includes("manus.im/register") &&
-        !url.includes("manus.im/signup") && !url.includes("manus.im/invitation")) {
-      log(`阶段一：当前 URL 异常（${url}），等待跳转...`);
-      await sleep(2000);
-    }
     // 页面加载后模拟真人浏览行为（随机滚动 + 鼠标漫游）
     await humanBrowse(page);
 
@@ -953,15 +964,26 @@ async function handleVerifyPhonePage(
     try {
       await page.waitForFunction(() => document.readyState === "complete", { timeout: 15000 });
     } catch { /* 容错 */ }
+    // 等待 URL 稳定在 /verify-phone 页面，防止在跳转过程中执行操作导致 Execution context was destroyed
+    try {
+      await page.waitForURL(
+        (u: URL) => u.toString().includes("manus.im/verify-phone"),
+        { timeout: 30000 }
+      );
+    } catch {
+      const curUrl = page.url();
+      log(`阶段二：等待 /verify-phone URL 超时，当前 URL：${curUrl}，继续尝试...`, "warn");
+    }
+    // URL 稳定后再等待页面完全加载
+    try {
+      await page.waitForLoadState("domcontentloaded", { timeout: 15000 });
+    } catch { /* 容错 */ }
+    try {
+      await page.waitForLoadState("networkidle", { timeout: 20000 });
+    } catch { /* 网络慢时容错 */ }
     await sleep(1500);
     // 每轮开始清除上一轮遗留的 API 错误状态（对齐插件的 lastApiResult = null）
     lastApiError2 = null;
-
-    const url = page.url();
-    if (!url.includes("manus.im/verify-phone")) {
-      log(`阶段二：当前 URL 异常（${url}），等待跳转...`);
-      await sleep(2000);
-    }
 
     let countrySelected = false;
     let phoneFilled = false;
@@ -1058,9 +1080,9 @@ async function handleVerifyPhonePage(
           // 仍然 disabled，继续等待（不清空输入框）
           phoneRetryCount++;
           if (phoneRetryCount > 30) {
-            log("手机号按钮持续 disabled，刷新重试...", "warn"); break;
+            log("Send code 按钮持续 disabled，刷新重试...", "warn"); break;
           }
-          log(`手机号按钮持续 disabled，等待中（第 ${phoneRetryCount} 次）...`, "warn");
+          log(`Send code 按钮持续 disabled，等待中（第 ${phoneRetryCount} 次）...`, "warn");
         } else if (phoneBtnState === "clickable") {
           // 按钮可点击，执行点击
           await page.evaluate(async () => {
