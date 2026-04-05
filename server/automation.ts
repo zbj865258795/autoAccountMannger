@@ -464,6 +464,7 @@ async function handleLoginPage(
   let email = "";
   let codeUrl = "";
   let emailPurchased = false; // 标记是否已购买邮箱（全局仅购买一次）
+  let emailBuyRetryCount = 0; // 邮箱购买失败重试次数（独立于 refreshCount）
 
   // ── API 请求发出时间戳（用于判断按钮点击是否生效）──
   // 监听 request（不是 response），这样可以在请求发出的第一时间就知道按钮点击已生效
@@ -554,11 +555,10 @@ async function handleLoginPage(
           emailPurchased = true;
           log(`邮箱购买成功：${email}`, "success");
         } catch (buyErr: any) {
-          log(`邮箱购买失败：${buyErr.message}，刷新重试...`, "error");
-          // 购买失败时刷新页面重试
-          refreshCount++;
-          if (refreshCount > MAX_REFRESHES) {
-            log(`邮箱购买失败且已达最大刷新次数，放弃`, "error");
+          emailBuyRetryCount++;
+          log(`邮箱购买失败（第 ${emailBuyRetryCount} 次）：${buyErr.message}，刷新重试...`, "error");
+          if (emailBuyRetryCount > 3) {
+            log(`邮箱购买失败已超过 3 次，放弃`, "error");
             return "error";
           }
           try {
@@ -624,16 +624,20 @@ async function handleLoginPage(
 
       // 1. 输入邮箱
       if (!emailFilled) {
-        log("正在填写邮箱...");
-        await simulateMouseMove(page, 'input#email[autocomplete="email"], input#email[type="email"], input#email');
-        const ok = await typeIntoField(page, 'input#email[autocomplete="email"], input#email[type="email"], input#email', email);
-        if (ok) {
-          emailFilled = true;
-          stepStallCount = 0;
-          log(`邮箱已填写：${email}`, "success");
-        } else {
-          stepStallCount++;
-          if (stepStallCount >= 60) { log("邮筱输入框持续干不上，刷新重试...", "warn"); break; }
+        try {
+          log("正在填写邮箱...");
+          await simulateMouseMove(page, 'input#email[autocomplete="email"], input#email[type="email"], input#email');
+          const ok = await typeIntoField(page, 'input#email[autocomplete="email"], input#email[type="email"], input#email', email);
+          if (ok) {
+            emailFilled = true;
+            stepStallCount = 0;
+            log(`邮箱已填写：${email}`, "success");
+          } else {
+            stepStallCount++;
+            if (stepStallCount >= 60) { log("邮筱输入框持续干不上，刷新重试...", "warn"); break; }
+          }
+        } catch (e: any) {
+          log(`步骤1（输入邮箱）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
       }
@@ -645,59 +649,69 @@ async function handleLoginPage(
         // SendEmailVerifyCodeWithCaptcha 已发出 → 按钮点击已生效
         if (sendEmailCodeRequestTime > 0) {
           emailContinueClicked = true;
+          sendEmailCodeRequestTime = 0; // 重置，让步骤4能独立判断新的请求
           stepStallCount = 0;
           log("邮箱 Continue 已生效（SendEmailVerifyCodeWithCaptcha 已发出）", "success");
           continue;
         }
 
-        await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
-        const btnState = await page.evaluate(() => {
-          const pwdEl = document.querySelector('input[name="password"][type="password"]') as HTMLElement | null;
-          const inEmailStep = !pwdEl || pwdEl.classList.contains("hidden") || pwdEl.offsetParent === null;
-          if (!inEmailStep) return "already-passed";
-          const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
-          if (!btn || btn.offsetParent === null) return "no-button";
-          if (btn.disabled) return "disabled";
-          return "clickable";
-        });
-
-        if (btnState === "already-passed") {
-          emailContinueClicked = true;
-          stepStallCount = 0;
-          log("邮箱步骤已通过（密码框已出现）", "success");
-          await sleep(500);
-        } else if (btnState === "disabled") {
-          // 第三方验证未完成，只能等待，不能清空输入框
-          emailBtnRetryCount++;
-          if (emailBtnRetryCount > 60) {
-            log("邮箱按钮持续 disabled（第三方验证超时），刷新重试...", "warn"); break;
-          }
-          if (emailBtnRetryCount % 10 === 0) log(`等待第三方验证完成（已等 ${emailBtnRetryCount}s）...`, "warn");
-        } else if (btnState === "clickable") {
-          await page.evaluate(async () => {
-            const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
-            if (btn) { await new Promise((r) => setTimeout(r, 800)); btn.click(); }
+        try {
+          await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
+          const btnState = await page.evaluate(() => {
+            const pwdEl = document.querySelector('input[name="password"][type="password"]') as HTMLElement | null;
+            const inEmailStep = !pwdEl || pwdEl.classList.contains("hidden") || pwdEl.offsetParent === null;
+            if (!inEmailStep) return "already-passed";
+            const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
+            if (!btn || btn.offsetParent === null) return "no-button";
+            if (btn.disabled) return "disabled";
+            return "clickable";
           });
-          emailBtnClickTime = Date.now();
-          log("邮箱 Continue 按钮已点击，等待 SendEmailVerifyCodeWithCaptcha 请求...", "success");
-        } else {
-          stepStallCount++;
-          if (stepStallCount >= 60) { log("邮箱 Continue 按钮持续不可用，刷新重试...", "warn"); break; }
+
+          if (btnState === "already-passed") {
+            emailContinueClicked = true;
+            sendEmailCodeRequestTime = 0; // 重置，让步骤4能独立判断新的请求
+            stepStallCount = 0;
+            log("邮箱步骤已通过（密码框已出现）", "success");
+            await sleep(500);
+          } else if (btnState === "disabled") {
+            // 第三方验证未完成，只能等待，不能清空输入框
+            emailBtnRetryCount++;
+            if (emailBtnRetryCount > 60) {
+              log("邮箱按钮持续 disabled（第三方验证超时），刷新重试...", "warn"); break;
+            }
+            if (emailBtnRetryCount % 10 === 0) log(`等待第三方验证完成（已等 ${emailBtnRetryCount}s）...`, "warn");
+          } else if (btnState === "clickable") {
+            await page.evaluate(async () => {
+              const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
+              if (btn) { await new Promise((r) => setTimeout(r, 800)); btn.click(); }
+            });
+            emailBtnClickTime = Date.now();
+            log("邮箱 Continue 按钮已点击，等待 SendEmailVerifyCodeWithCaptcha 请求...", "success");
+          } else {
+            stepStallCount++;
+            if (stepStallCount >= 60) { log("邮箱 Continue 按钮持续不可用，刷新重试...", "warn"); break; }
+          }
+        } catch (e: any) {
+          log(`步骤2（邮箱 Continue）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
       }
 
       // 3. 输入密码
       if (!pwdFilled) {
-        await simulateMouseMove(page, 'input[name="password"][type="password"]');
-        const ok = await typeIntoField(page, 'input[name="password"][type="password"]', password);
-        if (ok) {
-          pwdFilled = true;
-          stepStallCount = 0;
-          log("密码已填写", "success");
-        } else {
-          stepStallCount++;
-          if (stepStallCount >= 60) { log("密码输入框持续干不上，刷新重试...", "warn"); break; }
+        try {
+          await simulateMouseMove(page, 'input[name="password"][type="password"]');
+          const ok = await typeIntoField(page, 'input[name="password"][type="password"]', password);
+          if (ok) {
+            pwdFilled = true;
+            stepStallCount = 0;
+            log("密码已填写", "success");
+          } else {
+            stepStallCount++;
+            if (stepStallCount >= 60) { log("密码输入框持续干不上，刷新重试...", "warn"); break; }
+          }
+        } catch (e: any) {
+          log(`步骤3（输入密码）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
       }
@@ -730,70 +744,82 @@ async function handleLoginPage(
           if (pwdBtnRetryCount > 5) {
             log("密码 Continue 多次无效，刷新重试...", "warn"); break;
           }
-          await clearField(page, 'input[name="password"][type="password"]');
+          try {
+            await clearField(page, 'input[name="password"][type="password"]');
+          } catch (e: any) {
+            log(`清空密码输入框异常：${e.message}`, "warn");
+          }
           pwdFilled = false;
           pwdBtnClickTime = 0;
           continue;
         }
 
-        await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
-        const pwdBtnState = await page.evaluate(() => {
-          const pwdEl = document.querySelector('input[name="password"][type="password"]') as HTMLElement | null;
-          const inPwdStep = pwdEl && !pwdEl.classList.contains("hidden") && pwdEl.offsetParent !== null;
-          if (!inPwdStep) return "not-in-pwd-step";
-          const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
-          if (!btn || btn.offsetParent === null) return "no-button";
-          if (btn.disabled) return "disabled";
-          return "clickable";
-        });
-
-        if (pwdBtnState === "not-in-pwd-step") {
-          pwdContinueClicked = true;
-          stepStallCount = 0;
-          log("密码步骤已通过（验证码框已出现）", "success");
-          await sleep(500);
-        } else if (pwdBtnState === "disabled") {
-          pwdBtnRetryCount++;
-          if (pwdBtnRetryCount > 30) {
-            log("密码按钮持续 disabled，刷新重试...", "warn"); break;
-          }
-          if (pwdBtnRetryCount % 5 === 0) log(`密码按钮持续 disabled，等待中（第 ${pwdBtnRetryCount}s）...`, "warn");
-        } else if (pwdBtnState === "clickable") {
-          await page.evaluate(async () => {
-            const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
-            if (btn) { await new Promise((r) => setTimeout(r, 800)); btn.click(); }
+        try {
+          await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
+          const pwdBtnState = await page.evaluate(() => {
+            const pwdEl = document.querySelector('input[name="password"][type="password"]') as HTMLElement | null;
+            const inPwdStep = pwdEl && !pwdEl.classList.contains("hidden") && pwdEl.offsetParent !== null;
+            if (!inPwdStep) return "not-in-pwd-step";
+            const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
+            if (!btn || btn.offsetParent === null) return "no-button";
+            if (btn.disabled) return "disabled";
+            return "clickable";
           });
-          pwdBtnClickTime = Date.now();
-          log("密码 Continue 按钮已点击，等待 SendEmailVerifyCodeWithCaptcha 请求（3s 内无请求将清空重输）...", "success");
-        } else {
-          stepStallCount++;
-          if (stepStallCount >= 60) { log("密码 Continue 按钮持续不可用，刷新重试...", "warn"); break; }
+
+          if (pwdBtnState === "not-in-pwd-step") {
+            pwdContinueClicked = true;
+            stepStallCount = 0;
+            log("密码步骤已通过（验证码框已出现）", "success");
+            await sleep(500);
+          } else if (pwdBtnState === "disabled") {
+            pwdBtnRetryCount++;
+            if (pwdBtnRetryCount > 30) {
+              log("密码按钮持续 disabled，刷新重试...", "warn"); break;
+            }
+            if (pwdBtnRetryCount % 5 === 0) log(`密码按钮持续 disabled，等待中（第 ${pwdBtnRetryCount}s）...`, "warn");
+          } else if (pwdBtnState === "clickable") {
+            await page.evaluate(async () => {
+              const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
+              if (btn) { await new Promise((r) => setTimeout(r, 800)); btn.click(); }
+            });
+            pwdBtnClickTime = Date.now();
+            log("密码 Continue 按钮已点击，等待 SendEmailVerifyCodeWithCaptcha 请求（3s 内无请求将清空重输）...", "success");
+          } else {
+            stepStallCount++;
+            if (stepStallCount >= 60) { log("密码 Continue 按钮持续不可用，刷新重试...", "warn"); break; }
+          }
+        } catch (e: any) {
+          log(`步骤4（密码 Continue）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
       }
 
       // 5. 填入邮箱验证码
       if (!verifyCodeFilled) {
-        const verifyVisible = await page.evaluate(() => {
-          const el = document.querySelector('input#verifyCode[name="verifyCode"]') as HTMLElement | null;
-          return !!(el && el.offsetParent !== null);
-        });
-        if (verifyVisible) {
-          if (verifyCode) {
-            await simulateMouseMove(page, 'input#verifyCode[name="verifyCode"]');
-            const ok = await typeIntoField(page, 'input#verifyCode[name="verifyCode"]', verifyCode);
-            if (ok) {
-              verifyCodeFilled = true;
-              stepStallCount = 0;
-              log(`邮箱验证码已填入：${verifyCode}`);
-              await sleep(800);
+        try {
+          const verifyVisible = await page.evaluate(() => {
+            const el = document.querySelector('input#verifyCode[name="verifyCode"]') as HTMLElement | null;
+            return !!(el && el.offsetParent !== null);
+          });
+          if (verifyVisible) {
+            if (verifyCode) {
+              await simulateMouseMove(page, 'input#verifyCode[name="verifyCode"]');
+              const ok = await typeIntoField(page, 'input#verifyCode[name="verifyCode"]', verifyCode);
+              if (ok) {
+                verifyCodeFilled = true;
+                stepStallCount = 0;
+                log(`邮箱验证码已填入：${verifyCode}`);
+                await sleep(800);
+              }
+            } else {
+              if (i % 5 === 0) log("等待邮箱验证码...");
             }
           } else {
-            if (i % 5 === 0) log("等待邮箱验证码...");
+            stepStallCount++;
+            if (stepStallCount >= 60) { log("邮筱验证码输入框持续干不上，刷新重试...", "warn"); break; }
           }
-        } else {
-          stepStallCount++;
-          if (stepStallCount >= 60) { log("邮筱验证码输入框持续干不上，刷新重试...", "warn"); break; }
+        } catch (e: any) {
+          log(`步骤5（填入邮箱验证码）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
       }
@@ -849,43 +875,50 @@ async function handleLoginPage(
           if (verifyBtnRetryCount > 5) {
             log("验证码确认多次无效，刷新重试...", "warn"); break;
           }
-          await clearField(page, 'input#verifyCode[name="verifyCode"]');
+          try {
+            await clearField(page, 'input#verifyCode[name="verifyCode"]');
+          } catch (e: any) {
+            log(`清空验证码输入框异常：${e.message}`, "warn");
+          }
           verifyCodeFilled = false;
           verifyBtnClickTime = 0;
           continue;
         }
 
-        await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
-        const verifyBtnState = await page.evaluate(() => {
-          const codeEl = document.querySelector('input#verifyCode[name="verifyCode"]') as HTMLInputElement | null;
-          if (!codeEl || !codeEl.value.trim()) return "no-code";
-          const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
-          if (!btn || btn.offsetParent === null) return "no-button";
-          if (btn.disabled) return "disabled";
-          return "clickable";
-        });
-
-        if (verifyBtnState === "no-code") {
-          verifyCodeFilled = false;
-          stepStallCount++;
-          if (stepStallCount >= 30) { log("验证码输入框持续为空，刷新重试...", "warn"); break; }
-        } else if (verifyBtnState === "disabled") {
-          verifyBtnRetryCount++;
-          if (verifyBtnRetryCount > 30) {
-            log("验证码按钮持续 disabled，刷新重试...", "warn"); break;
-          }
-          if (verifyBtnRetryCount % 5 === 0) log(`验证码按钮持续 disabled，等待中（第 ${verifyBtnRetryCount}s）...`, "warn");
-        } else if (verifyBtnState === "clickable") {
-          await page.evaluate(async () => {
-            const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
-            if (btn) { await new Promise((r) => setTimeout(r, 800)); btn.click(); }
+        try {
+          await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
+          const verifyBtnState = await page.evaluate(() => {
+            const codeEl = document.querySelector('input#verifyCode[name="verifyCode"]') as HTMLInputElement | null;
+            if (!codeEl || !codeEl.value.trim()) return "no-code";
+            const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
+            if (!btn || btn.offsetParent === null) return "no-button";
+            if (btn.disabled) return "disabled";
+            return "clickable";
           });
-          verifyBtnClickTime = Date.now();
-          log("验证码确认按钮已点击，等待 RegisterByEmail 请求（3s 内无请求将清空重输）...", "success");
-        } else {
-          stepStallCount++;
-          if (stepStallCount >= 60) { log("验证码确认按钮持续不可用，刷新重试...", "warn"); break; }
-          continue;
+
+          if (verifyBtnState === "no-code") {
+            verifyCodeFilled = false;
+            stepStallCount++;
+            if (stepStallCount >= 30) { log("验证码输入框持续为空，刷新重试...", "warn"); break; }
+          } else if (verifyBtnState === "disabled") {
+            verifyBtnRetryCount++;
+            if (verifyBtnRetryCount > 30) {
+              log("验证码按钮持续 disabled，刷新重试...", "warn"); break;
+            }
+            if (verifyBtnRetryCount % 5 === 0) log(`验证码按钮持续 disabled，等待中（第 ${verifyBtnRetryCount}s）...`, "warn");
+          } else if (verifyBtnState === "clickable") {
+            await page.evaluate(async () => {
+              const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
+              if (btn) { await new Promise((r) => setTimeout(r, 800)); btn.click(); }
+            });
+            verifyBtnClickTime = Date.now();
+            log("验证码确认按钮已点击，等待 RegisterByEmail 请求（3s 内无请求将清空重输）...", "success");
+          } else {
+            stepStallCount++;
+            if (stepStallCount >= 60) { log("验证码确认按钮持续不可用，刷新重试...", "warn"); break; }
+          }
+        } catch (e: any) {
+          log(`步骤6（验证码确认）异常：${e.message}，等待重试...`, "warn");
         }
       }
     }
@@ -1037,31 +1070,39 @@ async function handleVerifyPhonePage(
 
       // A. 选择国家
       if (!countrySelected) {
-        const result = await selectCountry(page, phoneInfo.iso, phoneInfo.dialCode, log);
-        if (result) {
-          countrySelected = true;
-          stepStallCount = 0;
-          log(`国家已选择：${phoneInfo.iso}（${phoneInfo.dialCode}）`);
-          await sleep(800);
-        } else {
-          stepStallCount++;
-          if (stepStallCount >= 20) { log("国家选择卡住，刷新重试...", "warn"); break; }
+        try {
+          const result = await selectCountry(page, phoneInfo.iso, phoneInfo.dialCode, log);
+          if (result) {
+            countrySelected = true;
+            stepStallCount = 0;
+            log(`国家已选择：${phoneInfo.iso}（${phoneInfo.dialCode}）`);
+            await sleep(800);
+          } else {
+            stepStallCount++;
+            if (stepStallCount >= 20) { log("国家选择卡住，刷新重试...", "warn"); break; }
+          }
+        } catch (e: any) {
+          log(`步骤A（选择国家）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
       }
 
       // B. 输入手机号
       if (!phoneFilled) {
-        await simulateMouseMove(page, 'input#phone[type="tel"]');
-        const ok = await typeIntoField(page, 'input#phone[type="tel"]', phoneInfo.phoneNumber);
-        if (ok) {
-          phoneFilled = true;
-          stepStallCount = 0;
-          log(`手机号已填写：${phoneInfo.phoneNumber}`);
-          await sleep(800);
-        } else {
-          stepStallCount++;
-          if (stepStallCount >= 20) { log("手机号输入框卡住，刷新重试...", "warn"); break; }
+        try {
+          await simulateMouseMove(page, 'input#phone[type="tel"]');
+          const ok = await typeIntoField(page, 'input#phone[type="tel"]', phoneInfo.phoneNumber);
+          if (ok) {
+            phoneFilled = true;
+            stepStallCount = 0;
+            log(`手机号已填写：${phoneInfo.phoneNumber}`);
+            await sleep(800);
+          } else {
+            stepStallCount++;
+            if (stepStallCount >= 20) { log("手机号输入框卡住，刷新重试...", "warn"); break; }
+          }
+        } catch (e: any) {
+          log(`步骤B（输入手机号）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
       }
@@ -1115,62 +1156,74 @@ async function handleVerifyPhonePage(
           if (phoneBtnRetryCount > 5) {
             log("Send code 多次无效，刷新重试...", "warn"); break;
           }
-          await clearField(page, 'input#phone[type="tel"]');
+          try {
+            await clearField(page, 'input#phone[type="tel"]');
+          } catch (e: any) {
+            log(`清空手机号输入框异常：${e.message}`, "warn");
+          }
           phoneFilled = false;
           phoneBtnClickTime = 0;
           continue;
         }
 
-        await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
-        const phoneBtnState = await page.evaluate(() => {
-          const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
-          if (!btn || btn.offsetParent === null) return "no-button";
-          if (btn.disabled) return "disabled";
-          return "clickable";
-        });
-
-        if (phoneBtnState === "disabled") {
-          phoneBtnRetryCount++;
-          if (phoneBtnRetryCount > 30) {
-            log("Send code 按钮持续 disabled，刷新重试...", "warn"); break;
-          }
-          if (phoneBtnRetryCount % 5 === 0) log(`Send code 按钮持续 disabled，等待中（第 ${phoneBtnRetryCount}s）...`, "warn");
-        } else if (phoneBtnState === "clickable") {
-          await page.evaluate(async () => {
-            const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
-            if (btn) { await new Promise((r) => setTimeout(r, 500)); btn.click(); }
+        try {
+          await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
+          const phoneBtnState = await page.evaluate(() => {
+            const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
+            if (!btn || btn.offsetParent === null) return "no-button";
+            if (btn.disabled) return "disabled";
+            return "clickable";
           });
-          phoneBtnClickTime = Date.now();
-          log("Send code 按钮已点击，等待 SendPhoneVerificationCode 请求（3s 内无请求将清空重输）...", "success");
-        } else {
-          stepStallCount++;
-          if (stepStallCount >= 20) { log("发送验证码按钮卡住，刷新重试...", "warn"); break; }
+
+          if (phoneBtnState === "disabled") {
+            phoneBtnRetryCount++;
+            if (phoneBtnRetryCount > 30) {
+              log("Send code 按钮持续 disabled，刷新重试...", "warn"); break;
+            }
+            if (phoneBtnRetryCount % 5 === 0) log(`Send code 按钮持续 disabled，等待中（第 ${phoneBtnRetryCount}s）...`, "warn");
+          } else if (phoneBtnState === "clickable") {
+            await page.evaluate(async () => {
+              const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
+              if (btn) { await new Promise((r) => setTimeout(r, 500)); btn.click(); }
+            });
+            phoneBtnClickTime = Date.now();
+            log("Send code 按钮已点击，等待 SendPhoneVerificationCode 请求（3s 内无请求将清空重输）...", "success");
+          } else {
+            stepStallCount++;
+            if (stepStallCount >= 20) { log("发送验证码按钮卡住，刷新重试...", "warn"); break; }
+          }
+        } catch (e: any) {
+          log(`步骤C（Send code）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
       }
 
       // D. 填入短信验证码
       if (!smsCodeFilled) {
-        const phoneCodeVisible = await page.evaluate(() => {
-          const el = document.querySelector("input#phone-code") as HTMLElement | null;
-          return !!(el && el.offsetParent !== null);
-        });
-        if (phoneCodeVisible) {
-          if (smsCode) {
-            await simulateMouseMove(page, "input#phone-code");
-            const ok = await typeIntoField(page, "input#phone-code", smsCode);
-            if (ok) {
-              smsCodeFilled = true;
-              stepStallCount = 0;
-              log(`短信验证码已填入：${smsCode}`);
-              await sleep(800);
+        try {
+          const phoneCodeVisible = await page.evaluate(() => {
+            const el = document.querySelector("input#phone-code") as HTMLElement | null;
+            return !!(el && el.offsetParent !== null);
+          });
+          if (phoneCodeVisible) {
+            if (smsCode) {
+              await simulateMouseMove(page, "input#phone-code");
+              const ok = await typeIntoField(page, "input#phone-code", smsCode);
+              if (ok) {
+                smsCodeFilled = true;
+                stepStallCount = 0;
+                log(`短信验证码已填入：${smsCode}`);
+                await sleep(800);
+              }
+            } else {
+              if (i % 5 === 0) log("等待短信验证码...");
             }
           } else {
-            if (i % 5 === 0) log("等待短信验证码...");
+            stepStallCount++;
+            if (stepStallCount >= 20) { log("短信验证码输入框卡住，刷新重试...", "warn"); break; }
           }
-        } else {
-          stepStallCount++;
-          if (stepStallCount >= 20) { log("短信验证码输入框卡住，刷新重试...", "warn"); break; }
+        } catch (e: any) {
+          log(`步骤D（填入短信验证码）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
       }
@@ -1204,42 +1257,50 @@ async function handleVerifyPhonePage(
         if (smsBtnRetryCount > 5) {
           log("短信验证码确认多次无效，刷新重试...", "warn"); break;
         }
-        await clearField(page, "input#phone-code");
+        try {
+          await clearField(page, "input#phone-code");
+        } catch (e: any) {
+          log(`清空短信验证码输入框异常：${e.message}`, "warn");
+        }
         smsCodeFilled = false;
         smsBtnClickTime = 0;
         continue;
       }
 
-      await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
-      const smsBtnState = await page.evaluate(() => {
-        const codeEl = document.querySelector("input#phone-code") as HTMLInputElement | null;
-        if (!codeEl || !codeEl.value.trim()) return "no-code";
-        const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
-        if (!btn || btn.offsetParent === null) return "no-button";
-        if (btn.disabled) return "disabled";
-        return "clickable";
-      });
-
-      if (smsBtnState === "no-code") {
-        smsCodeFilled = false;
-        stepStallCount++;
-        if (stepStallCount >= 10) { log("短信验证码输入框持续为空，刷新重试...", "warn"); break; }
-      } else if (smsBtnState === "disabled") {
-        smsBtnRetryCount++;
-        if (smsBtnRetryCount > 30) {
-          log("短信验证码按钮持续 disabled，刷新重试...", "warn"); break;
-        }
-        if (smsBtnRetryCount % 5 === 0) log(`短信验证码按钮持续 disabled，等待中（第 ${smsBtnRetryCount}s）...`, "warn");
-      } else if (smsBtnState === "clickable") {
-        await page.evaluate(async () => {
-          const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
-          if (btn) { await new Promise((r) => setTimeout(r, 500)); btn.click(); }
+      try {
+        await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
+        const smsBtnState = await page.evaluate(() => {
+          const codeEl = document.querySelector("input#phone-code") as HTMLInputElement | null;
+          if (!codeEl || !codeEl.value.trim()) return "no-code";
+          const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
+          if (!btn || btn.offsetParent === null) return "no-button";
+          if (btn.disabled) return "disabled";
+          return "clickable";
         });
-        smsBtnClickTime = Date.now();
-        log("短信验证码确认按钮已点击，等待 BindPhoneTrait 请求（3s 内无请求将清空重输）...", "success");
-      } else {
-        stepStallCount++;
-        if (stepStallCount >= 20) { log("手机号确认按钮卡住，刷新重试...", "warn"); break; }
+
+        if (smsBtnState === "no-code") {
+          smsCodeFilled = false;
+          stepStallCount++;
+          if (stepStallCount >= 10) { log("短信验证码输入框持续为空，刷新重试...", "warn"); break; }
+        } else if (smsBtnState === "disabled") {
+          smsBtnRetryCount++;
+          if (smsBtnRetryCount > 30) {
+            log("短信验证码按钮持续 disabled，刷新重试...", "warn"); break;
+          }
+          if (smsBtnRetryCount % 5 === 0) log(`短信验证码按钮持续 disabled，等待中（第 ${smsBtnRetryCount}s）...`, "warn");
+        } else if (smsBtnState === "clickable") {
+          await page.evaluate(async () => {
+            const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
+            if (btn) { await new Promise((r) => setTimeout(r, 500)); btn.click(); }
+          });
+          smsBtnClickTime = Date.now();
+          log("短信验证码确认按钮已点击，等待 BindPhoneTrait 请求（3s 内无请求将清空重输）...", "success");
+        } else {
+          stepStallCount++;
+          if (stepStallCount >= 20) { log("手机号确认按钮卡住，刷新重试...", "warn"); break; }
+        }
+      } catch (e: any) {
+        log(`步骤E（短信验证码确认）异常：${e.message}，等待重试...`, "warn");
       }
     }
 
@@ -1718,42 +1779,6 @@ async function selectCountry(page: Page, iso: string, dialCode: string, log: Log
     }
     return false;
   }, { isoCode: iso, dc: dialCode });
-}
-
-/** 点击注册入口（邀请页面） */
-async function clickRegistrationEntry(page: Page): Promise<void> {
-  for (let attempt = 0; attempt < 10; attempt++) {
-    const clicked = await page.evaluate(async () => {
-      const buttons = Array.from(document.querySelectorAll('button, a[role="button"], [class*="Button"]'));
-      for (const btn of buttons) {
-        const text = (btn.textContent || "").trim().toLowerCase();
-        if (text.includes("accept") || text.includes("register") || text.includes("sign up") ||
-            text.includes("注册") || text.includes("接受") || text.includes("get started") ||
-            text.includes("create account") || text.includes("join")) {
-          if ((btn as HTMLElement).offsetParent !== null) {
-            (btn as HTMLElement).click();
-            return true;
-          }
-        }
-      }
-      // 插件的 fallback：尝试点击登录/注册链接
-      const links = Array.from(document.querySelectorAll('a[href*="login"], a[href*="register"], a[href*="signup"]'));
-      for (const link of links) {
-        if ((link as HTMLElement).offsetParent !== null) {
-          (link as HTMLElement).click();
-          return true;
-        }
-      }
-      return false;
-    });
-    if (clicked) {
-      await sleep(3000);
-      await page.waitForLoadState("domcontentloaded", { timeout: 30000 }).catch(() => {});
-      await sleep(2000);
-      break;
-    }
-    await sleep(2000);
-  }
 }
 
 /** 购买邮箱 */
