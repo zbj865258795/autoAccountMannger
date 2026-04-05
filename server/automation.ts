@@ -267,13 +267,21 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     } catch (gotoErr: any) {
       throw new Error(`打开邀请链接失败（代理网络错误）：${gotoErr.message}`);
     }
-    await sleep(3000);
 
-    // 如果在邀请页面，点击注册入口
-    const currentUrl = page.url();
-    if (currentUrl.includes("manus.im/invitation") || currentUrl.includes("manus.im/register") || currentUrl.includes("manus.im/signup")) {
-      log("已进入邀请页面，正在寻找注册入口...");
-      await clickRegistrationEntry(page);
+    // /invitation/xxx 页面会自动通过 JS 跳转到 /login，这个跳转发生在 domcontentloaded 之后
+    // 必须等待 URL 稳定到 /login 后才能执行任何 page.evaluate，否则会报 Execution context was destroyed
+    // 不再调用 clickRegistrationEntry（会在跳转中途执行 evaluate），直接等待 /login
+    log("邀请链接已打开，等待自动跳转到 /login 页面...");
+    try {
+      await page.waitForURL(
+        (u: URL) => u.toString().includes("manus.im/login") || u.toString().includes("manus.im/register"),
+        { timeout: 30000 }
+      );
+      log(`已跳转到：${page.url()}`, "success");
+    } catch {
+      // 超时后检查当前 URL，可能已经在 /login（某些代理较慢）
+      const curUrl = page.url();
+      log(`等待 /login 跳转超时，当前 URL：${curUrl}，继续执行...`, "warn");
     }
 
     // ── 阶段一：login 页面 ──
