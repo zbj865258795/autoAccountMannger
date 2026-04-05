@@ -634,9 +634,41 @@ async function handleLoginPage(
         break;
       }
 
+      // ── URL 守卫：确保当前在 /login 或 /register 页面且页面加载完成 ──
+      const currentUrl1 = page.url();
+
       // 页面导航中（二次跳转），等待页面稳定后再操作
-      if (page.url() === "about:blank" || page.url() === "") {
+      if (currentUrl1 === "about:blank" || currentUrl1 === "") {
         await sleep(1000);
+        continue;
+      }
+
+      // 已跳转到下一阶段页面 → 提前返回成功
+      if (currentUrl1.includes("manus.im/verify-phone")) {
+        log("检测到页面已跳转到 /verify-phone，阶段一完成");
+        return "verify-phone";
+      }
+      if (currentUrl1.includes("manus.im/app")) {
+        log("检测到页面已跳转到 /app，阶段一完成");
+        return "app";
+      }
+      if (currentUrl1.includes("manus.im/auth_landing")) {
+        log("检测到 auth_landing 中转页，等待最终跳转...");
+        try {
+          await page.waitForURL((url: URL) => url.toString().includes("manus.im/") && !url.toString().includes("auth_landing"), { timeout: 60000 });
+          const landingUrl = page.url();
+          if (landingUrl.includes("manus.im/verify-phone")) return "verify-phone";
+          if (landingUrl.includes("manus.im/app")) return "app";
+        } catch {
+          log("auth_landing 跳转超时", "warn");
+        }
+        continue;
+      }
+
+      // 不在预期页面（既不是 /login 也不是 /register）→ 等待跳转或刷新
+      if (!currentUrl1.includes("manus.im/login") && !currentUrl1.includes("manus.im/register")) {
+        log(`当前不在 /login 页面（URL: ${currentUrl1}），等待页面跳转...`, "warn");
+        await sleep(2000);
         continue;
       }
 
@@ -1100,10 +1132,27 @@ async function handleVerifyPhonePage(
       if (Date.now() - roundStart > PHASE_TIMEOUT) {
         log("阶段二超时，正在刷新重试...", "warn");
         break;
+      }
+
+      // ── URL 守卫：确保当前在 /verify-phone 页面且页面加载完成 ──
+      const currentUrl2 = page.url();
 
       // 页面导航中（二次跳转），等待页面稳定后再操作
-      } else if (page.url() === "about:blank" || page.url() === "") {
+      if (currentUrl2 === "about:blank" || currentUrl2 === "") {
         await sleep(1000);
+        continue;
+      }
+
+      // 已跳转到 /app → 提前返回成功
+      if (currentUrl2.includes("manus.im/app")) {
+        log("检测到页面已跳转到 /app，阶段二完成");
+        return { result: "app", phoneInfo };
+      }
+
+      // 不在预期页面（不是 /verify-phone）→ 等待跳转或刷新
+      if (!currentUrl2.includes("manus.im/verify-phone")) {
+        log(`当前不在 /verify-phone 页面（URL: ${currentUrl2}），等待页面跳转...`, "warn");
+        await sleep(2000);
         continue;
       }
 
@@ -1402,6 +1451,17 @@ async function finishRegistration(
   log: Logger
 ) {
   log("注册成功！开始执行注册后续步骤...", "success");
+
+  // ── 确认当前在 /app 页面 ──
+  const appUrl = page.url();
+  if (!appUrl.includes("manus.im/app")) {
+    log(`当前不在 /app 页面（URL: ${appUrl}），等待跳转...`, "warn");
+    try {
+      await page.waitForURL((url: URL) => url.toString().includes("manus.im/app"), { timeout: 30000 });
+    } catch {
+      log(`等待 /app 页面超时，当前 URL: ${page.url()}，继续执行后续步骤...`, "warn");
+    }
+  }
 
   // ── Step 0: 模拟真实用户浏览 /app 页面（触发 Plausible + Manus 埋点）──
   log("模拟浏览 /app 页面...");
