@@ -495,6 +495,10 @@ async function handleLoginPage(
     try {
       await page.waitForLoadState("networkidle", { timeout: 20000 });
     } catch { /* 网络慢时容错，不阻塞 */ }
+    // 额外等待页面 readyState 为 complete，防止二次导航导致 Execution context was destroyed
+    try {
+      await page.waitForFunction(() => document.readyState === "complete", { timeout: 15000 });
+    } catch { /* 容错 */ }
     await sleep(1500);
     // 每轮开始清除上一轮遗留的 API 错误状态（对齐插件的 lastApiResult = null）
     lastApiError = null;
@@ -531,6 +535,12 @@ async function handleLoginPage(
       if (Date.now() - roundStart > PHASE_TIMEOUT) {
         log("阶段一超时，正在刷新重试...", "warn");
         break;
+      }
+
+      // 页面导航中（二次跳转），等待页面稳定后再操作
+      if (page.url() === "about:blank" || page.url() === "") {
+        await sleep(1000);
+        continue;
       }
 
       // API 错误处理（对齐插件的 getRecentApiError 机制）
@@ -939,6 +949,10 @@ async function handleVerifyPhonePage(
     try {
       await page.waitForLoadState("networkidle", { timeout: 20000 });
     } catch { /* 网络慢时容错，不阻塞 */ }
+    // 额外等待页面 readyState 为 complete，防止二次导航导致 Execution context was destroyed
+    try {
+      await page.waitForFunction(() => document.readyState === "complete", { timeout: 15000 });
+    } catch { /* 容错 */ }
     await sleep(1500);
     // 每轮开始清除上一轮遗留的 API 错误状态（对齐插件的 lastApiResult = null）
     lastApiError2 = null;
@@ -966,6 +980,11 @@ async function handleVerifyPhonePage(
       if (Date.now() - roundStart > PHASE_TIMEOUT) {
         log("阶段二超时，正在刷新重试...", "warn");
         break;
+
+      // 页面导航中（二次跳转），等待页面稳定后再操作
+      } else if (page.url() === "about:blank" || page.url() === "") {
+        await sleep(1000);
+        continue;
       }
 
       // A. 选择国家
