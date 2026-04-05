@@ -254,23 +254,13 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     const inviteUrl = `https://manus.im/invitation/${inviteCode}`;
     log(`邀请码获取成功：${inviteCode}`, "success");
 
-    // ── Step 1: 购买邮箱 ──
-    log("正在购买邮箱...");
-    let email: string;
-    let codeUrl: string;
-    try {
-      ({ email, codeUrl } = await buyEmail());
-      log(`邮箱购买成功：${email}`, "success");
-    } catch (e: any) {
-      await resetInviteCodeStatus(inviterAccountId);
-      throw new Error(`购买邮箱失败: ${e.message}`);
-    }
-
-    // ── Step 2: 生成密码 ──
+    // ── Step 1: 生成密码（邮箱将在 /login 页面加载后再购买，避免浪费）──
+    let email = "";       // 将在 handleLoginPage 内部购买后填入
+    let codeUrl = "";     // 同上
     const password = generatePassword();
     log(`密码已生成`);
 
-    // ── Step 3: 打开邀请链接 ──
+    // ── Step 2: 打开邀请链接 ──
     log(`正在打开邀请链接：${inviteUrl}`);
     try {
       await page.goto(inviteUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
@@ -288,7 +278,14 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
 
     // ── 阶段一：login 页面 ──
     log("=== 阶段一：邮筱 + 密码 + 邮筱验证码 ===");
-    const loginResult = await handleLoginPage(page, email, password, codeUrl, inviteUrl, log);
+    // buyEmailFn 将在 /login 页面稳定、邮箱输入框出现后才被调用
+    const buyEmailFn = async (): Promise<{ email: string; codeUrl: string }> => {
+      const result = await buyEmail();
+      email = result.email;     // 回写到外层变量，供 finishRegistration 使用
+      codeUrl = result.codeUrl;
+      return result;
+    };
+    const loginResult = await handleLoginPage(page, password, inviteUrl, log, buyEmailFn);
 
     if (loginResult === "app") {
       // 直接跳到 /app，无需手机验证
@@ -460,15 +457,19 @@ async function humanBrowse(page: Page): Promise<void> {
 
 async function handleLoginPage(
   page: Page,
-  email: string,
   password: string,
-  codeUrl: string,
   inviteUrl: string,
-  log: Logger
+  log: Logger,
+  buyEmailFn: () => Promise<{ email: string; codeUrl: string }>
 ): Promise<"verify-phone" | "app" | "timeout" | "error"> {
   const PHASE_TIMEOUT = 180000;
   const MAX_REFRESHES = 3;
   let refreshCount = 0;
+
+  // email 和 codeUrl 将在页面稳定后购买获取
+  let email = "";
+  let codeUrl = "";
+  let emailPurchased = false; // 标记是否已购买邮箱（全局仅购买一次）
 
   // API 错误监听（对齐插件的 getRecentApiError 机制）
   type ApiError = { api: string; status: number; time: number };
@@ -521,6 +522,45 @@ async function handleLoginPage(
     lastApiError = null;
     // 页面加载后模拟真人浏览行为（随机滚动 + 鼠标漫游）
     await humanBrowse(page);
+
+    // ── 在 /login 页面稳定后购买邮箱（仅购买一次）──
+    // 确保邮箱输入框已出现再购买，避免在页面加载前浪费邮箱资源
+    if (!emailPurchased) {
+      // 等待邮箱输入框出现（最多 30 秒）
+      let emailInputVisible = false;
+      try {
+        await page.waitForSelector(
+          'input#email[autocomplete="email"], input#email[type="email"], input#email',
+          { state: "visible", timeout: 30000 }
+        );
+        emailInputVisible = true;
+      } catch {
+        log("等待邮箱输入框超时，继续尝试购买邮箱...", "warn");
+        emailInputVisible = true; // 超时后仍继续购买，避免卡死
+      }
+      if (emailInputVisible) {
+        log("邮箱输入框已出现，正在购买邮箱...");
+        try {
+          const result = await buyEmailFn();
+          email = result.email;
+          codeUrl = result.codeUrl;
+          emailPurchased = true;
+          log(`邮箱购买成功：${email}`, "success");
+        } catch (buyErr: any) {
+          log(`邮箱购买失败：${buyErr.message}，刷新重试...`, "error");
+          // 购买失败时刷新页面重试
+          refreshCount++;
+          if (refreshCount > MAX_REFRESHES) {
+            log(`邮箱购买失败且已达最大刷新次数，放弃`, "error");
+            return "error";
+          }
+          try {
+            await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
+          } catch {}
+          continue;
+        }
+      }
+    }
 
     let emailFilled = false;
     let emailContinueClicked = false;
