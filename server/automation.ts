@@ -114,10 +114,15 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     const contexts = browser.contexts();
     const context = contexts[0] || await browser.newContext();
 
-    // 获取初始页面（AdsPower 起始页）
+    // 关闭 AdsPower 自带的起始页（通常是 start.adspower.net），新建空白页面
     let pages = context.pages();
-    let page = pages.length > 0 ? pages[0] : await context.newPage();
-    log(`连接成功，当前页面：${page.url()}`, "info");
+    for (const p of pages) {
+      if (!p.isClosed()) {
+        try { await p.close(); } catch { /* 忽略关闭失败 */ }
+      }
+    }
+    let page = await context.newPage();
+    log(`连接成功，已关闭 AdsPower 起始页并新建空白页面`, "info");
 
     // ── Step -1: 通过浏览器内部检测出口 IP（确保代理已生效，且 IP 与注册用 IP 完全一致）──
     log("正在通过浏览器检测出口 IP...");
@@ -151,19 +156,11 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
       log(`出口 IP 检测失败：${ipErr.message}，跳过 IP 检查继续注册`, "warn");
     }
 
-    // ── IP 检测完成后重新获取活跃页面（防止 AdsPower 起始页关闭导致原 page 对象失效）──
-    pages = context.pages();
-    if (pages.length === 0) {
-      // 所有页面已关闭，新建一个
+    // IP 检测使用单独的 ipPage，已关闭，主 page 始终保持有效
+    // 确认 page 仍然有效，否则新建
+    if (page.isClosed()) {
       page = await context.newPage();
-      log("IP 检测后所有页面已关闭，已新建空白页面", "info");
-    } else {
-      // 取最后一个活跃页面（跳过已关闭的页面）
-      const activePage = pages.find(p => !p.isClosed()) ?? pages[pages.length - 1];
-      if (activePage !== page) {
-        page = activePage;
-        log(`已切换到活跃页面：${page.url()}`, "info");
-      }
+      log("IP 检测后主页面已关闭，已新建空白页面", "info");
     }
 
     // ── 设置资源拦截（节省代理流量）──
@@ -268,21 +265,10 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
       throw new Error(`打开邀请链接失败（代理网络错误）：${gotoErr.message}`);
     }
 
-    // /invitation/xxx 页面会自动通过 JS 跳转到 /login，这个跳转发生在 domcontentloaded 之后
-    // 必须等待 URL 稳定到 /login 后才能执行任何 page.evaluate，否则会报 Execution context was destroyed
-    // 不再调用 clickRegistrationEntry（会在跳转中途执行 evaluate），直接等待 /login
-    log("邀请链接已打开，等待自动跳转到 /login 页面...");
-    try {
-      await page.waitForURL(
-        (u: URL) => u.toString().includes("manus.im/login") || u.toString().includes("manus.im/register"),
-        { timeout: 30000 }
-      );
-      log(`已跳转到：${page.url()}`, "success");
-    } catch {
-      // 超时后检查当前 URL，可能已经在 /login（某些代理较慢）
-      const curUrl = page.url();
-      log(`等待 /login 跳转超时，当前 URL：${curUrl}，继续执行...`, "warn");
-    }
+    // /invitation/xxx 页面会通过 JS 重定向到 /login，这个重定向发生在 domcontentloaded 之后
+    // 不在这里等待 /login，交给 handleLoginPage 的 while 循环顶部统一处理
+    // 这样无论网络多慢，都不会在重定向期间执行任何 evaluate
+    log("邀请链接已打开，等待重定向到 /login 页面...");
 
     // ── 阶段一：login 页面 ──
     log("=== 阶段一：邮筱 + 密码 + 邮筱验证码 ===");
@@ -513,28 +499,25 @@ async function handleLoginPage(
   });
 
   while (refreshCount <= MAX_REFRESHES) {
-    // 等待页面 DOM 加载完成，再等待网络空闲（最多 20 秒），确保页面完全就绪后再操作
-    try {
-      await page.waitForLoadState("domcontentloaded", { timeout: 30000 });
-    } catch { /* 超时不影响后续 */ }
-    try {
-      await page.waitForLoadState("networkidle", { timeout: 20000 });
-    } catch { /* 网络慢时容错，不阻塞 */ }
-    // 额外等待页面 readyState 为 complete，防止二次导航导致 Execution context was destroyed
-    try {
-      await page.waitForFunction(() => document.readyState === "complete", { timeout: 15000 });
-    } catch { /* 容错 */ }
-    // 等待 URL 稳定在 /login 页面，防止在跳转过程中执行操作导致 Execution context was destroyed
+    // ── 等待顺序至关重要：先等 URL 稳定，再等 DOM 加载 ──
+    // /invitation/xxx 会通过 JS 重定向到 /login，这个重定向发生在 domcontentloaded 之后
+    // 如果先等 DOM 加载再等 URL，则 DOM 等待会在 /invitation/ 页面就通过，
+    // 然后后续的 evaluate 操作会撞上正在进行的重定向，报 Execution context was destroyed
+    //
+    // 正确顺序：
+    // 1. 先等 URL 稳定到 /login（这个不涉及 evaluate，不会被重定向破坏）
+    // 2. 再等 DOM 加载完成（此时已在 /login 页面，不会再跳转）
+    // 3. 不使用 waitForFunction(document.readyState)，因为它本质是 evaluate 轮询
     try {
       await page.waitForURL(
         (u: URL) => u.toString().includes("manus.im/login") || u.toString().includes("manus.im/register"),
-        { timeout: 30000 }
+        { timeout: 60000 }
       );
     } catch {
       const curUrl = page.url();
       log(`阶段一：等待 /login URL 超时，当前 URL：${curUrl}，继续尝试...`, "warn");
     }
-    // URL 稳定后再等待页面完全加载
+    // URL 已稳定在 /login，现在安全地等待 DOM 加载
     try {
       await page.waitForLoadState("domcontentloaded", { timeout: 15000 });
     } catch { /* 容错 */ }
@@ -1004,18 +987,7 @@ async function handleVerifyPhonePage(
   });
 
   while (refreshCount <= MAX_REFRESHES) {
-    // 等待页面 DOM 加载完成，再等待网络空闲（最多 20 秒），确保页面完全就绪后再操作
-    try {
-      await page.waitForLoadState("domcontentloaded", { timeout: 30000 });
-    } catch { /* 超时不影响后续 */ }
-    try {
-      await page.waitForLoadState("networkidle", { timeout: 20000 });
-    } catch { /* 网络慢时容错，不阻塞 */ }
-    // 额外等待页面 readyState 为 complete，防止二次导航导致 Execution context was destroyed
-    try {
-      await page.waitForFunction(() => document.readyState === "complete", { timeout: 15000 });
-    } catch { /* 容错 */ }
-    // 等待 URL 稳定在 /verify-phone 页面，防止在跳转过程中执行操作导致 Execution context was destroyed
+    // ── 先等 URL 稳定，再等 DOM 加载（与 handleLoginPage 同理）──
     try {
       await page.waitForURL(
         (u: URL) => u.toString().includes("manus.im/verify-phone"),
@@ -1025,7 +997,7 @@ async function handleVerifyPhonePage(
       const curUrl = page.url();
       log(`阶段二：等待 /verify-phone URL 超时，当前 URL：${curUrl}，继续尝试...`, "warn");
     }
-    // URL 稳定后再等待页面完全加载
+    // URL 已稳定，现在安全地等待 DOM 加载
     try {
       await page.waitForLoadState("domcontentloaded", { timeout: 15000 });
     } catch { /* 容错 */ }
