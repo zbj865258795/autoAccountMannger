@@ -98,6 +98,8 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
   let inviterAccountId: number | null = null;
   let inviteCode: string | null = null;
   let capturedToken: string | null = null;
+  // 标志位：是否已进入 /app 页面（用于激活 JS 屏蔽规则）
+  let isOnAppPage = false;
   let capturedUserData = {
     membershipVersion: null as string | null,
     totalCredits: null as number | null,
@@ -170,6 +172,48 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
       const resourceType = req.resourceType();
       const url = req.url();
 
+      // ── /app 页面专属屏蔽：进入 /app 后屏蔽所有 JS chunk，只放行 API 请求 ──
+      // 原理：/app 页面的 JS 体积巨大（7MB+），加载耗时严重，但我们只需要用
+      // page.evaluate 手动调用 API，完全不依赖页面 JS 执行，屏蔽后页面白屏无所谓
+      if (isOnAppPage) {
+        // 放行：api.manus.im 的所有接口请求（我们手动调用的目标）
+        if (url.includes("api.manus.im")) {
+          route.continue();
+          return;
+        }
+        // 屏蔽：所有 JS 文件（chunk、vendor、frame 等）
+        if (resourceType === "script") {
+          route.abort();
+          return;
+        }
+        // 屏蔽：CSS 样式文件（页面白屏无所谓）
+        if (resourceType === "stylesheet") {
+          route.abort();
+          return;
+        }
+        // 屏蔽：图片、媒体、字体
+        if (["image", "media", "font"].includes(resourceType)) {
+          route.abort();
+          return;
+        }
+        // 屏蔽：第三方 CDN 资源（Intercom、Sentry、音效等）
+        const appBlockedDomains = [
+          "intercom.io", "intercomcdn.com", "sentry.io", "sentry-cdn.com",
+          "cloudfront.net", "manuscdn.com", "plausible.io",
+          "amplitude.com", "segment.com", "mixpanel.com",
+          "hotjar.com", "fullstory.com", "logrocket.com",
+          "google-analytics.com", "googletagmanager.com",
+        ];
+        if (appBlockedDomains.some((d) => url.includes(d))) {
+          route.abort();
+          return;
+        }
+        // 其余请求（如 HTML 文档本身）放行
+        route.continue();
+        return;
+      }
+
+      // ── 注册流程页面（/login、/verify-phone）的通用屏蔽规则 ──
       // 屏蔽：字体文件（.woff2 / .ttf 等）
       if (resourceType === "font") {
         route.abort();
@@ -283,7 +327,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
 
     if (loginResult === "app") {
       // 直接跳到 /app，无需手机验证
-      await finishRegistration(page, email, password, null, inviteCode, inviterAccountId, capturedToken, capturedUserData, taskId, logId, profileId, detectedExitIp, adspowerConfig, startTime, log);
+      await finishRegistration(page, email, password, null, inviteCode, inviterAccountId, capturedToken, capturedUserData, taskId, logId, profileId, detectedExitIp, adspowerConfig, startTime, log, (v) => { isOnAppPage = v; });
       return;
     }
 
@@ -297,7 +341,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     const phoneResult = await handleVerifyPhonePage(page, logId, log);
 
     if (phoneResult.result === "app" && phoneResult.phoneInfo) {
-      await finishRegistration(page, email, password, phoneResult.phoneInfo, inviteCode, inviterAccountId, capturedToken, capturedUserData, taskId, logId, profileId, detectedExitIp, adspowerConfig, startTime, log);
+      await finishRegistration(page, email, password, phoneResult.phoneInfo, inviteCode, inviterAccountId, capturedToken, capturedUserData, taskId, logId, profileId, detectedExitIp, adspowerConfig, startTime, log, (v) => { isOnAppPage = v; });
       return;
     }
 
@@ -1450,11 +1494,12 @@ async function finishRegistration(
   exitIp: string | undefined,
   adspowerConfig: any,
   startTime: number,
-  log: Logger
+  log: Logger,
+  setIsOnAppPage: (v: boolean) => void
 ) {
   log("注册成功！开始执行注册后续步骤...", "success");
 
-  // ── 确认当前在 /app 页面 ──
+  // ── 确认当前在 /app 页面，激活 JS 屏蔽规则 ──
   const appUrl = page.url();
   if (!appUrl.includes("manus.im/app")) {
     log(`当前不在 /app 页面（URL: ${appUrl}），等待跳转...`, "warn");
@@ -1464,58 +1509,101 @@ async function finishRegistration(
       log(`等待 /app 页面超时，当前 URL: ${page.url()}，继续执行后续步骤...`, "warn");
     }
   }
+  // 激活 /app 专属屏蔽规则（屏蔽所有 JS/CSS/图片，只放行 api.manus.im）
+  setIsOnAppPage(true);
+  log("/app 页面 JS 屏蔽已激活，准备调用 API...");
 
-  // ── Step 0: 模拟真实用户浏览 /app 页面（触发 Plausible + Manus 埋点）──
-  log("模拟浏览 /app 页面...");
-  await humanBrowse(page);
+  // ── Step 1: 在浏览器内按序调用所有 Manus API ──
+  // 全部通过 page.evaluate 发起，复用浏览器的 Cookie、TLS 指纹、出口 IP
+  // 页面 JS 已被屏蔽（白屏），但 fetch 完全不依赖页面 JS，可正常发送
 
-  // ── Step 1: 兼换推广码 ──
-  // 注意：BindPhoneTrait 成功后 token 已捕获，直接用 token 调用 API，无需刷新页面
-  log("正在兼换推广码...");
-  await redeemPromotion(page, capturedToken, log);
-
-  // ── Step 2: 直接用 token 调用 API 采集用户数据（跳过页面刷新等待）──
-  // 原逻辑（页面刷新等待 API 响应）已注释，改为直接 HTTP 调用，速度更快且不依赖页面跳转
-  /*
-  log("正在刷新页面，采集用户数据...");
-  capturedUserData.membershipVersion = null;
-  capturedUserData.totalCredits = null;
-  capturedUserData.inviteCode = null;
-
-  await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
-  await sleep(3000);
-
-  // 等待 3 个 API 数据（最多 30 秒）
-  const dataWaitStart = Date.now();
-  while (Date.now() - dataWaitStart < 30000) {
-    if (capturedUserData.membershipVersion && capturedUserData.totalCredits !== null && capturedUserData.inviteCode) {
-      log("所有用户数据采集完成");
-      break;
-    }
-    await sleep(1000);
-  }
-  */
-
-  // 直接用 token 调用 API 获取积分和邀请码
-  if (capturedToken) {
-    log("正在通过 API 直接获取积分和邀请码...");
-    const apiData = await fetchUserDataByToken(capturedToken, log);
-    if (apiData.totalCredits !== null) capturedUserData.totalCredits = apiData.totalCredits;
-    if (apiData.freeCredits !== null) capturedUserData.freeCredits = apiData.freeCredits;
-    if (apiData.refreshCredits !== null) capturedUserData.refreshCredits = apiData.refreshCredits;
-    if (apiData.inviteCode) capturedUserData.inviteCode = apiData.inviteCode;
-    if (apiData.membershipVersion) capturedUserData.membershipVersion = apiData.membershipVersion;
-  } else {
-    log("未获取到 token，跳过 API 数据采集", "warn");
-  }
-
-  // 获取 clientId（仍从 localStorage 读取）
+  // 1a. 获取 clientId（从 localStorage 读取，需在 JS 屏蔽前已写入）
   const clientId = await page.evaluate(() => localStorage.getItem("client_id_v2")).catch(() => null);
   capturedUserData.clientId = clientId;
+  log(`clientId: ${clientId ?? "未获取到"}`);
 
-  log(`数据采集：会员版本=${capturedUserData.membershipVersion}，积分=${capturedUserData.totalCredits}，邀请码=${capturedUserData.inviteCode}`);
+  if (!capturedToken) {
+    log("未获取到 token，跳过所有 API 调用", "warn");
+  } else {
+    const tkn = capturedToken;
+    const cid = clientId ?? "";
 
-  // Step 3: 上报注册数据到后端数据库（直接调用 DB，不走 HTTP）
+    // 1b. CheckInvitationCode（验证邀请码是否有效）
+    log("正在调用 CheckInvitationCode...");
+    await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
+      try {
+        await fetch("https://api.manus.im/user.v1.UserService/CheckInvitationCode", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
+          body: JSON.stringify({}),
+        });
+      } catch {}
+    }, { tkn, cid }).catch(() => {});
+
+    // 1c. UserInfo（获取会员版本）
+    log("正在调用 UserInfo...");
+    const userInfoResult = await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
+      try {
+        const resp = await fetch("https://api.manus.im/user.v1.UserService/UserInfo", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
+          body: JSON.stringify({}),
+        });
+        if (resp.ok) return await resp.json();
+      } catch {}
+      return null;
+    }, { tkn, cid }).catch(() => null);
+    if (userInfoResult?.membershipVersion) {
+      capturedUserData.membershipVersion = userInfoResult.membershipVersion;
+      log(`会员版本：${capturedUserData.membershipVersion}`);
+    }
+
+    // 1d. GetPersonalInvitationCodes（获取邀请码）
+    log("正在调用 GetPersonalInvitationCodes...");
+    const inviteResult = await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
+      try {
+        const resp = await fetch("https://api.manus.im/user.v1.UserService/GetPersonalInvitationCodes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
+          body: JSON.stringify({}),
+        });
+        if (resp.ok) return await resp.json();
+      } catch {}
+      return null;
+    }, { tkn, cid }).catch(() => null);
+    if (inviteResult?.invitationCodes?.length > 0) {
+      capturedUserData.inviteCode = inviteResult.invitationCodes[0].inviteCode ?? null;
+      log(`邀请码：${capturedUserData.inviteCode}`);
+    }
+
+    // 1e. RedeemPromotionCodeV2（兑换推广码）
+    log("正在兑换推广码...");
+    await redeemPromotion(page, tkn, cid, log);
+
+    // 1f. GetAvailableCredits（获取积分，在兑换后调用拿到最新值）
+    log("正在调用 GetAvailableCredits...");
+    const creditsResult = await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
+      try {
+        const resp = await fetch("https://api.manus.im/user.v1.UserService/GetAvailableCredits", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
+          body: JSON.stringify({}),
+        });
+        if (resp.ok) return await resp.json();
+      } catch {}
+      return null;
+    }, { tkn, cid }).catch(() => null);
+    if (creditsResult?.totalCredits !== undefined) {
+      capturedUserData.totalCredits = creditsResult.totalCredits;
+      capturedUserData.freeCredits = creditsResult.freeCredits ?? null;
+      capturedUserData.refreshCredits = creditsResult.refreshCredits ?? null;
+      log(`积分：总=${capturedUserData.totalCredits}，免费=${capturedUserData.freeCredits}`);
+    }
+  }
+
+  log(`数据采集完成：会员版本=${capturedUserData.membershipVersion}，积分=${capturedUserData.totalCredits}，邀请码=${capturedUserData.inviteCode}`);
+
+  // Step 2: 上报注册数据到后端数据库（直接调用 DB，不走 HTTP）
   const phoneStr = phoneInfo ? phoneInfo.dialCode + phoneInfo.phoneNumber : "";
   const durationMs = Date.now() - startTime;
 
@@ -1569,12 +1657,7 @@ async function finishRegistration(
 
 // ─── 兑换推广码 ──────────────────────────────────────────────────────────────
 
-async function redeemPromotion(page: Page, token: string | null, log: Logger) {
-  if (!token) { log("未获取到 Token，跳过推广码兑换", "warn"); return; }
-
-  const clientId = await page.evaluate(() => localStorage.getItem("client_id_v2")).catch(() => null);
-  if (!clientId) { log("未获取到 clientId，跳过推广码兑换", "warn"); return; }
-
+async function redeemPromotion(page: Page, token: string, clientId: string, log: Logger) {
   const promotionCode = "techtiff";
   log(`正在兑换推广码：${promotionCode}`);
 
@@ -1596,8 +1679,13 @@ async function redeemPromotion(page: Page, token: string | null, log: Logger) {
     }
   }, { tkn: token, cid: clientId, code: promotionCode });
 
-  if (!redeemResult?.ok && redeemResult?.status === 0) {
-    log(`推广码兑换请求失败：${redeemResult?.body}`, "warn");
+  // 修复：status === 0 表示网络异常，非 0 的 4xx/5xx 是服务端正常拒绝（如推广码已兑换），不应无限轮询
+  if (redeemResult?.status === 0) {
+    log(`推广码兑换网络异常：${redeemResult?.body}`, "warn");
+    return;
+  }
+  if (!redeemResult?.ok) {
+    log(`推广码兑换被拒绝（状态码 ${redeemResult?.status}）：${redeemResult?.body}`, "warn");
     return;
   }
 
