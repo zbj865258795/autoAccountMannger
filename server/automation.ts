@@ -593,14 +593,13 @@ async function handleLoginPage(
           log(`邮箱购买成功：${email}`, "success");
         } catch (buyErr: any) {
           emailBuyRetryCount++;
-          log(`邮箱购买失败（第 ${emailBuyRetryCount} 次）：${buyErr.message}，刷新重试...`, "error");
+          log(`邮箱购买失败（第 ${emailBuyRetryCount} 次）：${buyErr.message}，等待重试...`, "error");
           if (emailBuyRetryCount > 3) {
             log(`邮箱购买失败已超过 3 次，放弃`, "error");
             return "error";
           }
-          try {
-            await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
-          } catch {}
+          // 邮箱购买是 HTTP API 调用，与页面状态无关，不需要 reload 页面
+          await sleep(2000); // 等待 2s 后重试
           continue;
         }
       }
@@ -615,6 +614,7 @@ async function handleLoginPage(
     let pwdBtnClickTime = 0;          // 密码 Continue 按钮点击时间（等待 SendEmailVerifyCodeWithCaptcha 请求发出）
     let pwdBtnRetryCount = 0;         // 密码按钮点击后 3s 无请求的重试次数
     let verifyCodeFetching = false;
+    let verifyCodeDone = false; // fetchVerifyCode 已完成（无论成功还是失败）
     let verifyCode: string | null = null;
     let verifyCodeFilled = false;
     let verifyBtnClickTime = 0;       // 验证码确认按钮点击时间（等待 RegisterByEmail 请求发出）
@@ -799,6 +799,7 @@ async function handleLoginPage(
             verifyCodeFetching = true;
             fetchVerifyCode(codeUrl).then((code) => {
               verifyCode = code;
+              verifyCodeDone = true;
               if (code) log(`邮箱验证码已就绪：${code}`, "success");
               else log("邮箱验证码获取超时", "warn");
             });
@@ -880,6 +881,10 @@ async function handleLoginPage(
                 log(`邮箱验证码已填入：${verifyCode}`);
                 await sleep(800);
               }
+            } else if (verifyCodeDone && verifyCode === null) {
+              // fetchVerifyCode 已返回 null（获取超时），继续等待无意义，直接刷新重试
+              log("邮箱验证码获取超时，刷新重试...", "warn");
+              break;
             } else {
               if (i % 5 === 0) log("等待邮箱验证码...");
             }
@@ -926,13 +931,10 @@ async function handleLoginPage(
             log(`跳转到未知目标页面：${navUrl}`, "warn");
             break;
           } catch {
-            verifyBtnRetryCount++;
-            if (verifyBtnRetryCount > 5) {
-              log("RegisterByEmail 已发出但页面始终未跳转，刷新重试...", "warn"); break;
-            }
-            log(`RegisterByEmail 已发出但页面未跳转，第 ${verifyBtnRetryCount} 次等待...`, "warn");
-            verifyConfirmClicked = false;
-            registerByEmailRequestTime = 0; // 重置，允许重新监听
+            // RegisterByEmail 已发出意味着验证码已被服务端消费，重试点击无意义
+            // 直接 break 刷新页面，重新获取验证码后再试
+            log("RegisterByEmail 已发出但页面未跳转（验证码已消费），刷新重试...", "warn");
+            break;
           }
           continue;
         }
@@ -1125,6 +1127,9 @@ async function handleVerifyPhonePage(
     // 每轮开始重置请求时间戳（防止上一轮的旧请求干扰当前轮）
     sendPhoneCodeRequestTime = 0;
     bindPhoneRequestTime = 0;
+    // 每轮开始重置短信验证码状态（刷新后会重新发送验证码，旧验证码已失效）
+    smsCodeFetching = false;
+    smsCode = null;
 
     for (let i = 0; i < 300; i++) {
       await sleep(1000);
@@ -1328,14 +1333,11 @@ async function handleVerifyPhonePage(
           log("阶段二完成 → 已进入 /app");
           return { result: "app", phoneInfo };
         } catch {
-          smsBtnRetryCount++;
-          if (smsBtnRetryCount > 3) {
-            log("BindPhoneTrait 已发出但页面始终未跳转，刷新重试...", "warn"); break;
-          }
-          log(`BindPhoneTrait 已发出但页面未跳转，第 ${smsBtnRetryCount} 次等待...`, "warn");
-          bindPhoneRequestTime = 0; // 重置，允许重新监听
+          // BindPhoneTrait 已发出意味着短信验证码已被服务端消费，重试点击无意义
+          // 直接 break 刷新页面，重新发送验证码后再试
+          log("BindPhoneTrait 已发出但页面未跳转（验证码已消费），刷新重试...", "warn");
+          break;
         }
-        continue;
       }
 
       // 如果已点击按钮且超过 3s 仍无 BindPhoneTrait 请求 → 清空短信验证码重新输入
