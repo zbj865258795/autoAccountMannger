@@ -434,13 +434,50 @@ async function humanBrowse(page: Page): Promise<void> {
       await page.mouse.move(x, y, { steps: 10 + Math.floor(Math.random() * 15) });
       await sleep(300 + Math.random() * 600);
     }
-    // 30% 概率轻微向下滚动再滚回来（模拟用户阅读页面）
-    if (Math.random() < 0.3) {
-      const scrollY = 80 + Math.floor(Math.random() * 120);
+
+    // 分段滚动模拟（触发 Plausible scroll depth + engagement 统计）
+    // 每段滚动 25-40% 页面高度，共 3-4 段，最终达到 75-100% 滚动深度
+    const pageHeight = await page.evaluate(() => document.body.scrollHeight).catch(() => 800);
+    const viewportHeight = await page.evaluate(() => window.innerHeight).catch(() => 600);
+    const scrollableHeight = Math.max(0, pageHeight - viewportHeight);
+
+    if (scrollableHeight > 50) {
+      // 分 3-4 段向下滚动
+      const segments = 3 + Math.floor(Math.random() * 2);
+      const targetScrollRatio = 0.75 + Math.random() * 0.25; // 滚动到 75%-100%
+      const totalScroll = scrollableHeight * targetScrollRatio;
+      const segmentSize = totalScroll / segments;
+
+      for (let seg = 0; seg < segments; seg++) {
+        const delta = segmentSize * (0.8 + Math.random() * 0.4); // 每段小幅随机波动
+        await page.mouse.wheel(0, delta);
+        await sleep(600 + Math.random() * 800); // 每段停顿 0.6-1.4s，模拟阅读
+        // 随机鼠标移动，模拟用户看内容
+        await page.mouse.move(
+          300 + Math.random() * 700,
+          200 + Math.random() * 300,
+          { steps: 5 + Math.floor(Math.random() * 8) }
+        );
+      }
+
+      // 停留 1-2 秒（触发 Plausible engagement 时长统计）
+      await sleep(1000 + Math.random() * 1000);
+
+      // 分 2-3 段滚回顶部
+      const upSegments = 2 + Math.floor(Math.random() * 2);
+      const currentScroll = await page.evaluate(() => window.scrollY).catch(() => 0);
+      const upSegmentSize = currentScroll / upSegments;
+      for (let seg = 0; seg < upSegments; seg++) {
+        await page.mouse.wheel(0, -upSegmentSize);
+        await sleep(300 + Math.random() * 400);
+      }
+    } else {
+      // 页面内容少（如 /login 登录页），轻微滚动即可
+      const scrollY = 60 + Math.floor(Math.random() * 100);
       await page.mouse.wheel(0, scrollY);
-      await sleep(400 + Math.random() * 400);
+      await sleep(500 + Math.random() * 600);
       await page.mouse.wheel(0, -scrollY);
-      await sleep(200 + Math.random() * 300);
+      await sleep(300 + Math.random() * 300);
     }
   } catch {
     // 拟人化操作失败不影响主流程
@@ -1040,6 +1077,8 @@ async function handleVerifyPhonePage(
     await sleep(1500);
     // 每轮开始清除上一轮遗留的 API 错误状态（对齐插件的 lastApiResult = null）
     lastApiError2 = null;
+    // 页面加载后模拟真实用户浏览行为（触发 Plausible + Manus 埋点）
+    await humanBrowse(page);
 
     let countrySelected = false;
     let phoneFilled = false;
@@ -1363,6 +1402,10 @@ async function finishRegistration(
   log: Logger
 ) {
   log("注册成功！开始执行注册后续步骤...", "success");
+
+  // ── Step 0: 模拟真实用户浏览 /app 页面（触发 Plausible + Manus 埋点）──
+  log("模拟浏览 /app 页面...");
+  await humanBrowse(page);
 
   // ── Step 1: 兼换推广码 ──
   // 注意：BindPhoneTrait 成功后 token 已捕获，直接用 token 调用 API，无需刷新页面
