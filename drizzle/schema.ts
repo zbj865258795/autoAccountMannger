@@ -87,7 +87,7 @@ export const automationTasks = mysqlTable("automation_tasks", {
   status: mysqlEnum("status", ["idle", "running", "paused", "stopped"]).default("idle").notNull(),
 
   // 配置
-  scanIntervalSeconds: int("scanIntervalSeconds").default(60),  // 掃描間隔（秒）
+  scanIntervalSeconds: int("scanIntervalSeconds").default(10),  // 掃描間隔（秒）
   adspowerApiUrl: varchar("adspowerApiUrl", { length: 512 }).default("http://127.0.0.1:50325"),
   adspowerApiKey: varchar("adspowerApiKey", { length: 256 }),   // AdsPower API Key（開啟安全校驗時使用）
   adspowerGroupId: varchar("adspowerGroupId", { length: 64 }),

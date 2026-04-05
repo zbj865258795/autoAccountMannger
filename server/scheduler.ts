@@ -214,7 +214,7 @@ export async function startScheduler(taskId: number): Promise<void> {
       return;
     }
     await executeTask(taskId);
-  }, (task.scanIntervalSeconds || 60) * 1000);
+  }, (task.scanIntervalSeconds || 10) * 1000);
 
   schedulerTimers.set(taskId, timer);
   startBrowserMonitor();

@@ -62,7 +62,7 @@ const statusConfig: Record<TaskStatus, { label: string; class: string; icon: Rea
 
 function CreateTaskDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: () => void }) {
   const [name, setName] = useState("自动注册任务");
-  const [interval] = useState(60);
+  const [interval] = useState(10);
   const apiUrl = "http://127.0.0.1:50325";
   const [proxyAccountId, setProxyAccountId] = useState<string>("");
   const [targetCount, setTargetCount] = useState<string>("");
@@ -181,7 +181,7 @@ function EditTaskDialog({
   onUpdated: () => void;
 }) {
   const [name, setName] = useState(task.name);
-  const interval = task.scanIntervalSeconds ?? 60;
+  const interval = task.scanIntervalSeconds ?? 10;
   const apiUrl = "http://127.0.0.1:50325";
   const [proxyAccountId, setProxyAccountId] = useState<string>(
     task.proxyAccountId != null ? String(task.proxyAccountId) : ""

@@ -244,7 +244,7 @@ const automationRouter = router({
   create: publicProcedure
     .input(z.object({
       name: z.string().min(1),
-      scanIntervalSeconds: z.number().min(10).default(60),
+      scanIntervalSeconds: z.number().min(10).default(10),
       adspowerApiUrl: z.string().default(ADSPOWER_CONFIG.apiUrl),
       proxyAccountId: z.number().optional(),
       targetCount: z.number().min(1).optional(),
