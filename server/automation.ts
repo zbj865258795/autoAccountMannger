@@ -567,10 +567,12 @@ async function handleLoginPage(
   let emailPurchased = false; // 标记是否已购买邮箱（全局仅购买一次）
   let emailBuyRetryCount = 0; // 邮箱购买失败重试次数（独立于 refreshCount）
 
-  // ── API 请求发出时间戳（用于判断按钮点击是否生效）──
+  // ── API 请求发出时间戳（用于判断按鈕点击是否生效）──
   // 监听 request（不是 response），这样可以在请求发出的第一时间就知道按鈕点击已生效
   let sendEmailCodeRequestTime = 0;   // SendEmailVerifyCodeWithCaptcha 请求发出时间
   let registerByEmailRequestTime = 0; // RegisterByEmail 请求发出时间
+  // RegisterByEmail 响应状态：0=未响应 1=成功(2xx) -1=失败(4xx/5xx/网络错误)
+  let registerByEmailStatus = 0;
   page.on("request", (request) => {
     const url = request.url();
     if (url.includes("SendEmailVerifyCodeWithCaptcha")) {
@@ -579,19 +581,32 @@ async function handleLoginPage(
     }
     if (url.includes("RegisterByEmail")) {
       registerByEmailRequestTime = Date.now();
-      log("[请求监听] RegisterByEmail 已发出");
+      registerByEmailStatus = 0; // 重置状态，等待响应
+      log("[请求监听] RegisterByEmail 已发出，等待响应...");
+    }
+  });
+  page.on("response", (response) => {
+    const url = response.url();
+    if (!url.includes("RegisterByEmail")) return;
+    const status = response.status();
+    if (status >= 200 && status < 300) {
+      registerByEmailStatus = 1;
+      log(`[RegisterByEmail] 响应成功 (${status})，验证码已消耗`);
+    } else {
+      registerByEmailStatus = -1;
+      log(`[RegisterByEmail] 响应失败 (${status})，需重新输入验证码`, "warn");
     }
   });
 
-  // CheckRegion 成功响应标志位（页面加载时自动触发，成功后才允许开始输入邮箱）
+  // CheckInvitationCodeRemains 成功响应标志位（页面加载时自动触发，成功后才允许开始输入邮箱）
   // 每轮刷新前重置，确保每次重新加载页面后都能重新等待
-  let checkRegionOk = false;
+  let checkInvitationCodeRemainsOk = false;
   page.on("response", (response) => {
     const url = response.url();
     const status = response.status();
-    if (url.includes("CheckRegion") && status >= 200 && status < 300) {
-      checkRegionOk = true;
-      log("[CheckRegion] 接口返回成功，页面就绪");
+    if (url.includes("CheckInvitationCodeRemains") && status >= 200 && status < 300) {
+      checkInvitationCodeRemainsOk = true;
+      log("[CheckInvitationCodeRemains] 接口返回成功，页面就绪");
     }
   });
 
@@ -613,10 +628,10 @@ async function handleLoginPage(
   });
 
   while (refreshCount <= MAX_REFRESHES) {
-    // 每轮循环开始先重置 CheckRegion 标志位（必须在 waitForURL 之前重置）
-    // 原因：CheckRegion 是页面加载时自动触发的，监听器在 waitForURL/waitForLoadState 期间就会收到响应。
+    // 每轮循环开始先重置 CheckInvitationCodeRemains 标志位（必须在 waitForURL 之前重置）
+    // 原因：CheckInvitationCodeRemains 是页面加载时自动触发的，监听器在 waitForURL/waitForLoadState 期间就会收到响应。
     // 如果在 networkidle 后才重置，会把已收到的成功响应清掉，导致后面白等 15 秒。
-    checkRegionOk = false;
+    checkInvitationCodeRemainsOk = false;
 
     // ── 等待顺序至关重要：先等 URL 稳定，再等 DOM 加载 ──
     // /invitation/xxx 会通过 JS 重定向到 /login，这个重定向发生在 domcontentloaded 之后
@@ -647,15 +662,15 @@ async function handleLoginPage(
     // 每轮开始清除上一轮遗留的 API 错误状态（对齐插件的 lastApiResult = null）
     lastApiError = null;
 
-    // ── 等待 CheckRegion 接口成功响应（最多 15 秒）──
-    // CheckRegion 是页面加载时自动触发的，成功后才表示页面就绪，可以开始操作
-    log("等待 CheckRegion 接口成功响应...");
+    // ── 等待 CheckInvitationCodeRemains 接口成功响应（最多 15 秒）──
+    // CheckInvitationCodeRemains 是页面加载时自动触发的，成功后才表示页面就绪，可以开始操作
+    log("等待 CheckInvitationCodeRemains 接口成功响应...");
     const checkRegionStart = Date.now();
-    while (!checkRegionOk && Date.now() - checkRegionStart < 15000) {
+    while (!checkInvitationCodeRemainsOk && Date.now() - checkRegionStart < 15000) {
       await sleep(300);
     }
-    if (!checkRegionOk) {
-      log("CheckRegion 接口 15s 内未收到成功响应，页面可能未正常加载，刷新重试...", "warn");
+    if (!checkInvitationCodeRemainsOk) {
+      log("CheckInvitationCodeRemains 接口 15s 内未收到成功响应，页面可能未正常加载，刷新重试...", "warn");
       refreshCount++;
       if (refreshCount > MAX_REFRESHES) {
         log(`阶段一已刷新 ${MAX_REFRESHES} 次仍未完成，放弃`, "error");
@@ -1034,11 +1049,32 @@ async function handleLoginPage(
       // 判断成功依据：RegisterByEmail 请求是否发出
       // 如果点击后 3s 内无请求发出，清空验证码重新输入再点击
       if (!verifyConfirmClicked) {
-        // RegisterByEmail 已发出 → 验证码确认按钮已生效，等待页面跳转
+        // RegisterByEmail 已发出 → 等待响应后再判断是否消耗了验证码
         if (registerByEmailRequestTime > 0) {
+          // 等待最多 10 秒让响应到达
+          const waitStart = Date.now();
+          while (registerByEmailStatus === 0 && Date.now() - waitStart < 10000) {
+            await sleep(200);
+          }
+
+          if (registerByEmailStatus === -1) {
+            // 响应失败（服务端拒绝或网络错误）——验证码未消耗，重新输入验证码再试
+            log("RegisterByEmail 响应失败，验证码未消耗，清空重新输入...", "warn");
+            registerByEmailRequestTime = 0;
+            registerByEmailStatus = 0;
+            verifyConfirmClicked = false;
+            verifyCodeFilled = false;
+            verifyBtnClickTime = 0;
+            try {
+              await clearField(page, 'input#verifyCode[name="verifyCode"]');
+            } catch { /* 容错 */ }
+            continue;
+          }
+
+          // 响应成功 (status===1) 或 10s 超时未收到响应（按成功处理）
           verifyConfirmClicked = true;
           stepStallCount = 0;
-          log("验证码确认已生效（RegisterByEmail 已发出），等待页面跳转...");
+          log("验证码确认已生效（RegisterByEmail 响应成功），等待页面跳转...");
           try {
             await page.waitForURL((url: URL) => url.toString().includes("manus.im/") && !url.toString().includes("manus.im/login") && !url.toString().includes("manus.im/register"), { timeout: 30000 });
             const navUrl = page.url();
@@ -1053,7 +1089,6 @@ async function handleLoginPage(
             }
             if (navUrl.includes("manus.im/auth_landing")) {
               log("检测到 auth_landing 中转页，等待 UserInfo 响应和最终跳转...");
-              // 等待最多 5 秒，让 UserInfo 接口有时间响应（封禁检测）
               await sleep(5000);
               if (userInfoForbiddenRef.value) {
                 log("账号注册即封禁（UserInfo 403），注册失败", "error");
@@ -1075,9 +1110,8 @@ async function handleLoginPage(
             log(`跳转到未知目标页面：${navUrl}`, "warn");
             break;
           } catch {
-            // RegisterByEmail 已发出意味着验证码已被服务端消费，重试点击无意义
-            // 直接 break 刷新页面，重新获取验证码后再试
-            log("RegisterByEmail 已发出但页面未跳转（验证码已消费），刷新重试...", "warn");
+            // RegisterByEmail 已成功响应但页面 30s 内未跳转，验证码已消耗，刷新重试
+            log("RegisterByEmail 已成功但页面 30s 内未跳转（验证码已消耗），刷新重试...", "warn");
             break;
           }
           continue;
@@ -2278,12 +2312,13 @@ type Logger = (msg: string, level?: "info" | "success" | "warn" | "error") => vo
  */
 function makeLogger(taskId: number, profileId: string, logId: number): Logger {
   return (msg: string, level: "info" | "success" | "warn" | "error" = "info") => {
+    // 控制台输出带任务前缀（不在 appendStepLog 里重复打印）
     const prefix = `[Automation][Task ${taskId}][${profileId.substring(0, 8)}]`;
     if (level === "error") console.error(`${prefix} ${msg}`);
     else if (level === "warn") console.warn(`${prefix} ${msg}`);
     else console.log(`${prefix} ${msg}`);
-    // 异步写入数据库（不 await，不阻塞主流程）
+    // 异步写入数据库（不 await，不阻塞主流程）——传入 source="" 让 appendStepLog 不再重复打印控制台
     const dbLevel = level === "warn" ? "warning" : level;
-    appendStepLog(logId, msg, dbLevel as "info" | "success" | "warning" | "error").catch(() => {});
+    appendStepLog(logId, msg, dbLevel as "info" | "success" | "warning" | "error", "").catch(() => {});
   };
 }

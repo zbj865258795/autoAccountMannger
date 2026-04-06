@@ -1310,10 +1310,12 @@ export async function appendStepLog(
     if (!db) return;
     const data: InsertTaskStepLog = { taskLogId, message, level, source };
     await db.insert(taskStepLogs).values(data);
-    // 同时打印到控制台
-    const ts = new Date().toTimeString().slice(0, 8);
-    const icon = level === "success" ? "✅" : level === "error" ? "❌" : level === "warning" ? "⚠️" : "ℹ️";
-    console.log(`${icon} [${ts}] [${source}] ${message}`);
+    // source 为空时调用方自己已打印控制台，跳过重复输出
+    if (source) {
+      const ts = new Date().toTimeString().slice(0, 8);
+      const icon = level === "success" ? "✅" : level === "error" ? "❌" : level === "warning" ? "⚠️" : "ℹ️";
+      console.log(`${icon} [${ts}] [${source}] ${message}`);
+    }
   } catch {
     // 日志写入失败不影响主流程
   }
