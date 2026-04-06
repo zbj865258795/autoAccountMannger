@@ -583,6 +583,8 @@ async function handleLoginPage(
   // 响应状态：0=未响应 1=成功(2xx) -1=失败(4xx/5xx) -2=403封禁
   let sendEmailCodeStatus = 0;   // SendEmailVerifyCodeWithCaptcha 响应状态
   let registerByEmailStatus = 0; // RegisterByEmail 响应状态
+  // 全局 403 标志位（任何 Manus 接口返回 403 就立即失败）
+  let globalForbidden = false;
   page.on("request", (request) => {
     const url = request.url();
     if (url.includes("SendEmailVerifyCodeWithCaptcha")) {
@@ -599,6 +601,11 @@ async function handleLoginPage(
   page.on("response", (response) => {
     const url = response.url();
     const status = response.status();
+    // 全局 403 检测：任何 Manus API 返回 403 就记录封禁
+    if (url.includes("api.manus.im") && status === 403) {
+      globalForbidden = true;
+      log(`[全局403] ${url.split("/").pop()} 返回 403，本次注册失败`, "error");
+    }
     if (url.includes("SendEmailVerifyCodeWithCaptcha")) {
       if (status >= 200 && status < 300) {
         sendEmailCodeStatus = 1;
@@ -820,15 +827,17 @@ async function handleLoginPage(
         // 等待最多 5 秒，让 UserInfo 接口有时间响应（封禁检测）
         await sleep(5000);
         if (userInfoForbiddenRef.value) {
-          log("账号注册即封禁（UserInfo 403），本次注册失败", "error");
-          return "banned";
+          // TODO: 调试模式——停住不关闭浏览器，等待手动调试
+          log("账号注册即封禁（UserInfo 403），浏览器保持开启等待调试（请手动处理后在后台结束任务）", "error");
+          await new Promise(() => {}); // 永久等待，不关闭浏览器
         }
         try {
           await page.waitForURL((url: URL) => url.toString().includes("manus.im/") && !url.toString().includes("auth_landing"), { timeout: 55000 });
           const landingUrl = page.url();
           if (userInfoForbiddenRef.value) {
-            log("账号注册即封禁（UserInfo 403），本次注册失败", "error");
-            return "banned";
+            // TODO: 调试模式——停住不关闭浏览器，等待手动调试
+            log("账号注册即封禁（UserInfo 403），浏览器保持开启等待调试（请手动处理后在后台结束任务）", "error");
+            await new Promise(() => {}); // 永久等待，不关闭浏览器
           }
           if (landingUrl.includes("manus.im/verify-phone")) return "verify-phone";
           if (landingUrl.includes("manus.im/app")) return "app";
@@ -969,6 +978,8 @@ async function handleLoginPage(
           while (sendEmailCodeStatus === 0 && Date.now() - waitSendStart < 10000) {
             await sleep(200);
           }
+          // 全局 403 检查
+          if (globalForbidden) return "banned";
           if (sendEmailCodeStatus === -1) {
             // 响应失败，清空密码重新输入
             log("SendEmailVerifyCodeWithCaptcha 响应失败，清空密码重新输入...", "warn");
@@ -1102,6 +1113,8 @@ async function handleLoginPage(
             await sleep(200);
           }
 
+          // 全局 403 检查
+          if (globalForbidden) return "banned";
           if (registerByEmailStatus === -1) {
             // 响应失败（服务端拒绝或网络错误）——验证码未消耗，重新输入验证码再试
             log("RegisterByEmail 响应失败，验证码未消耗，清空重新输入...", "warn");
@@ -1136,16 +1149,18 @@ async function handleLoginPage(
               log("检测到 auth_landing 中转页，等待 UserInfo 响应和最终跳转...");
               await sleep(5000);
               if (userInfoForbiddenRef.value) {
-                log("账号注册即封禁（UserInfo 403），本次注册失败", "error");
-                return "banned";
+                // TODO: 调试模式——停住不关闭浏览器，等待手动调试
+                log("账号注册即封禁（UserInfo 403），浏览器保持开启等待调试（请手动处理后在后台结束任务）", "error");
+                await new Promise(() => {}); // 永久等待，不关闭浏览器
               }
               try {
                 await page.waitForURL((url: URL) => url.toString().includes("manus.im/") && !url.toString().includes("auth_landing"), { timeout: 55000 });
               } catch { /* 超时容错 */ }
               const finalUrl = page.url();
               if (userInfoForbiddenRef.value) {
-                log("账号注册即封禁（UserInfo 403），本次注册失败", "error");
-                return "banned";
+                // TODO: 调试模式——停住不关闭浏览器，等待手动调试
+                log("账号注册即封禁（UserInfo 403），浏览器保持开启等待调试（请手动处理后在后台结束任务）", "error");
+                await new Promise(() => {}); // 永久等待，不关闭浏览器
               }
               if (finalUrl.includes("manus.im/verify-phone")) return "verify-phone";
               if (finalUrl.includes("manus.im/app")) return "app";
@@ -1278,6 +1293,8 @@ async function handleVerifyPhonePage(
   // 响应状态：0=未响应 1=成功(2xx) -1=失败(4xx/5xx)
   let sendPhoneCodeStatus = 0;  // SendPhoneVerificationCode 响应状态
   let bindPhoneStatus = 0;      // BindPhoneTrait 响应状态
+  // 全局 403 标志位（任何 Manus 接口返回 403 就立即失败）
+  let globalForbidden2 = false;
   page.on("request", (request) => {
     const url = request.url();
     if (url.includes("SendPhoneVerificationCode")) {
@@ -1294,6 +1311,11 @@ async function handleVerifyPhonePage(
   page.on("response", (response) => {
     const url = response.url();
     const status = response.status();
+    // 全局 403 检测
+    if (url.includes("api.manus.im") && status === 403) {
+      globalForbidden2 = true;
+      log(`[全局403] ${url.split("/").pop()} 返回 403，本次注册失败`, "error");
+    }
     if (url.includes("SendPhoneVerificationCode")) {
       if (status >= 200 && status < 300) {
         sendPhoneCodeStatus = 1;
@@ -1474,6 +1496,8 @@ async function handleVerifyPhonePage(
           while (sendPhoneCodeStatus === 0 && Date.now() - waitSendPhoneStart < 10000) {
             await sleep(200);
           }
+          // 全局 403 检查
+          if (globalForbidden2) return { result: "error" };
           if (sendPhoneCodeStatus === -1) {
             // 响应失败，清空手机号重新输入
             log("SendPhoneVerificationCode 响应失败，清空手机号重新输入...", "warn");
@@ -1599,7 +1623,9 @@ async function handleVerifyPhonePage(
         while (bindPhoneStatus === 0 && Date.now() - waitBindStart < 15000) {
           await sleep(200);
         }
-          if (bindPhoneStatus === -1) {
+        // 全局 403 检查
+        if (globalForbidden2) return { result: "error" };
+        if (bindPhoneStatus === -1) {
           // 响应失败，短信验证码未消耗，清空重新输入
           log("BindPhoneTrait 响应失败，短信验证码未消耗，清空重新输入...", "warn");
           bindPhoneRequestTime = 0;
@@ -1774,18 +1800,15 @@ async function finishRegistration(
 
     // 1b. CheckInvitationCode（验证邀请码是否有效）
     log("正在调用 CheckInvitationCode...");
-    const checkInviteResult = await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
+    await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
       try {
-        const resp = await fetch("https://api.manus.im/user.v1.UserService/CheckInvitationCode", {
+        await fetch("https://api.manus.im/user.v1.UserService/CheckInvitationCode", {
           method: "POST",
           headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
           body: JSON.stringify({}),
         });
-        return { ok: resp.ok, status: resp.status };
-      } catch { return { ok: false, status: 0 }; }
-    }, { tkn, cid }).catch(() => ({ ok: false, status: 0 }));
-    const checkInvitationOk = checkInviteResult?.ok === true;
-    log(`CheckInvitationCode 响应：${checkInvitationOk ? "成功" : `失败(${checkInviteResult?.status})`}`);
+      } catch {}
+    }, { tkn, cid }).catch(() => {});
 
     // 1c. UserInfo（获取会员版本）
     log("正在调用 UserInfo...");
@@ -1825,13 +1848,9 @@ async function finishRegistration(
 
     // 1e. RedeemPromotionCodeV2（兑换推广码）
     log("正在兑换推广码...");
-    const redeemOk = await redeemPromotion(page, tkn, cid, log);
+    await redeemPromotion(page, tkn, cid, log);
 
-    // 1f. GetAvailableCredits（获取积分）
-    // 必须同时满足：CheckInvitationCode 成功 AND 推广码轮询到 SUCCESS
-    if (!checkInvitationOk || !redeemOk) {
-      log(`CheckInvitationCode=${checkInvitationOk ? "成功" : "失败"}，redeemOk=${redeemOk}，跳过 GetAvailableCredits`, "warn");
-    } else {
+    // 1f. GetAvailableCredits（获取积分，在兑换后调用拿到最新值）
     log("正在调用 GetAvailableCredits...");
     const creditsResult = await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
       try {
@@ -1850,7 +1869,7 @@ async function finishRegistration(
       capturedUserData.refreshCredits = creditsResult.refreshCredits ?? null;
       log(`积分：总=${capturedUserData.totalCredits}，免费=${capturedUserData.freeCredits}`);
     }
-    } // end of redeemOk else block
+  }
 
   log(`数据采集完成：会员版本=${capturedUserData.membershipVersion}，积分=${capturedUserData.totalCredits}，邀请码=${capturedUserData.inviteCode}`);
 
@@ -1908,7 +1927,7 @@ async function finishRegistration(
 
 // ─── 兑换推广码 ──────────────────────────────────────────────────────────────
 
-async function redeemPromotion(page: Page, token: string, clientId: string, log: Logger): Promise<boolean> {
+async function redeemPromotion(page: Page, token: string, clientId: string, log: Logger) {
   const promotionCode = "techtiff";
   log(`正在兑换推广码：${promotionCode}`);
 
@@ -1933,11 +1952,11 @@ async function redeemPromotion(page: Page, token: string, clientId: string, log:
   // 修复：status === 0 表示网络异常，非 0 的 4xx/5xx 是服务端正常拒绝（如推广码已兑换），不应无限轮询
   if (redeemResult?.status === 0) {
     log(`推广码兑换网络异常：${redeemResult?.body}`, "warn");
-    return false;
+    return;
   }
   if (!redeemResult?.ok) {
     log(`推广码兑换被拒绝（状态码 ${redeemResult?.status}）：${redeemResult?.body}`, "warn");
-    return false;
+    return;
   }
 
   log(`推广码已提交（状态码 ${redeemResult?.status}），轮询兑换结果...`);
@@ -1965,12 +1984,11 @@ async function redeemPromotion(page: Page, token: string, clientId: string, log:
     try {
       const json = JSON.parse(pollResult?.body || "{}");
       const st = json.status || "";
-      if (st.includes("SUCCESS")) { log("推广码兑换成功！"); return true; }
-      if (st.includes("FAILED")) { log(`推广码兑换失败：${pollResult?.body}`, "warn"); return false; }
+      if (st.includes("SUCCESS")) { log("推广码兑换成功！"); return; }
+      if (st.includes("FAILED")) { log(`推广码兑换失败：${pollResult?.body}`, "warn"); return; }
     } catch {}
   }
   log("推广码兑换轮询超时（可能仍在处理中）", "warn");
-  return false;
 }
 
 // ─── 工具函数 ─────────────────────────────────────────────────────────────────
