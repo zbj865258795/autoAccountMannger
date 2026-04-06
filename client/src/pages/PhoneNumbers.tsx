@@ -151,11 +151,11 @@ export default function PhoneNumbers() {
                 批量导入
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-2xl">
-              <DialogHeader>
+            <DialogContent className="max-w-2xl flex flex-col max-h-[90vh]">
+              <DialogHeader className="flex-shrink-0">
                 <DialogTitle>批量导入手机号</DialogTitle>
               </DialogHeader>
-              <div className="space-y-4">
+              <div className="flex flex-col gap-4 overflow-y-auto flex-1 min-h-0 pr-1">
                 <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
                   <p className="font-medium mb-1">格式说明：</p>
                   <p>每行一条，格式为 <code className="bg-background px-1 rounded">手机号|接码URL</code></p>
@@ -170,23 +170,23 @@ export default function PhoneNumbers() {
                   value={importText}
                   onChange={(e) => setImportText(e.target.value)}
                   rows={12}
-                  className="font-mono text-sm"
+                  className="font-mono text-sm resize-none"
                 />
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-muted-foreground">
-                    共 {importText.split("\n").filter((l) => l.trim()).length} 条
-                  </span>
-                  <div className="flex gap-2">
-                    <Button variant="outline" onClick={() => setImportOpen(false)}>
-                      取消
-                    </Button>
-                    <Button
-                      onClick={() => bulkImport.mutate({ text: importText })}
-                      disabled={!importText.trim() || bulkImport.isPending}
-                    >
-                      {bulkImport.isPending ? "导入中..." : "确认导入"}
-                    </Button>
-                  </div>
+              </div>
+              <div className="flex justify-between items-center flex-shrink-0 pt-2 border-t">
+                <span className="text-sm text-muted-foreground">
+                  共 {importText.split("\n").filter((l) => l.trim()).length} 条
+                </span>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={() => setImportOpen(false)}>
+                    取消
+                  </Button>
+                  <Button
+                    onClick={() => bulkImport.mutate({ text: importText })}
+                    disabled={!importText.trim() || bulkImport.isPending}
+                  >
+                    {bulkImport.isPending ? "导入中..." : "确认导入"}
+                  </Button>
                 </div>
               </div>
             </DialogContent>
