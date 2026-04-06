@@ -304,8 +304,8 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     // ── Step 1: 生成密码（邮箱将在 /login 页面加载后再购买，避免浪费）──
     let email = "";       // 将在 handleLoginPage 内部购买后填入
     let codeUrl = "";     // 同上
-    const password = generatePassword();
-    log(`密码已生成`);
+    const password = "QingTian@2026";
+    log(`密码已生成（固定密码）`);
 
     // ── Step 2: 打开邀请链接 ──
     log(`正在打开邀请链接：${inviteUrl}`);
