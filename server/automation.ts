@@ -635,14 +635,29 @@ async function handleLoginPage(
       await sleep(300);
     }
     if (!checkRegionOk) {
-      log("CheckRegion 接口 15s 内未收到成功响应，继续执行...", "warn");
+      log("CheckRegion 接口 15s 内未收到成功响应，页面可能未正常加载，刷新重试...", "warn");
+      refreshCount++;
+      if (refreshCount > MAX_REFRESHES) {
+        log(`阶段一已刷新 ${MAX_REFRESHES} 次仍未完成，放弃`, "error");
+        return "timeout";
+      }
+      const currentUrlOnCheckFail = page.url();
+      log(`CheckRegion 失败，重新加载：${currentUrlOnCheckFail}`, "warn");
+      try {
+        await page.goto(currentUrlOnCheckFail, { waitUntil: "domcontentloaded", timeout: 30000 });
+      } catch (e: any) {
+        log(`刷新失败：${e.message}`, "error");
+        return "error";
+      }
+      try { await page.waitForLoadState("networkidle", { timeout: 20000 }); } catch { /* 容错 */ }
+      continue;
     }
 
     // 页面加载后模拟真人浏览行为（随机滚动 + 鼠标漫游）
     await humanBrowse(page);
 
     // ── 在 /login 页面稳定后购买邮箱（仅购买一次）──
-    // 确保邮箱输入框已出现再购买，避免在页面加载前浪费邮箱资源
+    // 必须确认邮箱输入框真实存在，才去购买邮箱；输入框不存在说明页面未正常加载，直接刷新重试
     if (!emailPurchased) {
       // 等待邮箱输入框出现（最多 30 秒）
       let emailInputVisible = false;
@@ -653,28 +668,42 @@ async function handleLoginPage(
         );
         emailInputVisible = true;
       } catch {
-        log("等待邮箱输入框超时，继续尝试购买邮箱...", "warn");
-        emailInputVisible = true; // 超时后仍继续购买，避免卡死
+        log("等待邮箱输入框超时，页面可能未正常加载，刷新重试...", "warn");
       }
-      if (emailInputVisible) {
-        log("邮箱输入框已出现，正在购买邮箱...");
-        try {
-          const result = await buyEmailFn();
-          email = result.email;
-          codeUrl = result.codeUrl;
-          emailPurchased = true;
-          log(`邮箱购买成功：${email}`, "success");
-        } catch (buyErr: any) {
-          emailBuyRetryCount++;
-          log(`邮箱购买失败（第 ${emailBuyRetryCount} 次）：${buyErr.message}，等待重试...`, "error");
-          if (emailBuyRetryCount > 3) {
-            log(`邮箱购买失败已超过 3 次，放弃`, "error");
-            return "error";
-          }
-          // 邮箱购买是 HTTP API 调用，与页面状态无关，不需要 reload 页面
-          await sleep(2000); // 等待 2s 后重试
-          continue;
+      if (!emailInputVisible) {
+        // 邮箱输入框不存在，页面异常（如 Application error），直接刷新重试
+        refreshCount++;
+        if (refreshCount > MAX_REFRESHES) {
+          log(`阶段一已刷新 ${MAX_REFRESHES} 次仍未完成，放弃`, "error");
+          return "timeout";
         }
+        const currentUrlOnEmailFail = page.url();
+        log(`邮箱输入框未出现，第 ${refreshCount} 次刷新重试：${currentUrlOnEmailFail}`, "warn");
+        try {
+          await page.goto(currentUrlOnEmailFail, { waitUntil: "domcontentloaded", timeout: 30000 });
+        } catch (e: any) {
+          log(`刷新失败：${e.message}`, "error");
+          return "error";
+        }
+        try { await page.waitForLoadState("networkidle", { timeout: 20000 }); } catch { /* 容错 */ }
+        continue;
+      }
+      log("邮箱输入框已出现，正在购买邮箱...");
+      try {
+        const result = await buyEmailFn();
+        email = result.email;
+        codeUrl = result.codeUrl;
+        emailPurchased = true;
+        log(`邮箱购买成功：${email}`, "success");
+      } catch (buyErr: any) {
+        emailBuyRetryCount++;
+        log(`邮箱购买失败（第 ${emailBuyRetryCount} 次）：${buyErr.message}，等待重试...`, "error");
+        if (emailBuyRetryCount > 3) {
+          log(`邮箱购买失败已超过 3 次，放弃`, "error");
+          return "error";
+        }
+        await sleep(2000);
+        continue;
       }
     }
 
@@ -1109,21 +1138,9 @@ async function handleVerifyPhonePage(
   logId: number,
   log: Logger
 ): Promise<{ result: "app" | "timeout" | "no-phone" | "error"; phoneInfo?: PhoneInfo }> {
-  log("阶段二：正在从数据库获取手机号...");
-
-  // 从数据库获取手机号
-  const phoneData = await getNextAvailablePhone();
-  if (!phoneData) {
-    log("暂无可用手机号", "error");
-    return { result: "no-phone" };
-  }
-
-  const phoneInfo = parseBackendPhone(phoneData);
-  const acquiredPhoneId = phoneData.id; // 记录获取的手机号 id，失败时用于归还
-  log(`手机号已获取：${phoneInfo.phoneRaw}（${phoneInfo.iso}）`);
-
-  // 立即将手机号 ID 写入 task_log，供浏览器异常关闭时 scheduler 归还手机号
-  await updateTaskLog(logId, { acquiredPhoneId }).catch(() => {});
+  // 手机号在确认输入框存在后才获取，此处先初始化为 null
+  let phoneInfo: PhoneInfo | null = null;
+  let acquiredPhoneId: number | null = null;
 
   const MAX_REFRESHES = 3;
   let refreshCount = 0;
@@ -1188,6 +1205,46 @@ async function handleVerifyPhonePage(
     lastApiError2 = null;
     // 页面加载后模拟真实用户浏览行为（触发 Plausible + Manus 埋点）
     await humanBrowse(page);
+
+    // ── 确认手机号输入框真实存在，再获取手机号（仅获取一次）──
+    if (!phoneInfo) {
+      let phoneInputVisible = false;
+      try {
+        await page.waitForSelector('input#phone[type="tel"]', { state: "visible", timeout: 30000 });
+        phoneInputVisible = true;
+      } catch {
+        log("手机号输入框未出现，页面可能未正常加载，刷新重试...", "warn");
+      }
+      if (!phoneInputVisible) {
+        refreshCount++;
+        if (refreshCount > MAX_REFRESHES) {
+          log(`阶段二已刷新 ${MAX_REFRESHES} 次仍未完成，放弃`, "error");
+          return { result: "timeout" };
+        }
+        const curUrlOnPhoneFail = page.url();
+        log(`手机号输入框未出现，第 ${refreshCount} 次刷新重试：${curUrlOnPhoneFail}`, "warn");
+        try {
+          await page.goto(curUrlOnPhoneFail, { waitUntil: "domcontentloaded", timeout: 30000 });
+        } catch (e: any) {
+          log(`刷新失败：${e.message}`, "error");
+          return { result: "error" };
+        }
+        try { await page.waitForLoadState("networkidle", { timeout: 20000 }); } catch { /* 容错 */ }
+        continue;
+      }
+      // 输入框已确认存在，现在才从数据库获取手机号
+      log("手机号输入框已出现，正在从数据库获取手机号...");
+      const phoneData = await getNextAvailablePhone();
+      if (!phoneData) {
+        log("暂无可用手机号", "error");
+        return { result: "no-phone" };
+      }
+      phoneInfo = parseBackendPhone(phoneData);
+      acquiredPhoneId = phoneData.id;
+      log(`手机号已获取：${phoneInfo.phoneRaw}（${phoneInfo.iso}）`);
+      // 立即将手机号 ID 写入 task_log，供浏览器异常关闭时 scheduler 归还手机号
+      await updateTaskLog(logId, { acquiredPhoneId }).catch(() => {});
+    }
 
     let countrySelected = false;
     let phoneFilled = false;
@@ -1499,11 +1556,15 @@ async function handleVerifyPhonePage(
   // 阶段二超时：按插件逻辑处理手机号状态
   // - 如果短信已收到并标记使用（phoneMarkedUsed=true），保持已使用状态，不允许再次使用
   // - 如果按钮点了但短信未收到（phoneMarkedUsed=false），归还手机号供下次使用
-  if (!phoneMarkedUsed) {
-    log(`阶段二超时，短信未收到，手机号 ${acquiredPhoneId} 已归还`, "warn");
-    await resetPhoneStatusById(acquiredPhoneId).catch(() => {});
+  if (acquiredPhoneId !== null) {
+    if (!phoneMarkedUsed) {
+      log(`阶段二超时，短信未收到，手机号 ${acquiredPhoneId} 已归还`, "warn");
+      await resetPhoneStatusById(acquiredPhoneId).catch(() => {});
+    } else {
+      log(`阶段二超时，短信已收到，手机号 ${acquiredPhoneId} 保持已使用状态`, "warn");
+    }
   } else {
-    log(`阶段二超时，短信已收到，手机号 ${acquiredPhoneId} 保持已使用状态`, "warn");
+    log("阶段二超时，手机号未获取（页面未正常加载），无需归还", "warn");
   }
   return { result: "timeout" };
 }
