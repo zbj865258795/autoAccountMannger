@@ -548,7 +548,7 @@ async function handleLoginPage(
   let emailBuyRetryCount = 0; // 邮箱购买失败重试次数（独立于 refreshCount）
 
   // ── API 请求发出时间戳（用于判断按钮点击是否生效）──
-  // 监听 request（不是 response），这样可以在请求发出的第一时间就知道按钮点击已生效
+  // 监听 request（不是 response），这样可以在请求发出的第一时间就知道按鈕点击已生效
   let sendEmailCodeRequestTime = 0;   // SendEmailVerifyCodeWithCaptcha 请求发出时间
   let registerByEmailRequestTime = 0; // RegisterByEmail 请求发出时间
   page.on("request", (request) => {
@@ -560,6 +560,18 @@ async function handleLoginPage(
     if (url.includes("RegisterByEmail")) {
       registerByEmailRequestTime = Date.now();
       log("[请求监听] RegisterByEmail 已发出");
+    }
+  });
+
+  // CheckRegion 成功响应标志位（页面加载时自动触发，成功后才允许开始输入邮箱）
+  // 每轮刷新前重置，确保每次重新加载页面后都能重新等待
+  let checkRegionOk = false;
+  page.on("response", (response) => {
+    const url = response.url();
+    const status = response.status();
+    if (url.includes("CheckRegion") && status >= 200 && status < 300) {
+      checkRegionOk = true;
+      log("[CheckRegion] 接口返回成功，页面就绪");
     }
   });
 
@@ -581,6 +593,11 @@ async function handleLoginPage(
   });
 
   while (refreshCount <= MAX_REFRESHES) {
+    // 每轮循环开始先重置 CheckRegion 标志位（必须在 waitForURL 之前重置）
+    // 原因：CheckRegion 是页面加载时自动触发的，监听器在 waitForURL/waitForLoadState 期间就会收到响应。
+    // 如果在 networkidle 后才重置，会把已收到的成功响应清掉，导致后面白等 15 秒。
+    checkRegionOk = false;
+
     // ── 等待顺序至关重要：先等 URL 稳定，再等 DOM 加载 ──
     // /invitation/xxx 会通过 JS 重定向到 /login，这个重定向发生在 domcontentloaded 之后
     // 如果先等 DOM 加载再等 URL，则 DOM 等待会在 /invitation/ 页面就通过，
@@ -609,6 +626,18 @@ async function handleLoginPage(
     await sleep(1500);
     // 每轮开始清除上一轮遗留的 API 错误状态（对齐插件的 lastApiResult = null）
     lastApiError = null;
+
+    // ── 等待 CheckRegion 接口成功响应（最多 15 秒）──
+    // CheckRegion 是页面加载时自动触发的，成功后才表示页面就绪，可以开始操作
+    log("等待 CheckRegion 接口成功响应...");
+    const checkRegionStart = Date.now();
+    while (!checkRegionOk && Date.now() - checkRegionStart < 15000) {
+      await sleep(300);
+    }
+    if (!checkRegionOk) {
+      log("CheckRegion 接口 15s 内未收到成功响应，继续执行...", "warn");
+    }
+
     // 页面加载后模拟真人浏览行为（随机滚动 + 鼠标漫游）
     await humanBrowse(page);
 
