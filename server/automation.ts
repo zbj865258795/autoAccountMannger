@@ -17,6 +17,8 @@ import { chromium, type Browser, type Page } from "playwright";
 import {
   claimNextInviteCode,
   resetInviteCodeStatus,
+  updateInviteStatusById,
+  getAccountByInviteCode,
   getNextAvailablePhone,
   markPhoneUsedById,
   resetPhoneStatusById,
@@ -1771,17 +1773,17 @@ async function finishRegistration(
     const tkn = capturedToken;
     const cid = clientId ?? "";
 
-    // 1b. CheckInvitationCode（验证邀请码）
-    log("正在调用 CheckInvitationCode...");
-    await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
+    // 1b. CheckInvitationCode（验证邀请码）——传入邀请链接中的邀请码
+    log(`正在调用 CheckInvitationCode（code=${referrerCode}）...`);
+    await page.evaluate(async ({ tkn, cid, code }: { tkn: string; cid: string; code: string }) => {
       try {
         await fetch("https://api.manus.im/user.v1.UserService/CheckInvitationCode", {
           method: "POST",
           headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
-          body: JSON.stringify({}),
+          body: JSON.stringify({ code }),
         });
       } catch {}
-    }, { tkn, cid }).catch(() => {});
+    }, { tkn, cid, code: referrerCode }).catch(() => {});
     log("CheckInvitationCode 调用完成");
 
     // 1c. UserInfo（获取会员版本）
@@ -1802,29 +1804,11 @@ async function finishRegistration(
       log(`会员版本：${capturedUserData.membershipVersion}`);
     }
 
-    // 1d. GetPersonalInvitationCodes（获取邀请码）
-    log("正在调用 GetPersonalInvitationCodes...");
-    const inviteResult = await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
-      try {
-        const resp = await fetch("https://api.manus.im/user.v1.UserService/GetPersonalInvitationCodes", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
-          body: JSON.stringify({}),
-        });
-        if (resp.ok) return await resp.json();
-      } catch {}
-      return null;
-    }, { tkn, cid }).catch(() => null);
-    if (inviteResult?.invitationCodes?.length > 0) {
-      capturedUserData.inviteCode = inviteResult.invitationCodes[0].inviteCode ?? null;
-      log(`邀请码：${capturedUserData.inviteCode}`);
-    }
-
-    // 1e. RedeemPromotionCodeV2（提交推广码）+ LoopPromotionCodeRedeemStatus（轮询兑换状态）
+    // 1d. RedeemPromotionCodeV2（提交推广码）+ LoopPromotionCodeRedeemStatus（轮询兑换状态）
     log("正在兑换推广码...");
     await redeemPromotion(page, tkn, cid, log);
 
-    // 1f. GetAvailableCredits（获取最新积分，在兑换后无条件调用）
+    // 1e. GetAvailableCredits（获取最新积分，等上面所有接口全部完成后调用）
     log("正在调用 GetAvailableCredits...");
     const creditsResult = await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
       try {
@@ -1843,6 +1827,24 @@ async function finishRegistration(
       capturedUserData.refreshCredits = creditsResult.refreshCredits ?? null;
       log(`积分：总=${capturedUserData.totalCredits}，免费=${capturedUserData.freeCredits}`);
     }
+
+    // 1f. GetPersonalInvitationCodes（获取该账号自身的邀请码）
+    log("正在调用 GetPersonalInvitationCodes...");
+    const inviteResult = await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
+      try {
+        const resp = await fetch("https://api.manus.im/user.v1.UserService/GetPersonalInvitationCodes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
+          body: JSON.stringify({}),
+        });
+        if (resp.ok) return await resp.json();
+      } catch {}
+      return null;
+    }, { tkn, cid }).catch(() => null);
+    if (inviteResult?.invitationCodes?.length > 0) {
+      capturedUserData.inviteCode = inviteResult.invitationCodes[0].inviteCode ?? null;
+      log(`账号自身邀请码：${capturedUserData.inviteCode}`);
+    }
   }
 
   log(`数据采集完成：会员版本=${capturedUserData.membershipVersion}，积分=${capturedUserData.totalCredits}，邀请码=${capturedUserData.inviteCode}`);
@@ -1852,6 +1854,9 @@ async function finishRegistration(
   const durationMs = Date.now() - startTime;
 
   try {
+    const finalTotalCredits = (() => { const v = Number(capturedUserData.totalCredits); return !isNaN(v) ? v : 0; })();
+    const inviteCodeEffective = finalTotalCredits === 2800;
+
     await saveRegistrationResult({
       email,
       password,
@@ -1859,7 +1864,7 @@ async function finishRegistration(
       token: capturedToken || undefined,
       clientId: clientId || undefined,
       membershipVersion: capturedUserData.membershipVersion || undefined,
-      totalCredits: (() => { const v = Number(capturedUserData.totalCredits); return !isNaN(v) ? v : 0; })(),
+      totalCredits: finalTotalCredits,
       freeCredits: (() => { const v = Number(capturedUserData.freeCredits); return !isNaN(v) ? v : 0; })(),
       inviteCode: capturedUserData.inviteCode || undefined,
       referrerCode: referrerCode || undefined,
@@ -1868,12 +1873,31 @@ async function finishRegistration(
       taskLogId: logId,
     });
 
+    // 积分不是 2800：邀请码未生效
+    if (!inviteCodeEffective) {
+      log(`总积分=${finalTotalCredits}（非2800），邀请码未生效，开始处理归还邀请码...`, "warn");
+      // 1. 归还本次使用的邀请码（将邀请人账号的 inviteStatus 改回 unused）
+      await resetInviteCodeStatus(inviterAccountId).catch(() => {});
+      log(`邀请码已归还（inviterAccountId=${inviterAccountId}）`, "warn");
+      // 2. 将新注册账号自身的邀请码标记为已使用（永远不会被用于邀请别人）
+      if (capturedUserData.inviteCode) {
+        // 通过邀请码字符串查找该账号并标记
+        const newAccount = await getAccountByInviteCode(capturedUserData.inviteCode).catch(() => null);
+        if (newAccount) {
+          await updateInviteStatusById(newAccount.id, "used").catch(() => {});
+          log(`新账号(id=${newAccount.id})自身邀请码已标记为已使用`, "warn");
+        }
+      }
+    } else {
+      log(`总积分=${finalTotalCredits}，邀请码生效，正常完成注册流程`, "success");
+    }
+
     // 记录已用IP
     if (exitIp) {
       await recordUsedIp(exitIp, email, logId).catch(() => {});
     }
 
-    // 更新任务日志为成功（将浏览器内检测到的 IP 写入日志）
+    // 更新任务日志为成功
     await updateTaskLog(logId, {
       status: "success",
       exitIp: exitIp ?? null,
@@ -1882,7 +1906,7 @@ async function finishRegistration(
     });
 
     await incrementTaskCounters(taskId, { totalSuccess: 1, totalAccountsCreated: 1 });
-    log(`注册完成！邮箱=${email}，耗时=${Math.round(durationMs / 1000)}秒`, "success");
+    log(`注册完成！邮筱=${email}，总积分=${finalTotalCredits}，耗时=${Math.round(durationMs / 1000)}秒`, "success");
 
   } catch (e: any) {
     log(`注册结果保存失败：${e.message}`, "error");
