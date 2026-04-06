@@ -571,30 +571,49 @@ async function handleLoginPage(
   // 监听 request（不是 response），这样可以在请求发出的第一时间就知道按鈕点击已生效
   let sendEmailCodeRequestTime = 0;   // SendEmailVerifyCodeWithCaptcha 请求发出时间
   let registerByEmailRequestTime = 0; // RegisterByEmail 请求发出时间
-  // RegisterByEmail 响应状态：0=未响应 1=成功(2xx) -1=失败(4xx/5xx/网络错误)
-  let registerByEmailStatus = 0;
+  // 响应状态：0=未响应 1=成功(2xx) -1=失败(4xx/5xx) -2=403封禁
+  let sendEmailCodeStatus = 0;   // SendEmailVerifyCodeWithCaptcha 响应状态
+  let registerByEmailStatus = 0; // RegisterByEmail 响应状态
+  // 全局 403 标志位（任何 Manus 接口返回 403 就立即失败）
+  let globalForbidden = false;
   page.on("request", (request) => {
     const url = request.url();
     if (url.includes("SendEmailVerifyCodeWithCaptcha")) {
       sendEmailCodeRequestTime = Date.now();
-      log("[请求监听] SendEmailVerifyCodeWithCaptcha 已发出");
+      sendEmailCodeStatus = 0;
+      log("[请求监听] SendEmailVerifyCodeWithCaptcha 已发出，等待响应...");
     }
     if (url.includes("RegisterByEmail")) {
       registerByEmailRequestTime = Date.now();
-      registerByEmailStatus = 0; // 重置状态，等待响应
+      registerByEmailStatus = 0;
       log("[请求监听] RegisterByEmail 已发出，等待响应...");
     }
   });
   page.on("response", (response) => {
     const url = response.url();
-    if (!url.includes("RegisterByEmail")) return;
     const status = response.status();
-    if (status >= 200 && status < 300) {
-      registerByEmailStatus = 1;
-      log(`[RegisterByEmail] 响应成功 (${status})，验证码已消耗`);
-    } else {
-      registerByEmailStatus = -1;
-      log(`[RegisterByEmail] 响应失败 (${status})，需重新输入验证码`, "warn");
+    // 全局 403 检测：任何 Manus API 返回 403 就记录封禁
+    if (url.includes("api.manus.im") && status === 403) {
+      globalForbidden = true;
+      log(`[全局403] ${url.split("/").pop()} 返回 403，本次注册失败`, "error");
+    }
+    if (url.includes("SendEmailVerifyCodeWithCaptcha")) {
+      if (status >= 200 && status < 300) {
+        sendEmailCodeStatus = 1;
+        log(`[SendEmailVerifyCodeWithCaptcha] 响应成功 (${status})`);
+      } else {
+        sendEmailCodeStatus = -1;
+        log(`[SendEmailVerifyCodeWithCaptcha] 响应失败 (${status})，需重新输入密码`, "warn");
+      }
+    }
+    if (url.includes("RegisterByEmail")) {
+      if (status >= 200 && status < 300) {
+        registerByEmailStatus = 1;
+        log(`[RegisterByEmail] 响应成功 (${status})，验证码已消耗`);
+      } else {
+        registerByEmailStatus = -1;
+        log(`[RegisterByEmail] 响应失败 (${status})，验证码未消耗`, "warn");
+      }
     }
   });
 
@@ -659,8 +678,12 @@ async function handleLoginPage(
       await page.waitForLoadState("networkidle", { timeout: 20000 });
     } catch { /* 网络慢时容错 */ }
     await sleep(1500);
-    // 每轮开始清除上一轮遗留的 API 错误状态（对齐插件的 lastApiResult = null）
+    // 每轮开始清除上一轮遗留的 API 错误状态和响应状态（防止旧状态干扰当前轮）
     lastApiError = null;
+    sendEmailCodeRequestTime = 0;
+    sendEmailCodeStatus = 0;
+    registerByEmailRequestTime = 0;
+    registerByEmailStatus = 0;
 
     // ── 等待 CheckInvitationCodeRemains 接口成功响应（最多 15 秒）──
     // CheckInvitationCodeRemains 是页面加载时自动触发的，成功后才表示页面就绪，可以开始操作
@@ -933,14 +956,35 @@ async function handleLoginPage(
       }
 
       // 4. 点击密码 Continue
-      // 判断成功依据：SendEmailVerifyCodeWithCaptcha 请求是否发出（密码提交触发发送验证码）
-      // 如果点击后 3s 内无请求发出，清空密码重新输入再点击
+      // 判断成功依据：SendEmailVerifyCodeWithCaptcha 响应成功（密码提交触发发送验证码）
+      // 响应失败时清空密码重新输入
       if (!pwdContinueClicked) {
-        // SendEmailVerifyCodeWithCaptcha 已发出 → 密码 Continue 已生效
+        // SendEmailVerifyCodeWithCaptcha 已发出 → 等待响应后再判断
         if (sendEmailCodeRequestTime > 0) {
+          // 等待最多 10 秒让响应到达
+          const waitSendStart = Date.now();
+          while (sendEmailCodeStatus === 0 && Date.now() - waitSendStart < 10000) {
+            await sleep(200);
+          }
+          // 全局 403 检查
+          if (globalForbidden) return "banned";
+          if (sendEmailCodeStatus === -1) {
+            // 响应失败，清空密码重新输入
+            log("SendEmailVerifyCodeWithCaptcha 响应失败，清空密码重新输入...", "warn");
+            sendEmailCodeRequestTime = 0;
+            sendEmailCodeStatus = 0;
+            pwdContinueClicked = false;
+            pwdFilled = false;
+            pwdBtnClickTime = 0;
+            try {
+              await clearField(page, 'input[name="password"][type="password"]');
+            } catch { /* 容错 */ }
+            continue;
+          }
+          // 响应成功（或 10s 超时未收到响应，按成功处理）
           pwdContinueClicked = true;
           stepStallCount = 0;
-          log("密码 Continue 已生效（SendEmailVerifyCodeWithCaptcha 已发出）", "success");
+          log("密码 Continue 已生效（SendEmailVerifyCodeWithCaptcha 响应成功）", "success");
           // 开始后台获取邮箱验证码
           if (!verifyCodeFetching) {
             verifyCodeFetching = true;
@@ -1057,6 +1101,8 @@ async function handleLoginPage(
             await sleep(200);
           }
 
+          // 全局 403 检查
+          if (globalForbidden) return "banned";
           if (registerByEmailStatus === -1) {
             // 响应失败（服务端拒绝或网络错误）——验证码未消耗，重新输入验证码再试
             log("RegisterByEmail 响应失败，验证码未消耗，清空重新输入...", "warn");
@@ -1226,34 +1272,51 @@ async function handleVerifyPhonePage(
   let smsCode: string | null = null;
   let phoneMarkedUsed = false; // 提升到外层，超时时可读取
 
-  // ── API 请求发出时间戳（用于判断按钮点击是否生效）──
+  // ── API 请求发出时间戳（用于判断按鈕点击是否生效）──
   let sendPhoneCodeRequestTime = 0; // SendPhoneVerificationCode 请求发出时间
   let bindPhoneRequestTime = 0;     // BindPhoneTrait 请求发出时间
+  // 响应状态：0=未响应 1=成功(2xx) -1=失败(4xx/5xx)
+  let sendPhoneCodeStatus = 0;  // SendPhoneVerificationCode 响应状态
+  let bindPhoneStatus = 0;      // BindPhoneTrait 响应状态
+  // 全局 403 标志位（任何 Manus 接口返回 403 就立即失败）
+  let globalForbidden2 = false;
   page.on("request", (request) => {
     const url = request.url();
     if (url.includes("SendPhoneVerificationCode")) {
       sendPhoneCodeRequestTime = Date.now();
-      log("[请求监听] SendPhoneVerificationCode 已发出");
+      sendPhoneCodeStatus = 0;
+      log("[请求监听] SendPhoneVerificationCode 已发出，等待响应...");
     }
     if (url.includes("BindPhoneTrait")) {
       bindPhoneRequestTime = Date.now();
-      log("[请求监听] BindPhoneTrait 已发出");
+      bindPhoneStatus = 0;
+      log("[请求监听] BindPhoneTrait 已发出，等待响应...");
     }
   });
-
-  // API 错误监听（对齐插件的 getRecentApiError 机制）
-  type ApiError2 = { api: string; status: number; time: number };
-  let lastApiError2: ApiError2 | null = null;
   page.on("response", (response) => {
     const url = response.url();
     const status = response.status();
-    if (status >= 200 && status < 300) return;
-    const WATCHED2 = ["SendPhoneVerificationCode", "BindPhoneTrait"];
-    for (const api of WATCHED2) {
-      if (url.includes(api)) {
-        lastApiError2 = { api, status, time: Date.now() } as ApiError2;
-        log(`[API错误] ${api} 返回 ${status}`, "warn");
-        break;
+    // 全局 403 检测
+    if (url.includes("api.manus.im") && status === 403) {
+      globalForbidden2 = true;
+      log(`[全局403] ${url.split("/").pop()} 返回 403，本次注册失败`, "error");
+    }
+    if (url.includes("SendPhoneVerificationCode")) {
+      if (status >= 200 && status < 300) {
+        sendPhoneCodeStatus = 1;
+        log(`[SendPhoneVerificationCode] 响应成功 (${status})`);
+      } else {
+        sendPhoneCodeStatus = -1;
+        log(`[SendPhoneVerificationCode] 响应失败 (${status})，需重新输入手机号`, "warn");
+      }
+    }
+    if (url.includes("BindPhoneTrait")) {
+      if (status >= 200 && status < 300) {
+        bindPhoneStatus = 1;
+        log(`[BindPhoneTrait] 响应成功 (${status})，手机号绑定成功`);
+      } else {
+        bindPhoneStatus = -1;
+        log(`[BindPhoneTrait] 响应失败 (${status})，短信验证码未消耗`, "warn");
       }
     }
   });
@@ -1332,9 +1395,11 @@ async function handleVerifyPhonePage(
     let smsBtnRetryCount = 0;     // 短信验证码按钮点击后 3s 无请求的重试次数
     let stepStallCount = 0;
     const roundStart = Date.now();
-    // 每轮开始重置请求时间戳（防止上一轮的旧请求干扰当前轮）
+    // 每轮开始重置请求时间戳和响应状态（防止上一轮的旧状态干扰当前轮）
     sendPhoneCodeRequestTime = 0;
+    sendPhoneCodeStatus = 0;
     bindPhoneRequestTime = 0;
+    bindPhoneStatus = 0;
     // 每轮开始重置短信验证码状态（刷新后会重新发送验证码，旧验证码已失效）
     smsCodeFetching = false;
     smsCode = null;
@@ -1423,14 +1488,34 @@ async function handleVerifyPhonePage(
       }
 
       // C. 点击 Send code
-      // 判断成功依据：SendPhoneVerificationCode 请求是否发出
-      // 如果点击后 3s 内无请求发出，清空手机号重新输入再点击
+      // 判断成功依据：SendPhoneVerificationCode 响应成功
+      // 响应失败时清空手机号重新输入
       if (!phoneSendClicked) {
-        // SendPhoneVerificationCode 已发出 → Send code 已生效
+        // SendPhoneVerificationCode 已发出 → 等待响应后再判断
         if (sendPhoneCodeRequestTime > 0) {
+          const waitSendPhoneStart = Date.now();
+          while (sendPhoneCodeStatus === 0 && Date.now() - waitSendPhoneStart < 10000) {
+            await sleep(200);
+          }
+          // 全局 403 检查
+          if (globalForbidden2) return { result: "error" };
+          if (sendPhoneCodeStatus === -1) {
+            // 响应失败，清空手机号重新输入
+            log("SendPhoneVerificationCode 响应失败，清空手机号重新输入...", "warn");
+            sendPhoneCodeRequestTime = 0;
+            sendPhoneCodeStatus = 0;
+            phoneSendClicked = false;
+            phoneFilled = false;
+            phoneBtnClickTime = 0;
+            try {
+              await clearField(page, 'input#phone[type="tel"]');
+            } catch { /* 容错 */ }
+            continue;
+          }
+          // 响应成功（或 10s 超时，按成功处理）
           phoneSendClicked = true;
           stepStallCount = 0;
-          log("Send code 已生效（SendPhoneVerificationCode 已发出）", "success");
+          log("Send code 已生效（SendPhoneVerificationCode 响应成功）", "success");
           // 开始后台获取短信验证码
           if (!smsCodeFetching) {
             smsCodeFetching = true;
@@ -1530,20 +1615,38 @@ async function handleVerifyPhonePage(
       }
 
       // E. 点击确认，等待跳转到 /app
-      // 判断成功依据：BindPhoneTrait 请求是否发出
-      // 如果点击后 3s 内无请求发出，清空短信验证码重新输入再点击
+      // 判断成功依据：BindPhoneTrait 响应成功
+      // 响应失败时清空短信验证码重新输入
 
-      // BindPhoneTrait 已发出 → 确认按钮已生效，等待跳转
+      // BindPhoneTrait 已发出 → 等待响应后再判断
       if (bindPhoneRequestTime > 0) {
-        log("BindPhoneTrait 已发出，等待页面跳转到 /app...");
+        const waitBindStart = Date.now();
+        while (bindPhoneStatus === 0 && Date.now() - waitBindStart < 15000) {
+          await sleep(200);
+        }
+        // 全局 403 检查
+        if (globalForbidden2) return { result: "error" };
+        if (bindPhoneStatus === -1) {
+          // 响应失败，短信验证码未消耗，清空重新输入
+          log("BindPhoneTrait 响应失败，短信验证码未消耗，清空重新输入...", "warn");
+          bindPhoneRequestTime = 0;
+          bindPhoneStatus = 0;
+          smsCodeFilled = false;
+          smsBtnClickTime = 0;
+          try {
+            await clearField(page, "input#phone-code");
+          } catch { /* 容错 */ }
+          continue;
+        }
+        // 响应成功（或 15s 超时，按成功处理）——等待页面跳转到 /app
+        log("BindPhoneTrait 响应成功，等待页面跳转到 /app...");
         try {
           await page.waitForURL((url: URL) => url.toString().includes("manus.im/app"), { timeout: 30000 });
           log("阶段二完成 → 已进入 /app");
           return { result: "app", phoneInfo };
         } catch {
-          // BindPhoneTrait 已发出意味着短信验证码已被服务端消费，重试点击无意义
-          // 直接 break 刷新页面，重新发送验证码后再试
-          log("BindPhoneTrait 已发出但页面未跳转（验证码已消费），刷新重试...", "warn");
+          // BindPhoneTrait 已成功但页面 30s 内未跳转，刷新重试
+          log("BindPhoneTrait 已成功但页面 30s 内未跳转，刷新重试...", "warn");
           break;
         }
       }
