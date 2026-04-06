@@ -1039,16 +1039,17 @@ async function handleLoginPage(
     }
 
     // 内层循环退出，刷新当前页面重试
-    // Manus 的 /invitation/xxx 会重定向到 /login/xxx（路径参数），
-    // page.reload() 刷新的是当前完整 URL（包含路径参数），邀请上下文不会丢失。
+    // 刷新前先获取当前完整 URL（包含路径参数、query string 等），
+    // 然后用 page.goto(当前 URL) 重新加载，确保所有参数完整保留。
     refreshCount++;
     if (refreshCount > MAX_REFRESHES) {
       log(`阶段一已刷新 ${MAX_REFRESHES} 次仍未完成，放弃`, "error");
       return "timeout";
     }
-    log(`阶段一第 ${refreshCount} 次刷新重试（当前页面：${page.url()}）...`, "warn");
+    const currentUrl = page.url();
+    log(`阶段一第 ${refreshCount} 次刷新重试，重新加载：${currentUrl}`, "warn");
     try {
-      await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
+      await page.goto(currentUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
     } catch (reloadErr: any) {
       log(`阶段一刷新失败（代理网络错误）：${reloadErr.message}`, "error");
       return "error";
