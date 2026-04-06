@@ -1771,20 +1771,18 @@ async function finishRegistration(
     const tkn = capturedToken;
     const cid = clientId ?? "";
 
-    // 1b. CheckInvitationCode（验证邀请码是否有效）
+    // 1b. CheckInvitationCode（验证邀请码）
     log("正在调用 CheckInvitationCode...");
-    const checkInviteResult = await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
+    await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
       try {
-        const resp = await fetch("https://api.manus.im/user.v1.UserService/CheckInvitationCode", {
+        await fetch("https://api.manus.im/user.v1.UserService/CheckInvitationCode", {
           method: "POST",
           headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
           body: JSON.stringify({}),
         });
-        return { ok: resp.ok, status: resp.status };
-      } catch { return { ok: false, status: 0 }; }
-    }, { tkn, cid }).catch(() => ({ ok: false, status: 0 }));
-    const checkInvitationOk = checkInviteResult?.ok === true;
-    log(`CheckInvitationCode 响应：${checkInvitationOk ? "成功" : `失败(${checkInviteResult?.status})`}`);
+      } catch {}
+    }, { tkn, cid }).catch(() => {});
+    log("CheckInvitationCode 调用完成");
 
     // 1c. UserInfo（获取会员版本）
     log("正在调用 UserInfo...");
@@ -1822,33 +1820,28 @@ async function finishRegistration(
       log(`邀请码：${capturedUserData.inviteCode}`);
     }
 
-    // 1e. RedeemPromotionCodeV2（兑换推广码）
+    // 1e. RedeemPromotionCodeV2（提交推广码）+ LoopPromotionCodeRedeemStatus（轮询兑换状态）
     log("正在兑换推广码...");
-    const redeemOk = await redeemPromotion(page, tkn, cid, log);
+    await redeemPromotion(page, tkn, cid, log);
 
-    // 1f. GetAvailableCredits（获取积分）
-    // 必须同时满足：CheckInvitationCode 成功 AND 推广码轮询到 SUCCESS
-    if (!checkInvitationOk || !redeemOk) {
-      log(`CheckInvitationCode=${checkInvitationOk ? "成功" : "失败"}，redeemOk=${redeemOk}，跳过 GetAvailableCredits`, "warn");
-    } else {
-      log("正在调用 GetAvailableCredits...");
-      const creditsResult = await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
-        try {
-          const resp = await fetch("https://api.manus.im/user.v1.UserService/GetAvailableCredits", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
-            body: JSON.stringify({}),
-          });
-          if (resp.ok) return await resp.json();
-        } catch {}
-        return null;
-      }, { tkn, cid }).catch(() => null);
-      if (creditsResult?.totalCredits !== undefined) {
-        capturedUserData.totalCredits = creditsResult.totalCredits;
-        capturedUserData.freeCredits = creditsResult.freeCredits ?? null;
-        capturedUserData.refreshCredits = creditsResult.refreshCredits ?? null;
-        log(`积分：总=${capturedUserData.totalCredits}，免费=${capturedUserData.freeCredits}`);
-      }
+    // 1f. GetAvailableCredits（获取最新积分，在兑换后无条件调用）
+    log("正在调用 GetAvailableCredits...");
+    const creditsResult = await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
+      try {
+        const resp = await fetch("https://api.manus.im/user.v1.UserService/GetAvailableCredits", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
+          body: JSON.stringify({}),
+        });
+        if (resp.ok) return await resp.json();
+      } catch {}
+      return null;
+    }, { tkn, cid }).catch(() => null);
+    if (creditsResult?.totalCredits !== undefined) {
+      capturedUserData.totalCredits = creditsResult.totalCredits;
+      capturedUserData.freeCredits = creditsResult.freeCredits ?? null;
+      capturedUserData.refreshCredits = creditsResult.refreshCredits ?? null;
+      log(`积分：总=${capturedUserData.totalCredits}，免费=${capturedUserData.freeCredits}`);
     }
   }
 
