@@ -264,6 +264,8 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     });
 
     // ── 设置网络响应拦截（替代 chrome.debugger）──
+    // UserInfo 403 标志位：/auth_landing 页面加载时如果 UserInfo 返回 403，说明账号注册即封禁
+    const userInfoForbiddenRef = { value: false };  // 对象引用，可在回调和 handleLoginPage 之间共享
     setupResponseInterception(
       page,
       capturedUserData,
@@ -272,7 +274,11 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
         log(`[Token] 已捕获：${token.substring(0, 30)}...`);
       },
       undefined, // onSendPhoneError 由阶段二内部单独监听，这里不传
-      undefined  // onBindPhoneSuccess 不需要，允许浏览器正常跳转到 /app
+      undefined, // onBindPhoneSuccess 不需要，允许浏览器正常跳转到 /app
+      () => {
+        userInfoForbiddenRef.value = true;
+        log("[UserInfo 403] 账号注册即封禁！", "error");
+      }
     );
 
     // ── Step 0: 获取邀请码（原子锁）──
@@ -323,7 +329,13 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
       codeUrl = result.codeUrl;
       return result;
     };
-    const loginResult = await handleLoginPage(page, password, inviteUrl, log, buyEmailFn);
+    const loginResult = await handleLoginPage(page, password, inviteUrl, log, buyEmailFn, userInfoForbiddenRef);
+
+    if (loginResult === "banned") {
+      // 账号注册即封禁，单独记录失败原因
+      await resetInviteCodeStatus(inviterAccountId);
+      throw new Error("账号注册即封禁（UserInfo 403）");
+    }
 
     if (loginResult === "app") {
       // 直接跳到 /app，无需手机验证
@@ -383,7 +395,8 @@ function setupResponseInterception(
   capturedUserData: any,
   onToken: (token: string) => void,
   onSendPhoneError?: () => void,       // SendPhoneVerificationCode 失败回调
-  onBindPhoneSuccess?: () => void      // BindPhoneTrait 成功回调（用于停止页面跳转）
+  onBindPhoneSuccess?: () => void,     // BindPhoneTrait 成功回调（用于停止页面跳转）
+  onUserInfoForbidden?: () => void     // UserInfo 返回 403 回调（注册即封禁）
 ) {
   const WATCHED_APIS = [
     "RegisterByEmail",
@@ -416,10 +429,16 @@ function setupResponseInterception(
       }
 
       if (matchedApi === "UserInfo") {
-        try {
-          const json = JSON.parse(text);
-          if (json.membershipVersion) capturedUserData.membershipVersion = json.membershipVersion;
-        } catch {}
+        const userInfoStatus = response.status();
+        if (userInfoStatus === 403) {
+          // 403 表示账号注册即封禁
+          if (onUserInfoForbidden) onUserInfoForbidden();
+        } else {
+          try {
+            const json = JSON.parse(text);
+            if (json.membershipVersion) capturedUserData.membershipVersion = json.membershipVersion;
+          } catch {}
+        }
       }
 
       if (matchedApi === "GetAvailableCredits") {
@@ -535,8 +554,9 @@ async function handleLoginPage(
   password: string,
   inviteUrl: string,
   log: Logger,
-  buyEmailFn: () => Promise<{ email: string; codeUrl: string }>
-): Promise<"verify-phone" | "app" | "timeout" | "error"> {
+  buyEmailFn: () => Promise<{ email: string; codeUrl: string }>,
+  userInfoForbiddenRef: { value: boolean }  // 共享引用，检测 UserInfo 403 封禁
+): Promise<"verify-phone" | "app" | "timeout" | "error" | "banned"> {
   const PHASE_TIMEOUT = 180000;
   const MAX_REFRESHES = 3;
   let refreshCount = 0;
@@ -755,10 +775,20 @@ async function handleLoginPage(
         return "app";
       }
       if (currentUrl1.includes("manus.im/auth_landing")) {
-        log("检测到 auth_landing 中转页，等待最终跳转...");
+        log("检测到 auth_landing 中转页，等待 UserInfo 响应和最终跳转...");
+        // 等待最多 5 秒，让 UserInfo 接口有时间响应（封禁检测）
+        await sleep(5000);
+        if (userInfoForbiddenRef.value) {
+          log("账号注册即封禁（UserInfo 403），注册失败", "error");
+          return "banned";
+        }
         try {
-          await page.waitForURL((url: URL) => url.toString().includes("manus.im/") && !url.toString().includes("auth_landing"), { timeout: 60000 });
+          await page.waitForURL((url: URL) => url.toString().includes("manus.im/") && !url.toString().includes("auth_landing"), { timeout: 55000 });
           const landingUrl = page.url();
+          if (userInfoForbiddenRef.value) {
+            log("账号注册即封禁（UserInfo 403），注册失败", "error");
+            return "banned";
+          }
           if (landingUrl.includes("manus.im/verify-phone")) return "verify-phone";
           if (landingUrl.includes("manus.im/app")) return "app";
         } catch {
@@ -1022,9 +1052,21 @@ async function handleLoginPage(
               return "app";
             }
             if (navUrl.includes("manus.im/auth_landing")) {
-              log("检测到 auth_landing 中转页，等待最终跳转...");
-              await page.waitForURL((url: URL) => url.toString().includes("manus.im/") && !url.toString().includes("auth_landing"), { timeout: 60000 });
+              log("检测到 auth_landing 中转页，等待 UserInfo 响应和最终跳转...");
+              // 等待最多 5 秒，让 UserInfo 接口有时间响应（封禁检测）
+              await sleep(5000);
+              if (userInfoForbiddenRef.value) {
+                log("账号注册即封禁（UserInfo 403），注册失败", "error");
+                return "banned";
+              }
+              try {
+                await page.waitForURL((url: URL) => url.toString().includes("manus.im/") && !url.toString().includes("auth_landing"), { timeout: 55000 });
+              } catch { /* 超时容错 */ }
               const finalUrl = page.url();
+              if (userInfoForbiddenRef.value) {
+                log("账号注册即封禁（UserInfo 403），注册失败", "error");
+                return "banned";
+              }
               if (finalUrl.includes("manus.im/verify-phone")) return "verify-phone";
               if (finalUrl.includes("manus.im/app")) return "app";
               log(`auth_landing 后跳转到未知页面：${finalUrl}`, "warn");
