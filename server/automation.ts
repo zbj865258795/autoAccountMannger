@@ -429,9 +429,16 @@ function setupResponseInterception(
       }
 
       if (matchedApi === "UserInfo") {
+        // TODO: gRPC-Web 接口的 HTTP status 永远是 200，真正的错误码在响应体的 JSON code 字段里。
+        // 封禁时 Manus 返回的响应体格式待确认（需抓包被封账号的实际响应体），目前暂时注释掉 403 判断逻辑。
+        // 待确认封禁响应体格式后，改为：
+        //   const json = JSON.parse(text);
+        //   if (json.code === 7 || json.code === 16) { // gRPC PERMISSION_DENIED / UNAUTHENTICATED
+        //     if (onUserInfoForbidden) onUserInfoForbidden();
+        //   }
         const userInfoStatus = response.status();
         if (userInfoStatus === 403) {
-          // 403 表示账号注册即封禁
+          // 暂时保留此判断，但 gRPC-Web 接口实际不会走到这里（HTTP status 永远是 200）
           if (onUserInfoForbidden) onUserInfoForbidden();
         } else {
           try {
@@ -648,11 +655,10 @@ async function handleLoginPage(
     }
   });
 
+  // 首次进入循环前先重置标志位（之后每次刷新页面前才重置，不在循环顶部重置）
+  checkInvitationCodeRemainsOk = false;
+
   while (refreshCount <= MAX_REFRESHES) {
-    // 每轮循环开始先重置 CheckInvitationCodeRemains 标志位（必须在 waitForURL 之前重置）
-    // 原因：CheckInvitationCodeRemains 是页面加载时自动触发的，监听器在 waitForURL/waitForLoadState 期间就会收到响应。
-    // 如果在 networkidle 后才重置，会把已收到的成功响应清掉，导致后面白等 15 秒。
-    checkInvitationCodeRemainsOk = false;
 
     // ── 等待顺序至关重要：先等 URL 稳定，再等 DOM 加载 ──
     // /invitation/xxx 会通过 JS 重定向到 /login，这个重定向发生在 domcontentloaded 之后
@@ -702,6 +708,8 @@ async function handleLoginPage(
       }
       log(`CheckInvitationCodeRemains 接口 15s 内未收到成功响应，刷新重试（第 ${checkRegionFailCount}/${MAX_CHECK_REGION_FAILS} 次）...`, "warn");
       const currentUrlOnCheckFail = page.url();
+      // 刷新前先重置标志位，这样刷新过程中收到的响应不会被循环顶部覆盖
+      checkInvitationCodeRemainsOk = false;
       try {
         await page.goto(currentUrlOnCheckFail, { waitUntil: "domcontentloaded", timeout: 30000 });
       } catch (e: any) {
@@ -738,6 +746,7 @@ async function handleLoginPage(
         }
         const currentUrlOnEmailFail = page.url();
         log(`邮箱输入框未出现，第 ${refreshCount} 次刷新重试：${currentUrlOnEmailFail}`, "warn");
+        checkInvitationCodeRemainsOk = false; // 刷新前重置，防止刷新过程中的响应被循环顶部覆盖
         try {
           await page.goto(currentUrlOnEmailFail, { waitUntil: "domcontentloaded", timeout: 30000 });
         } catch (e: any) {
@@ -1233,6 +1242,7 @@ async function handleLoginPage(
     }
     const currentUrl = page.url();
     log(`阶段一第 ${refreshCount} 次刷新重试，重新加载：${currentUrl}`, "warn");
+    checkInvitationCodeRemainsOk = false; // 刷新前重置，防止刷新过程中的响应被循环顶部覆盖
     try {
       await page.goto(currentUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
     } catch (reloadErr: any) {
