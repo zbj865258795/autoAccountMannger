@@ -559,7 +559,9 @@ async function handleLoginPage(
 ): Promise<"verify-phone" | "app" | "timeout" | "error" | "banned"> {
   const PHASE_TIMEOUT = 180000;
   const MAX_REFRESHES = 3;
+  const MAX_CHECK_REGION_FAILS = 3; // CheckInvitationCodeRemains 超时最多重试 3 次
   let refreshCount = 0;
+  let checkRegionFailCount = 0; // CheckInvitationCodeRemains 超时计数器
 
   // email 和 codeUrl 将在页面稳定后购买获取
   let email = "";
@@ -693,14 +695,13 @@ async function handleLoginPage(
       await sleep(300);
     }
     if (!checkInvitationCodeRemainsOk) {
-      log("CheckInvitationCodeRemains 接口 15s 内未收到成功响应，页面可能未正常加载，刷新重试...", "warn");
-      refreshCount++;
-      if (refreshCount > MAX_REFRESHES) {
-        log(`阶段一已刷新 ${MAX_REFRESHES} 次仍未完成，放弃`, "error");
+      checkRegionFailCount++;
+      if (checkRegionFailCount > MAX_CHECK_REGION_FAILS) {
+        log(`CheckInvitationCodeRemains 连续 ${MAX_CHECK_REGION_FAILS} 次未响应，本次注册失败`, "error");
         return "timeout";
       }
+      log(`CheckInvitationCodeRemains 接口 15s 内未收到成功响应，刷新重试（第 ${checkRegionFailCount}/${MAX_CHECK_REGION_FAILS} 次）...`, "warn");
       const currentUrlOnCheckFail = page.url();
-      log(`CheckRegion 失败，重新加载：${currentUrlOnCheckFail}`, "warn");
       try {
         await page.goto(currentUrlOnCheckFail, { waitUntil: "domcontentloaded", timeout: 30000 });
       } catch (e: any) {
@@ -817,15 +818,17 @@ async function handleLoginPage(
         // 等待最多 5 秒，让 UserInfo 接口有时间响应（封禁检测）
         await sleep(5000);
         if (userInfoForbiddenRef.value) {
-          log("账号注册即封禁（UserInfo 403），注册失败", "error");
-          return "banned";
+          // TODO: 调试模式——停住不关闭浏览器，等待手动调试
+          log("账号注册即封禁（UserInfo 403），浏览器保持开启等待调试（请手动处理后在后台结束任务）", "error");
+          await new Promise(() => {}); // 永久等待，不关闭浏览器
         }
         try {
           await page.waitForURL((url: URL) => url.toString().includes("manus.im/") && !url.toString().includes("auth_landing"), { timeout: 55000 });
           const landingUrl = page.url();
           if (userInfoForbiddenRef.value) {
-            log("账号注册即封禁（UserInfo 403），注册失败", "error");
-            return "banned";
+            // TODO: 调试模式——停住不关闭浏览器，等待手动调试
+            log("账号注册即封禁（UserInfo 403），浏览器保持开启等待调试（请手动处理后在后台结束任务）", "error");
+            await new Promise(() => {}); // 永久等待，不关闭浏览器
           }
           if (landingUrl.includes("manus.im/verify-phone")) return "verify-phone";
           if (landingUrl.includes("manus.im/app")) return "app";
@@ -1137,16 +1140,18 @@ async function handleLoginPage(
               log("检测到 auth_landing 中转页，等待 UserInfo 响应和最终跳转...");
               await sleep(5000);
               if (userInfoForbiddenRef.value) {
-                log("账号注册即封禁（UserInfo 403），注册失败", "error");
-                return "banned";
+                // TODO: 调试模式——停住不关闭浏览器，等待手动调试
+                log("账号注册即封禁（UserInfo 403），浏览器保持开启等待调试（请手动处理后在后台结束任务）", "error");
+                await new Promise(() => {}); // 永久等待，不关闭浏览器
               }
               try {
                 await page.waitForURL((url: URL) => url.toString().includes("manus.im/") && !url.toString().includes("auth_landing"), { timeout: 55000 });
               } catch { /* 超时容错 */ }
               const finalUrl = page.url();
               if (userInfoForbiddenRef.value) {
-                log("账号注册即封禁（UserInfo 403），注册失败", "error");
-                return "banned";
+                // TODO: 调试模式——停住不关闭浏览器，等待手动调试
+                log("账号注册即封禁（UserInfo 403），浏览器保持开启等待调试（请手动处理后在后台结束任务）", "error");
+                await new Promise(() => {}); // 永久等待，不关闭浏览器
               }
               if (finalUrl.includes("manus.im/verify-phone")) return "verify-phone";
               if (finalUrl.includes("manus.im/app")) return "app";
@@ -1340,8 +1345,6 @@ async function handleVerifyPhonePage(
       await page.waitForLoadState("networkidle", { timeout: 20000 });
     } catch { /* 网络慢时容错 */ }
     await sleep(1500);
-    // 每轮开始清除上一轮遗留的 API 错误状态（对齐插件的 lastApiResult = null）
-    lastApiError2 = null;
     // 页面加载后模拟真实用户浏览行为（触发 Plausible + Manus 埋点）
     await humanBrowse(page);
 
@@ -1470,20 +1473,6 @@ async function handleVerifyPhonePage(
         } catch (e: any) {
           log(`步骤B（输入手机号）异常：${e.message}，等待重试...`, "warn");
         }
-        continue;
-      }
-
-      // API 错误处理（对齐插件的 getRecentApiError 机制）
-      const _err2 = lastApiError2 as ApiError2 | null;
-      if (_err2 && (Date.now() - _err2.time) < 5000) {
-        lastApiError2 = null;
-        log(`[API错误] ${_err2.api} 返回 ${_err2.status}，等待 3 秒后重试...`, "warn");
-        if (_err2.api === "SendPhoneVerificationCode") {
-          phoneSendClicked = false;  // 插件逻辑：发送失败重置发送状态
-        } else if (_err2.api === "BindPhoneTrait") {
-          smsCodeFilled = false;  // 插件逻辑：BindPhoneTrait 失败重置短信验证码填写状态
-        }
-        await sleep(3000);
         continue;
       }
 

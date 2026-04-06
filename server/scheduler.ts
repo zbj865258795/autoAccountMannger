@@ -88,10 +88,6 @@ async function checkBrowserStatus(): Promise<void> {
     const activeBrowsers = await getActiveBrowsers(apiUrl);
     const activeIds = new Set(activeBrowsers.map((b) => b.browserId));
 
-    console.log(
-      `[浏览器监控] 任务 ${taskId}: 检查 ${logs.length} 个浏览器 | AdsPower 活跃数: ${activeIds.size}`
-    );
-
     const BROWSER_STARTUP_GRACE_MS = 3 * 60 * 1000; // 3 分钟保护窗口期
 
     for (const log of logs) {
@@ -359,9 +355,6 @@ async function _executeTask(taskId: number): Promise<void> {
     // 原因：邀请码被锁定为 in_progress 后 unused 数量为 0，如果先检查邀请码会误打“暂无可用邀请码”
     const runningLogs = await getRunningLogsForTask(taskId);
     if (runningLogs.length >= 1) {
-      console.log(
-        `[调度器] 任务 ${taskId}: 已有注册任务运行中（单线程模式），跳过`
-      );
       await updateAutomationTask(taskId, { lastExecutedAt: new Date() });
       return;
     }
