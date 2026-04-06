@@ -1773,18 +1773,19 @@ async function finishRegistration(
     const tkn = capturedToken;
     const cid = clientId ?? "";
 
-    // 1b. CheckInvitationCode（验证邀请码）——传入邀请链接中的邀请码
+    // 1b. CheckInvitationCode（验证邀请码）——传入邀请链接中的邀请码，等待响应返回
     log(`正在调用 CheckInvitationCode（code=${referrerCode}）...`);
-    await page.evaluate(async ({ tkn, cid, code }: { tkn: string; cid: string; code: string }) => {
+    const checkInviteResp = await page.evaluate(async ({ tkn, cid, code }: { tkn: string; cid: string; code: string }) => {
       try {
-        await fetch("https://api.manus.im/user.v1.UserService/CheckInvitationCode", {
+        const resp = await fetch("https://api.manus.im/user.v1.UserService/CheckInvitationCode", {
           method: "POST",
           headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
           body: JSON.stringify({ code }),
         });
-      } catch {}
-    }, { tkn, cid, code: referrerCode }).catch(() => {});
-    log("CheckInvitationCode 调用完成");
+        return { ok: resp.ok, status: resp.status };
+      } catch (e: any) { return { ok: false, status: 0 }; }
+    }, { tkn, cid, code: referrerCode }).catch(() => ({ ok: false, status: 0 }));
+    log(`CheckInvitationCode 响应：${checkInviteResp.ok ? "成功" : `失败(${checkInviteResp.status})`}`);
 
     // 1c. UserInfo（获取会员版本）
     log("正在调用 UserInfo...");
