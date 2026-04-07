@@ -5,50 +5,8 @@
     {
       "idx": 0,
       "version": "5",
-      "when": 1774753867813,
-      "tag": "0000_dazzling_lily_hollister",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "5",
-      "when": 1774754714747,
-      "tag": "0001_curvy_steve_rogers",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "5",
-      "when": 1774761017235,
-      "tag": "0002_magenta_enchantress",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "5",
-      "when": 1774761350289,
-      "tag": "0003_great_lilith",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "5",
-      "when": 1774765973048,
-      "tag": "0004_lumpy_starbolt",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "5",
-      "when": 1774768595727,
-      "tag": "0005_good_tarantula",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "5",
-      "when": 1774800000000,
-      "tag": "0006_add_target_count",
+      "when": 1744000000000,
+      "tag": "0000_init_all_tables",
       "breakpoints": true
     }
   ]

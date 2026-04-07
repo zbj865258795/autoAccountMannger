@@ -1,1 +1,0 @@
-ALTER TABLE `accounts` ADD `referrerCode` varchar(64);
