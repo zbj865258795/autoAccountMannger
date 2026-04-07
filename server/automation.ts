@@ -699,11 +699,15 @@ async function handleLoginPage(
         return "error";
       }
       try { await page.waitForLoadState("networkidle", { timeout: 20000 }); } catch { /* 容错 */ }
-      // ── 刷新后检测 URL：若重定向到 /invitation/waitlist，说明邀请码已失效，立即判定失败 ──
-      const urlAfterRefresh = page.url();
-      if (urlAfterRefresh.includes("/invitation/waitlist")) {
-        log(`刷新后页面重定向到 waitlist（${urlAfterRefresh}），邀请码已失效，归还邀请码`, "error");
-        return "invite-code-lost";
+      // ── 刷新后检测 URL：必须包含邀请码，否则判定邀请码已失效 ──
+      {
+        const urlAfterRefresh = page.url();
+        const inviteCodeStr = inviteUrl.split("/invitation/")[1] ?? "";
+        const hasCode = urlAfterRefresh.includes(`/invitation/${inviteCodeStr}`) || urlAfterRefresh.includes(`code=${inviteCodeStr}`);
+        if (!hasCode) {
+          log(`[CheckRegion刷新] 刷新后 URL 不含邀请码（${urlAfterRefresh}），判定邀请失败，归还邀请码`, "error");
+          return "invite-code-lost";
+        }
       }
       continue;
     }
@@ -742,6 +746,16 @@ async function handleLoginPage(
           return "error";
         }
         try { await page.waitForLoadState("networkidle", { timeout: 20000 }); } catch { /* 容错 */ }
+        // 刷新后检测 URL：必须包含邀请码，否则判定邀请码已失效
+        {
+          const urlAfterEmailFail = page.url();
+          const inviteCodeStr = inviteUrl.split("/invitation/")[1] ?? "";
+          const hasCode = urlAfterEmailFail.includes(`/invitation/${inviteCodeStr}`) || urlAfterEmailFail.includes(`code=${inviteCodeStr}`);
+          if (!hasCode) {
+            log(`[邮箱框刷新] 刷新后 URL 不含邀请码（${urlAfterEmailFail}），判定邀请失败，归还邀请码`, "error");
+            return "invite-code-lost";
+          }
+        }
         continue;
       }
       log("邮箱输入框已出现，正在购买邮箱...");
@@ -1258,6 +1272,16 @@ async function handleLoginPage(
     try {
       await page.waitForLoadState("networkidle", { timeout: 20000 });
     } catch { /* 网络慢时容错 */ }
+    // 刷新后检测 URL：必须包含邀请码，否则判定邀请码已失效
+    {
+      const urlAfterMainRefresh = page.url();
+      const inviteCodeStr = inviteUrl.split("/invitation/")[1] ?? "";
+      const hasCode = urlAfterMainRefresh.includes(`/invitation/${inviteCodeStr}`) || urlAfterMainRefresh.includes(`code=${inviteCodeStr}`);
+      if (!hasCode) {
+        log(`[主循环刷新] 刷新后 URL 不含邀请码（${urlAfterMainRefresh}），判定邀请失败，归还邀请码`, "error");
+        return "invite-code-lost";
+      }
+    }
 
   }
 
