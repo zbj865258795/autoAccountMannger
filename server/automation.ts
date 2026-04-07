@@ -1831,6 +1831,7 @@ async function finishRegistration(
     };
 
     // 1b. CheckInvitationCode（验证邀请码）——传入邀请链接中的邀请码，等待响应返回
+    // 注意：必须 await resp.text() 读完响应体，确保 Playwright 监听器在 page.evaluate resolve 前已处理完毕
     log(`正在调用 CheckInvitationCode（code=${referrerCode}）...`);
     await page.evaluate(async ({ tkn, cid, code }: { tkn: string; cid: string; code: string }) => {
       try {
@@ -1839,6 +1840,7 @@ async function finishRegistration(
           headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
           body: JSON.stringify({ code }),
         });
+        await resp.text(); // 必须读完响应体，确保监听器在 resolve 前已触发
         return resp.ok;
       } catch { return false; }
     }, { tkn, cid, code: referrerCode }).catch(() => false);
@@ -1849,11 +1851,12 @@ async function finishRegistration(
     log("正在调用 UserInfo...");
     await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
       try {
-        await fetch("https://api.manus.im/user.v1.UserService/UserInfo", {
+        const resp = await fetch("https://api.manus.im/user.v1.UserService/UserInfo", {
           method: "POST",
           headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
           body: JSON.stringify({}),
         });
+        await resp.text(); // 必须读完响应体
       } catch {}
     }, { tkn, cid }).catch(() => {});
     log(`UserInfo 已调用，会员版本=${capturedUserData.membershipVersion ?? "未获取"}`);
@@ -1868,11 +1871,12 @@ async function finishRegistration(
     log("正在调用 GetAvailableCredits...");
     await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
       try {
-        await fetch("https://api.manus.im/user.v1.UserService/GetAvailableCredits", {
+        const resp = await fetch("https://api.manus.im/user.v1.UserService/GetAvailableCredits", {
           method: "POST",
           headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
           body: JSON.stringify({}),
         });
+        await resp.text(); // 必须读完响应体，确保监听器在 resolve 前已触发
       } catch {}
     }, { tkn, cid }).catch(() => {});
     log(`GetAvailableCredits 已调用，积分=${capturedUserData.totalCredits ?? "未获取"}`);
@@ -1882,11 +1886,12 @@ async function finishRegistration(
     log("正在调用 GetPersonalInvitationCodes...");
     await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
       try {
-        await fetch("https://api.manus.im/user.v1.UserService/GetPersonalInvitationCodes", {
+        const resp = await fetch("https://api.manus.im/user.v1.UserService/GetPersonalInvitationCodes", {
           method: "POST",
           headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
           body: JSON.stringify({}),
         });
+        await resp.text(); // 必须读完响应体，确保监听器在 resolve 前已触发
       } catch {}
     }, { tkn, cid }).catch(() => {});
     log(`GetPersonalInvitationCodes 已调用，邀请码=${capturedUserData.inviteCode ?? "未获取"}`);
