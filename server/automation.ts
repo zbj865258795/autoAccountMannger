@@ -339,6 +339,13 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
       throw new Error("账号注册即封禁（UserInfo 403）");
     }
 
+    if (loginResult === "invite-code-lost") {
+      // URL 中邀请码丢失，判定为邀请失败，归还邀请码
+      log("邀请码已丢失，归还邀请码，开启下一次注册", "error");
+      await resetInviteCodeStatus(inviterAccountId);
+      throw new Error("邀请失败：URL 中邀请码丢失");
+    }
+
     if (loginResult === "app") {
       // 直接跳到 /app，无需手机验证
       await finishRegistration(page, email, password, null, inviteCode, inviterAccountId, capturedToken, capturedUserData, taskId, logId, profileId, detectedExitIp, adspowerConfig, startTime, log, (v) => { isOnAppPage = v; }, userInfoForbiddenRef);
@@ -568,7 +575,7 @@ async function handleLoginPage(
   log: Logger,
   buyEmailFn: () => Promise<{ email: string; codeUrl: string }>,
   userInfoForbiddenRef: { value: boolean }  // 共享引用，检测 UserInfo 403 封禁
-): Promise<"verify-phone" | "app" | "timeout" | "error" | "banned"> {
+): Promise<"verify-phone" | "app" | "timeout" | "error" | "banned" | "invite-code-lost"> {
   const PHASE_TIMEOUT = 180000;
   const MAX_REFRESHES = 3;
   const MAX_CHECK_REGION_FAILS = 3; // CheckInvitationCodeRemains 超时最多重试 3 次
@@ -870,6 +877,20 @@ async function handleLoginPage(
 
       // 1. 输入邮箱
       if (!emailFilled) {
+        // ── 输入邮箱前：校验当前 URL 是否仍携带邀请码 ──
+        // 刷新后 /invitation/{code} 会重定向到 /login?code={code}
+        // 如果 URL 中邀请码丢失，说明本次邀请已失效，直接返回邀请失败
+        {
+          const urlBeforeEmail = page.url();
+          const inviteCodeFromUrl = inviteUrl.split("/invitation/")[1] ?? "";
+          const hasInviteCode =
+            urlBeforeEmail.includes(`/invitation/${inviteCodeFromUrl}`) ||
+            urlBeforeEmail.includes(`code=${inviteCodeFromUrl}`);
+          if (!hasInviteCode) {
+            log(`[邀请码丢失] 输入邮箱前 URL 不含邀请码（当前：${urlBeforeEmail}），判定为邀请失败`, "error");
+            return "invite-code-lost";
+          }
+        }
         try {
           log("正在填写邮箱...");
           await simulateMouseMove(page, 'input#email[autocomplete="email"], input#email[type="email"], input#email');
@@ -1062,6 +1083,18 @@ async function handleLoginPage(
 
       // 5. 填入邮箱验证码
       if (!verifyCodeFilled) {
+        // ── 填入验证码前：再次校验当前 URL 是否仍携带邀请码 ──
+        {
+          const urlBeforeCode = page.url();
+          const inviteCodeFromUrl = inviteUrl.split("/invitation/")[1] ?? "";
+          const hasInviteCode =
+            urlBeforeCode.includes(`/invitation/${inviteCodeFromUrl}`) ||
+            urlBeforeCode.includes(`code=${inviteCodeFromUrl}`);
+          if (!hasInviteCode) {
+            log(`[邀请码丢失] 填入验证码前 URL 不含邀请码（当前：${urlBeforeCode}），判定为邀请失败`, "error");
+            return "invite-code-lost";
+          }
+        }
         try {
           const verifyVisible = await page.evaluate(() => {
             const el = document.querySelector('input#verifyCode[name="verifyCode"]') as HTMLElement | null;
