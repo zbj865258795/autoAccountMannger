@@ -348,7 +348,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
 
     if (loginResult === "app") {
       // 直接跳到 /app，无需手机验证
-      await finishRegistration(page, email, password, null, inviteCode, inviterAccountId, capturedToken, capturedUserData, taskId, logId, profileId, detectedExitIp, adspowerConfig, startTime, log, (v) => { isOnAppPage = v; }, userInfoForbiddenRef);
+      await finishRegistration(page, email, password, null, inviteCode, inviterAccountId, capturedToken, capturedUserData, taskId, logId, profileId, detectedExitIp, adspowerConfig, startTime, log, (v) => { isOnAppPage = v; });
       return;
     }
 
@@ -362,7 +362,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     const phoneResult = await handleVerifyPhonePage(page, logId, log);
 
     if (phoneResult.result === "app" && phoneResult.phoneInfo) {
-      await finishRegistration(page, email, password, phoneResult.phoneInfo, inviteCode, inviterAccountId, capturedToken, capturedUserData, taskId, logId, profileId, detectedExitIp, adspowerConfig, startTime, log, (v) => { isOnAppPage = v; }, userInfoForbiddenRef);
+      await finishRegistration(page, email, password, phoneResult.phoneInfo, inviteCode, inviterAccountId, capturedToken, capturedUserData, taskId, logId, profileId, detectedExitIp, adspowerConfig, startTime, log, (v) => { isOnAppPage = v; });
       return;
     }
 
@@ -1776,8 +1776,7 @@ async function finishRegistration(
   adspowerConfig: any,
   startTime: number,
   log: Logger,
-  setIsOnAppPage: (v: boolean) => void,
-  forbiddenRef: { value: boolean }  // 共享封禁标志位，由 setupResponseInterception 监听器设置
+  setIsOnAppPage: (v: boolean) => void
 ) {
   log("注册成功！开始执行注册后续步骤...", "success");
 
@@ -1872,9 +1871,8 @@ async function finishRegistration(
 
     // 1d. RedeemPromotionCodeV2（提交推广码）+ LoopPromotionCodeRedeemStatus（轮询兑换状态）
     log("正在兑换推广码...");
-    await redeemPromotion(page, tkn, cid, log, forbiddenRef);
-    // redeemPromotion 内部已通过 forbiddenRef 检测 403，这里同步检查
-    if (forbiddenRef.value) {
+    const promoResult = await redeemPromotion(page, tkn, cid, log);
+    if (promoResult.forbidden) {
       await checkForbidden("RedeemPromotionCodeV2/LoopPromotionCodeRedeemStatus", 403);
     }
 
@@ -2013,9 +2011,8 @@ async function redeemPromotion(
   page: Page,
   token: string,
   clientId: string,
-  log: Logger,
-  forbiddenRef: { value: boolean }  // 共享封禁标志位，由监听器设置，调用方负责在返回后检查
-): Promise<void> {
+  log: Logger
+): Promise<{ forbidden: boolean }> {
   const promotionCode = "techtiff";
   log(`正在兑换推广码：${promotionCode}`);
 
@@ -2037,16 +2034,20 @@ async function redeemPromotion(
     }
   }, { tkn: token, cid: clientId, code: promotionCode });
 
-  // 403 由监听器设置 forbiddenRef，调用方在返回后检查，这里只处理其他失败情况
+  // 直接用返回的 status 判断 403
+  if (redeemResult?.status === 403) {
+    log(`[封禁] RedeemPromotionCodeV2 返回 403`, "error");
+    return { forbidden: true };
+  }
+
   if (!redeemResult?.ok) {
     log(`推广码兑换失败（状态码 ${redeemResult?.status})：${redeemResult?.body}`, "warn");
-    return;
+    return { forbidden: false };
   }
 
   log(`推广码已提交（状态码 ${redeemResult?.status}），轮询兑换结果...`);
 
   for (let i = 1; i <= 10; i++) {
-    if (forbiddenRef.value) return;  // 如果已封禁，立即停止轮询
     await sleep(2000);
     const pollResult = await page.evaluate(async ({ tkn, cid, code }: { tkn: string; cid: string; code: string }) => {
       try {
@@ -2066,16 +2067,21 @@ async function redeemPromotion(
       }
     }, { tkn: token, cid: clientId, code: promotionCode });
 
-    // 403 由监听器设置 forbiddenRef，返回后调用方会检查
-    if (forbiddenRef.value) return;
+    // 直接用返回的 status 判断 403
+    if (pollResult?.status === 403) {
+      log(`[封禁] LoopPromotionCodeRedeemStatus 返回 403`, "error");
+      return { forbidden: true };
+    }
+
     try {
       const json = JSON.parse(pollResult?.body || "{}");
       const st = json.status || "";
-      if (st.includes("SUCCESS")) { log("推广码兑换成功！"); return; }
-      if (st.includes("FAILED")) { log(`推广码兑换失败：${pollResult?.body}`, "warn"); return; }
+      if (st.includes("SUCCESS")) { log("推广码兑换成功！"); return { forbidden: false }; }
+      if (st.includes("FAILED")) { log(`推广码兑换失败：${pollResult?.body}`, "warn"); return { forbidden: false }; }
     } catch {}
   }
   log("推广码兑换轮询超时（可能仍在处理中）", "warn");
+  return { forbidden: false };
 }
 
 // ─── 工具函数 ─────────────────────────────────────────────────────────────────
