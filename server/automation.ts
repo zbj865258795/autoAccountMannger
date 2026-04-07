@@ -407,6 +407,7 @@ function setupResponseInterception(
   onBindPhoneSuccess?: () => void,  // BindPhoneTrait 成功回调（用于停止页面跳转）
   onForbidden?: () => void          // 任意被监听接口返回 403 回调（账号封禁）
 ) {
+  // 只监听 Manus 页面自己发起的接口（阶段一/二），手动调用的接口在 finishRegistration 里直接读响应体判断
   const WATCHED_APIS = [
     "RegisterByEmail",
     "GetUserPlatforms",
@@ -414,11 +415,6 @@ function setupResponseInterception(
     "BindPhoneTrait",
     "SendEmailVerifyCodeWithCaptcha",
     "UserInfo",
-    "CheckInvitationCode",
-    "RedeemPromotionCodeV2",
-    "LoopPromotionCodeRedeemStatus",
-    "GetAvailableCredits",
-    "GetPersonalInvitationCodes",
   ];
 
   page.on("response", async (response) => {
@@ -456,31 +452,6 @@ function setupResponseInterception(
         //   if (json.code === 7 || json.code === 16) { // gRPC PERMISSION_DENIED / UNAUTHENTICATED
         //     if (onForbidden) onForbidden();
         //   }
-        try {
-          const json = JSON.parse(text);
-          if (json.membershipVersion) capturedUserData.membershipVersion = json.membershipVersion;
-        } catch {}
-      }
-
-      if (matchedApi === "GetAvailableCredits") {
-        try {
-          const json = JSON.parse(text);
-          if (json.totalCredits !== undefined) {
-            capturedUserData.totalCredits = json.totalCredits;
-            capturedUserData.freeCredits = json.freeCredits;
-            capturedUserData.refreshCredits = json.refreshCredits ?? null;
-          }
-        } catch {}
-      }
-
-      if (matchedApi === "GetPersonalInvitationCodes") {
-        try {
-          const json = JSON.parse(text);
-          const codes = json.invitationCodes || [];
-          if (codes.length > 0 && codes[0].inviteCode) {
-            capturedUserData.inviteCode = codes[0].inviteCode;
-          }
-        } catch {}
       }
 
       // SendPhoneVerificationCode 失败：重置发送状态，下次循环重新点击发送按钮
