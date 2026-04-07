@@ -609,8 +609,8 @@ async function handleLoginPage(
     const url = response.url();
     const status = response.status();
     if (url.includes("CheckInvitationCodeRemains") && status >= 200 && status < 300) {
+      // 仅在尚未成功时打印日志，避免重复；日志在等待循环内打印，这里只更新标志位
       checkInvitationCodeRemainsOk = true;
-      log("[CheckInvitationCodeRemains] 接口返回成功，页面就绪");
     }
   });
 
@@ -671,10 +671,16 @@ async function handleLoginPage(
 
     // ── 等待 CheckInvitationCodeRemains 接口成功响应（最多 15 秒）──
     // CheckInvitationCodeRemains 是页面加载时自动触发的，成功后才表示页面就绪，可以开始操作
-    log("等待 CheckInvitationCodeRemains 接口成功响应...");
+    // 注意：先打印"等待中"，再进入等待循环，避免接口响应比日志打印更快导致日志倒序
+    if (!checkInvitationCodeRemainsOk) {
+      log("等待 CheckInvitationCodeRemains 接口成功响应...");
+    }
     const checkRegionStart = Date.now();
     while (!checkInvitationCodeRemainsOk && Date.now() - checkRegionStart < 15000) {
       await sleep(300);
+    }
+    if (checkInvitationCodeRemainsOk) {
+      log("[CheckInvitationCodeRemains] 接口返回成功，页面就绪");
     }
     if (!checkInvitationCodeRemainsOk) {
       checkRegionFailCount++;
@@ -693,6 +699,12 @@ async function handleLoginPage(
         return "error";
       }
       try { await page.waitForLoadState("networkidle", { timeout: 20000 }); } catch { /* 容错 */ }
+      // ── 刷新后检测 URL：若重定向到 /invitation/waitlist，说明邀请码已失效，立即判定失败 ──
+      const urlAfterRefresh = page.url();
+      if (urlAfterRefresh.includes("/invitation/waitlist")) {
+        log(`刷新后页面重定向到 waitlist（${urlAfterRefresh}），邀请码已失效，归还邀请码`, "error");
+        return "invite-code-lost";
+      }
       continue;
     }
 
