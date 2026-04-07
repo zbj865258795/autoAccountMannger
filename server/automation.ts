@@ -266,8 +266,8 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     });
 
     // ── 设置网络响应拦截（替代 chrome.debugger）──
-    // UserInfo 403 标志位：/auth_landing 页面加载时如果 UserInfo 返回 403，说明账号注册即封禁
-    const userInfoForbiddenRef = { value: false };  // 对象引用，可在回调和 handleLoginPage 之间共享
+    // 封禁标志位：任意被监听接口返回 403 则置为 true
+    const userInfoForbiddenRef = { value: false };  // 对象引用，可在回调和 handleLoginPage/finishRegistration 之间共享
     setupResponseInterception(
       page,
       capturedUserData,
@@ -279,7 +279,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
       undefined, // onBindPhoneSuccess 不需要，允许浏览器正常跳转到 /app
       () => {
         userInfoForbiddenRef.value = true;
-        log("[UserInfo 403] 账号注册即封禁！", "error");
+        log("[封禁] 接口返回 403，账号封禁！", "error");
       }
     );
 
@@ -341,7 +341,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
 
     if (loginResult === "app") {
       // 直接跳到 /app，无需手机验证
-      await finishRegistration(page, email, password, null, inviteCode, inviterAccountId, capturedToken, capturedUserData, taskId, logId, profileId, detectedExitIp, adspowerConfig, startTime, log, (v) => { isOnAppPage = v; });
+      await finishRegistration(page, email, password, null, inviteCode, inviterAccountId, capturedToken, capturedUserData, taskId, logId, profileId, detectedExitIp, adspowerConfig, startTime, log, (v) => { isOnAppPage = v; }, userInfoForbiddenRef);
       return;
     }
 
@@ -355,7 +355,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     const phoneResult = await handleVerifyPhonePage(page, logId, log);
 
     if (phoneResult.result === "app" && phoneResult.phoneInfo) {
-      await finishRegistration(page, email, password, phoneResult.phoneInfo, inviteCode, inviterAccountId, capturedToken, capturedUserData, taskId, logId, profileId, detectedExitIp, adspowerConfig, startTime, log, (v) => { isOnAppPage = v; });
+      await finishRegistration(page, email, password, phoneResult.phoneInfo, inviteCode, inviterAccountId, capturedToken, capturedUserData, taskId, logId, profileId, detectedExitIp, adspowerConfig, startTime, log, (v) => { isOnAppPage = v; }, userInfoForbiddenRef);
       return;
     }
 
@@ -396,9 +396,9 @@ function setupResponseInterception(
   page: Page,
   capturedUserData: any,
   onToken: (token: string) => void,
-  onSendPhoneError?: () => void,       // SendPhoneVerificationCode 失败回调
-  onBindPhoneSuccess?: () => void,     // BindPhoneTrait 成功回调（用于停止页面跳转）
-  onUserInfoForbidden?: () => void     // UserInfo 返回 403 回调（注册即封禁）
+  onSendPhoneError?: () => void,    // SendPhoneVerificationCode 失败回调
+  onBindPhoneSuccess?: () => void,  // BindPhoneTrait 成功回调（用于停止页面跳转）
+  onForbidden?: () => void          // 任意被监听接口返回 403 回调（账号封禁）
 ) {
   const WATCHED_APIS = [
     "RegisterByEmail",
@@ -407,6 +407,9 @@ function setupResponseInterception(
     "BindPhoneTrait",
     "SendEmailVerifyCodeWithCaptcha",
     "UserInfo",
+    "CheckInvitationCode",
+    "RedeemPromotionCodeV2",
+    "LoopPromotionCodeRedeemStatus",
     "GetAvailableCredits",
     "GetPersonalInvitationCodes",
   ];
@@ -415,6 +418,14 @@ function setupResponseInterception(
     const url = response.url();
     const matchedApi = WATCHED_APIS.find((api) => url.includes(api));
     if (!matchedApi) return;
+
+    const status = response.status();
+
+    // 任意被监听接口返回 403：账号封禁，触发回调
+    if (status === 403) {
+      if (onForbidden) onForbidden();
+      return;
+    }
 
     try {
       const text = await response.text();
@@ -436,18 +447,12 @@ function setupResponseInterception(
         // 待确认封禁响应体格式后，改为：
         //   const json = JSON.parse(text);
         //   if (json.code === 7 || json.code === 16) { // gRPC PERMISSION_DENIED / UNAUTHENTICATED
-        //     if (onUserInfoForbidden) onUserInfoForbidden();
+        //     if (onForbidden) onForbidden();
         //   }
-        const userInfoStatus = response.status();
-        if (userInfoStatus === 403) {
-          // 暂时保留此判断，但 gRPC-Web 接口实际不会走到这里（HTTP status 永远是 200）
-          if (onUserInfoForbidden) onUserInfoForbidden();
-        } else {
-          try {
-            const json = JSON.parse(text);
-            if (json.membershipVersion) capturedUserData.membershipVersion = json.membershipVersion;
-          } catch {}
-        }
+        try {
+          const json = JSON.parse(text);
+          if (json.membershipVersion) capturedUserData.membershipVersion = json.membershipVersion;
+        } catch {}
       }
 
       if (matchedApi === "GetAvailableCredits") {
@@ -473,7 +478,6 @@ function setupResponseInterception(
 
       // SendPhoneVerificationCode 失败：重置发送状态，下次循环重新点击发送按钮
       if (matchedApi === "SendPhoneVerificationCode") {
-        const status = response.status();
         if (status < 200 || status >= 300) {
           if (onSendPhoneError) onSendPhoneError();
         }
@@ -481,7 +485,6 @@ function setupResponseInterception(
 
       // BindPhoneTrait 成功：手机号绑定成功，触发回调停止页面跳转
       if (matchedApi === "BindPhoneTrait") {
-        const status = response.status();
         if (status >= 200 && status < 300) {
           if (onBindPhoneSuccess) onBindPhoneSuccess();
         }
@@ -1740,7 +1743,8 @@ async function finishRegistration(
   adspowerConfig: any,
   startTime: number,
   log: Logger,
-  setIsOnAppPage: (v: boolean) => void
+  setIsOnAppPage: (v: boolean) => void,
+  forbiddenRef: { value: boolean }  // 共享封禁标志位，由 setupResponseInterception 监听器设置
 ) {
   log("注册成功！开始执行注册后续步骤...", "success");
 
@@ -1773,84 +1777,92 @@ async function finishRegistration(
     const tkn = capturedToken;
     const cid = clientId ?? "";
 
+    // 封禁检测辅助函数：检查共享标志位，若封禁则归还邀请码、标记失败、清理浏览器并抛出异常
+    const checkForbidden = async () => {
+      if (!forbiddenRef.value) return;
+      const elapsed = Date.now() - startTime;
+      log(`[封禁] 接口返回 403，账号注册即封禁，不入库，归还邀请码，关闭浏览器`, "error");
+      await resetInviteCodeStatus(inviterAccountId).catch(() => {});
+      log(`邀请码已归还（inviterAccountId=${inviterAccountId}）`, "warn");
+      if (exitIp) await recordUsedIp(exitIp, email, logId).catch(() => {});
+      await updateTaskLog(logId, {
+        status: "failed",
+        errorMessage: `账号注册即封禁：接口返回 403`,
+        exitIp: exitIp ?? null,
+        durationMs: elapsed,
+        completedAt: new Date(),
+      });
+      await incrementTaskCounters(taskId, { totalFailed: 1 });
+      await cleanupBrowser(page.context().browser()!, adspowerConfig, profileId);
+      throw new Error(`账号注册即封禁：接口返回 403`);
+    };
+
     // 1b. CheckInvitationCode（验证邀请码）——传入邀请链接中的邀请码，等待响应返回
     log(`正在调用 CheckInvitationCode（code=${referrerCode}）...`);
-    const checkInviteResp = await page.evaluate(async ({ tkn, cid, code }: { tkn: string; cid: string; code: string }) => {
+    await page.evaluate(async ({ tkn, cid, code }: { tkn: string; cid: string; code: string }) => {
       try {
         const resp = await fetch("https://api.manus.im/user.v1.UserService/CheckInvitationCode", {
           method: "POST",
           headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
           body: JSON.stringify({ code }),
         });
-        return { ok: resp.ok, status: resp.status };
-      } catch (e: any) { return { ok: false, status: 0 }; }
-    }, { tkn, cid, code: referrerCode }).catch(() => ({ ok: false, status: 0 }));
-    log(`CheckInvitationCode 响应：${checkInviteResp.ok ? "成功" : `失败(${checkInviteResp.status})`}`);
+        return resp.ok;
+      } catch { return false; }
+    }, { tkn, cid, code: referrerCode }).catch(() => false);
+    log(`CheckInvitationCode 已调用`);
+    await checkForbidden();
 
     // 1c. UserInfo（获取会员版本）
     log("正在调用 UserInfo...");
-    const userInfoResult = await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
+    await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
       try {
-        const resp = await fetch("https://api.manus.im/user.v1.UserService/UserInfo", {
+        await fetch("https://api.manus.im/user.v1.UserService/UserInfo", {
           method: "POST",
           headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
           body: JSON.stringify({}),
         });
-        if (resp.ok) return await resp.json();
       } catch {}
-      return null;
-    }, { tkn, cid }).catch(() => null);
-    if (userInfoResult?.membershipVersion) {
-      capturedUserData.membershipVersion = userInfoResult.membershipVersion;
-      log(`会员版本：${capturedUserData.membershipVersion}`);
-    }
+    }, { tkn, cid }).catch(() => {});
+    log(`UserInfo 已调用，会员版本=${capturedUserData.membershipVersion ?? "未获取"}`);
+    await checkForbidden();
 
     // 1d. RedeemPromotionCodeV2（提交推广码）+ LoopPromotionCodeRedeemStatus（轮询兑换状态）
     log("正在兑换推广码...");
-    await redeemPromotion(page, tkn, cid, log);
+    await redeemPromotion(page, tkn, cid, log, forbiddenRef);
+    await checkForbidden();
 
     // 1e. GetAvailableCredits（获取最新积分，等上面所有接口全部完成后调用）
     log("正在调用 GetAvailableCredits...");
-    const creditsResult = await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
+    await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
       try {
-        const resp = await fetch("https://api.manus.im/user.v1.UserService/GetAvailableCredits", {
+        await fetch("https://api.manus.im/user.v1.UserService/GetAvailableCredits", {
           method: "POST",
           headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
           body: JSON.stringify({}),
         });
-        if (resp.ok) return await resp.json();
       } catch {}
-      return null;
-    }, { tkn, cid }).catch(() => null);
-    if (creditsResult?.totalCredits !== undefined) {
-      capturedUserData.totalCredits = creditsResult.totalCredits;
-      capturedUserData.freeCredits = creditsResult.freeCredits ?? null;
-      capturedUserData.refreshCredits = creditsResult.refreshCredits ?? null;
-      log(`积分：总=${capturedUserData.totalCredits}，免费=${capturedUserData.freeCredits}`);
-    }
+    }, { tkn, cid }).catch(() => {});
+    log(`GetAvailableCredits 已调用，积分=${capturedUserData.totalCredits ?? "未获取"}`);
+    await checkForbidden();
 
     // 1f. GetPersonalInvitationCodes（获取该账号自身的邀请码）
     log("正在调用 GetPersonalInvitationCodes...");
-    const inviteResult = await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
+    await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
       try {
-        const resp = await fetch("https://api.manus.im/user.v1.UserService/GetPersonalInvitationCodes", {
+        await fetch("https://api.manus.im/user.v1.UserService/GetPersonalInvitationCodes", {
           method: "POST",
           headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
           body: JSON.stringify({}),
         });
-        if (resp.ok) return await resp.json();
       } catch {}
-      return null;
-    }, { tkn, cid }).catch(() => null);
-    if (inviteResult?.invitationCodes?.length > 0) {
-      capturedUserData.inviteCode = inviteResult.invitationCodes[0].inviteCode ?? null;
-      log(`账号自身邀请码：${capturedUserData.inviteCode}`);
-    }
+    }, { tkn, cid }).catch(() => {});
+    log(`GetPersonalInvitationCodes 已调用，邀请码=${capturedUserData.inviteCode ?? "未获取"}`);
+    await checkForbidden();
   }
 
   log(`数据采集完成：会员版本=${capturedUserData.membershipVersion}，积分=${capturedUserData.totalCredits}，邀请码=${capturedUserData.inviteCode}`);
 
-  // Step 2: 上报注册数据到后端数据库（直接调用 DB，不走 HTTP）
+  // Step 2: 积分校验 + 入库
   const phoneStr = phoneInfo ? phoneInfo.dialCode + phoneInfo.phoneNumber : "";
   const durationMs = Date.now() - startTime;
 
@@ -1858,6 +1870,26 @@ async function finishRegistration(
     const finalTotalCredits = (() => { const v = Number(capturedUserData.totalCredits); return !isNaN(v) ? v : 0; })();
     const inviteCodeEffective = finalTotalCredits === 2800;
 
+    // 积分不是 2800：邀请失败，不入库，归还邀请码，标记失败
+    if (!inviteCodeEffective) {
+      log(`总积分=${finalTotalCredits}（非2800），邀请失败，不入库，归还邀请码，关闭浏览器`, "warn");
+      await resetInviteCodeStatus(inviterAccountId).catch(() => {});
+      log(`邀请码已归还（inviterAccountId=${inviterAccountId}）`, "warn");
+      if (exitIp) await recordUsedIp(exitIp, email, logId).catch(() => {});
+      await updateTaskLog(logId, {
+        status: "failed",
+        errorMessage: `邀请失败：总积分=${finalTotalCredits}，非2800，账号不入库`,
+        exitIp: exitIp ?? null,
+        durationMs,
+        completedAt: new Date(),
+      });
+      await incrementTaskCounters(taskId, { totalFailed: 1 });
+      await cleanupBrowser(page.context().browser()!, adspowerConfig, profileId);
+      return;
+    }
+
+    // 积分 === 2800：正常入库
+    log(`总积分=${finalTotalCredits}，邀请码生效，正常入库`, "success");
     await saveRegistrationResult({
       email,
       password,
@@ -1874,25 +1906,6 @@ async function finishRegistration(
       taskLogId: logId,
     });
 
-    // 积分不是 2800：邀请码未生效
-    if (!inviteCodeEffective) {
-      log(`总积分=${finalTotalCredits}（非2800），邀请码未生效，开始处理归还邀请码...`, "warn");
-      // 1. 归还本次使用的邀请码（将邀请人账号的 inviteStatus 改回 unused）
-      await resetInviteCodeStatus(inviterAccountId).catch(() => {});
-      log(`邀请码已归还（inviterAccountId=${inviterAccountId}）`, "warn");
-      // 2. 将新注册账号自身的邀请码标记为已使用（永远不会被用于邀请别人）
-      if (capturedUserData.inviteCode) {
-        // 通过邀请码字符串查找该账号并标记
-        const newAccount = await getAccountByInviteCode(capturedUserData.inviteCode).catch(() => null);
-        if (newAccount) {
-          await updateInviteStatusById(newAccount.id, "used").catch(() => {});
-          log(`新账号(id=${newAccount.id})自身邀请码已标记为已使用`, "warn");
-        }
-      }
-    } else {
-      log(`总积分=${finalTotalCredits}，邀请码生效，正常完成注册流程`, "success");
-    }
-
     // 记录已用IP
     if (exitIp) {
       await recordUsedIp(exitIp, email, logId).catch(() => {});
@@ -1907,7 +1920,7 @@ async function finishRegistration(
     });
 
     await incrementTaskCounters(taskId, { totalSuccess: 1, totalAccountsCreated: 1 });
-    log(`注册完成！邮筱=${email}，总积分=${finalTotalCredits}，耗时=${Math.round(durationMs / 1000)}秒`, "success");
+    log(`注册完成！邮箱=${email}，总积分=${finalTotalCredits}，耗时=${Math.round(durationMs / 1000)}秒`, "success");
 
   } catch (e: any) {
     log(`注册结果保存失败：${e.message}`, "error");
@@ -1926,7 +1939,13 @@ async function finishRegistration(
 
 // ─── 兑换推广码 ──────────────────────────────────────────────────────────────
 
-async function redeemPromotion(page: Page, token: string, clientId: string, log: Logger): Promise<boolean> {
+async function redeemPromotion(
+  page: Page,
+  token: string,
+  clientId: string,
+  log: Logger,
+  forbiddenRef: { value: boolean }  // 共享封禁标志位，由监听器设置，调用方负责在返回后检查
+): Promise<void> {
   const promotionCode = "techtiff";
   log(`正在兑换推广码：${promotionCode}`);
 
@@ -1948,19 +1967,16 @@ async function redeemPromotion(page: Page, token: string, clientId: string, log:
     }
   }, { tkn: token, cid: clientId, code: promotionCode });
 
-  // 修复：status === 0 表示网络异常，非 0 的 4xx/5xx 是服务端正常拒绝（如推广码已兑换），不应无限轮询
-  if (redeemResult?.status === 0) {
-    log(`推广码兑换网络异常：${redeemResult?.body}`, "warn");
-    return false;
-  }
+  // 403 由监听器设置 forbiddenRef，调用方在返回后检查，这里只处理其他失败情况
   if (!redeemResult?.ok) {
-    log(`推广码兑换被拒绝（状态码 ${redeemResult?.status}）：${redeemResult?.body}`, "warn");
-    return false;
+    log(`推广码兑换失败（状态码 ${redeemResult?.status})：${redeemResult?.body}`, "warn");
+    return;
   }
 
   log(`推广码已提交（状态码 ${redeemResult?.status}），轮询兑换结果...`);
 
   for (let i = 1; i <= 10; i++) {
+    if (forbiddenRef.value) return;  // 如果已封禁，立即停止轮询
     await sleep(2000);
     const pollResult = await page.evaluate(async ({ tkn, cid, code }: { tkn: string; cid: string; code: string }) => {
       try {
@@ -1980,15 +1996,16 @@ async function redeemPromotion(page: Page, token: string, clientId: string, log:
       }
     }, { tkn: token, cid: clientId, code: promotionCode });
 
+    // 403 由监听器设置 forbiddenRef，返回后调用方会检查
+    if (forbiddenRef.value) return;
     try {
       const json = JSON.parse(pollResult?.body || "{}");
       const st = json.status || "";
-      if (st.includes("SUCCESS")) { log("推广码兑换成功！"); return true; }
-      if (st.includes("FAILED")) { log(`推广码兑换失败：${pollResult?.body}`, "warn"); return false; }
+      if (st.includes("SUCCESS")) { log("推广码兑换成功！"); return; }
+      if (st.includes("FAILED")) { log(`推广码兑换失败：${pollResult?.body}`, "warn"); return; }
     } catch {}
   }
   log("推广码兑换轮询超时（可能仍在处理中）", "warn");
-  return false;
 }
 
 // ─── 工具函数 ─────────────────────────────────────────────────────────────────
