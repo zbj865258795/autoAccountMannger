@@ -1,9 +1,3 @@
--- 初始化建表脚本（完整版）
--- 包含系统所有 9 张表，全部使用 CREATE TABLE IF NOT EXISTS，可重复执行
-
--- ─────────────────────────────────────────────
--- 1. 用户表（OAuth 登录，本地部署无需使用）
--- ─────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS `users` (
   `id` int AUTO_INCREMENT NOT NULL,
   `openId` varchar(64) NOT NULL,
@@ -17,10 +11,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   CONSTRAINT `users_id` PRIMARY KEY(`id`),
   CONSTRAINT `users_openId_unique` UNIQUE(`openId`)
 );
-
--- ─────────────────────────────────────────────
--- 2. 账号表：存储所有通过邀请码链式注册的账号
--- ─────────────────────────────────────────────
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS `accounts` (
   `id` int AUTO_INCREMENT NOT NULL,
   `email` varchar(320) NOT NULL,
@@ -48,10 +39,7 @@ CREATE TABLE IF NOT EXISTS `accounts` (
   CONSTRAINT `accounts_email_unique` UNIQUE(`email`),
   CONSTRAINT `accounts_inviteCode_unique` UNIQUE(`inviteCode`)
 );
-
--- ─────────────────────────────────────────────
--- 3. 代理账号表：存储代理账号、地区、代理 URL
--- ─────────────────────────────────────────────
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS `proxy_accounts` (
   `id` int AUTO_INCREMENT NOT NULL,
   `name` varchar(128) NOT NULL,
@@ -62,10 +50,7 @@ CREATE TABLE IF NOT EXISTS `proxy_accounts` (
   `updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT `proxy_accounts_id` PRIMARY KEY(`id`)
 );
-
--- ─────────────────────────────────────────────
--- 4. 自动化任务表：管理定时扫描和自动注册任务
--- ─────────────────────────────────────────────
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS `automation_tasks` (
   `id` int AUTO_INCREMENT NOT NULL,
   `name` varchar(128) NOT NULL,
@@ -89,10 +74,7 @@ CREATE TABLE IF NOT EXISTS `automation_tasks` (
   `updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT `automation_tasks_id` PRIMARY KEY(`id`)
 );
-
--- ─────────────────────────────────────────────
--- 5. 任务执行日志表：记录每次自动化任务的执行详情
--- ─────────────────────────────────────────────
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS `task_logs` (
   `id` int AUTO_INCREMENT NOT NULL,
   `taskId` int,
@@ -110,10 +92,7 @@ CREATE TABLE IF NOT EXISTS `task_logs` (
   `createdAt` timestamp NOT NULL DEFAULT (now()),
   CONSTRAINT `task_logs_id` PRIMARY KEY(`id`)
 );
-
--- ─────────────────────────────────────────────
--- 6. 任务步骤日志表：记录每次注册任务的详细步骤进度
--- ─────────────────────────────────────────────
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS `task_step_logs` (
   `id` int AUTO_INCREMENT NOT NULL,
   `taskLogId` int NOT NULL,
@@ -123,10 +102,7 @@ CREATE TABLE IF NOT EXISTS `task_step_logs` (
   `createdAt` timestamp NOT NULL DEFAULT (now()),
   CONSTRAINT `task_step_logs_id` PRIMARY KEY(`id`)
 );
-
--- ─────────────────────────────────────────────
--- 7. 手机号表：存储用于注册的手机号和接码 URL
--- ─────────────────────────────────────────────
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS `phone_numbers` (
   `id` int AUTO_INCREMENT NOT NULL,
   `phone` varchar(32) NOT NULL,
@@ -140,10 +116,7 @@ CREATE TABLE IF NOT EXISTS `phone_numbers` (
   CONSTRAINT `phone_numbers_id` PRIMARY KEY(`id`),
   CONSTRAINT `phone_numbers_phone_unique` UNIQUE(`phone`)
 );
-
--- ─────────────────────────────────────────────
--- 8. 导出日志表：记录每次导出操作的账号明细
--- ─────────────────────────────────────────────
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS `export_logs` (
   `id` int AUTO_INCREMENT NOT NULL,
   `exportBatchId` varchar(64) NOT NULL,
@@ -162,13 +135,13 @@ CREATE TABLE IF NOT EXISTS `export_logs` (
   `notes` text,
   CONSTRAINT `export_logs_id` PRIMARY KEY(`id`)
 );
-CREATE INDEX IF NOT EXISTS `export_logs_batchId_idx` ON `export_logs` (`exportBatchId`);
-CREATE INDEX IF NOT EXISTS `export_logs_email_idx` ON `export_logs` (`email`);
-CREATE INDEX IF NOT EXISTS `export_logs_exportedAt_idx` ON `export_logs` (`exportedAt`);
-
--- ─────────────────────────────────────────────
--- 9. 已用出口IP池表：防止重复使用同一IP注册
--- ─────────────────────────────────────────────
+--> statement-breakpoint
+CREATE INDEX `export_logs_batchId_idx` ON `export_logs` (`exportBatchId`);
+--> statement-breakpoint
+CREATE INDEX `export_logs_email_idx` ON `export_logs` (`email`);
+--> statement-breakpoint
+CREATE INDEX `export_logs_exportedAt_idx` ON `export_logs` (`exportedAt`);
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS `used_ip_pool` (
   `id` int AUTO_INCREMENT NOT NULL,
   `ip` varchar(64) NOT NULL,
