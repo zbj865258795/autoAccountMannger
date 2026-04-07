@@ -1810,92 +1810,124 @@ async function finishRegistration(
     const tkn = capturedToken;
     const cid = clientId ?? "";
 
-    // 封禁检测辅助函数：检查共享标志位，若封禁则归还邀请码、标记失败、清理浏览器并抛出异常
-    const checkForbidden = async () => {
-      if (!forbiddenRef.value) return;
+    // 封禁检测辅助函数：直接接收接口返回的 status，若为 403 则归还邀请码、标记失败、清理浏览器并抛出异常
+    const checkForbidden = async (apiName: string, status: number) => {
+      if (status !== 403) return;
       const elapsed = Date.now() - startTime;
-      log(`[封禁] 接口返回 403，账号注册即封禁，不入库，归还邀请码，关闭浏览器`, "error");
+      log(`[封禁] ${apiName} 返回 403，账号注册即封禁，不入库，归还邀请码，关闭浏览器`, "error");
       await resetInviteCodeStatus(inviterAccountId).catch(() => {});
       log(`邀请码已归还（inviterAccountId=${inviterAccountId}）`, "warn");
       if (exitIp) await recordUsedIp(exitIp, email, logId).catch(() => {});
       await updateTaskLog(logId, {
         status: "failed",
-        errorMessage: `账号注册即封禁：接口返回 403`,
+        errorMessage: `账号注册即封禁：${apiName} 返回 403`,
         exitIp: exitIp ?? null,
         durationMs: elapsed,
         completedAt: new Date(),
       });
       await incrementTaskCounters(taskId, { totalFailed: 1 });
       await cleanupBrowser(page.context().browser()!, adspowerConfig, profileId);
-      throw new Error(`账号注册即封禁：接口返回 403`);
+      throw new Error(`账号注册即封禁：${apiName} 返回 403`);
     };
 
-    // 1b. CheckInvitationCode（验证邀请码）——传入邀请链接中的邀请码，等待响应返回
-    // 注意：必须 await resp.text() 读完响应体，确保 Playwright 监听器在 page.evaluate resolve 前已处理完毕
+    // 1b. CheckInvitationCode（验证邀请码）——传入邀请链接中的邀请码
     log(`正在调用 CheckInvitationCode（code=${referrerCode}）...`);
-    await page.evaluate(async ({ tkn, cid, code }: { tkn: string; cid: string; code: string }) => {
-      try {
-        const resp = await fetch("https://api.manus.im/user.v1.UserService/CheckInvitationCode", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
-          body: JSON.stringify({ code }),
-        });
-        await resp.text(); // 必须读完响应体，确保监听器在 resolve 前已触发
-        return resp.ok;
-      } catch { return false; }
-    }, { tkn, cid, code: referrerCode }).catch(() => false);
-    log(`CheckInvitationCode 已调用`);
-    await checkForbidden();
+    {
+      const r = await page.evaluate(async ({ tkn, cid, code }: { tkn: string; cid: string; code: string }) => {
+        try {
+          const resp = await fetch("https://api.manus.im/user.v1.UserService/CheckInvitationCode", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
+            body: JSON.stringify({ code }),
+          });
+          const text = await resp.text();
+          return { status: resp.status, body: text };
+        } catch (e: any) { return { status: 0, body: e.message }; }
+      }, { tkn, cid, code: referrerCode }).catch(() => ({ status: 0, body: "" }));
+      log(`CheckInvitationCode 已调用（status=${r.status}）`);
+      await checkForbidden("CheckInvitationCode", r.status);
+    }
 
     // 1c. UserInfo（获取会员版本）
     log("正在调用 UserInfo...");
-    await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
+    {
+      const r = await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
+        try {
+          const resp = await fetch("https://api.manus.im/user.v1.UserService/UserInfo", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
+            body: JSON.stringify({}),
+          });
+          const text = await resp.text();
+          return { status: resp.status, body: text };
+        } catch (e: any) { return { status: 0, body: e.message }; }
+      }, { tkn, cid }).catch(() => ({ status: 0, body: "" }));
+      await checkForbidden("UserInfo", r.status);
       try {
-        const resp = await fetch("https://api.manus.im/user.v1.UserService/UserInfo", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
-          body: JSON.stringify({}),
-        });
-        await resp.text(); // 必须读完响应体
+        const json = JSON.parse(r.body);
+        if (json.membershipVersion) capturedUserData.membershipVersion = json.membershipVersion;
       } catch {}
-    }, { tkn, cid }).catch(() => {});
-    log(`UserInfo 已调用，会员版本=${capturedUserData.membershipVersion ?? "未获取"}`);
-    await checkForbidden();
+      log(`UserInfo 已调用，会员版本=${capturedUserData.membershipVersion ?? "未获取"}`);
+    }
 
     // 1d. RedeemPromotionCodeV2（提交推广码）+ LoopPromotionCodeRedeemStatus（轮询兑换状态）
     log("正在兑换推广码...");
     await redeemPromotion(page, tkn, cid, log, forbiddenRef);
-    await checkForbidden();
+    // redeemPromotion 内部已通过 forbiddenRef 检测 403，这里同步检查
+    if (forbiddenRef.value) {
+      await checkForbidden("RedeemPromotionCodeV2/LoopPromotionCodeRedeemStatus", 403);
+    }
 
-    // 1e. GetAvailableCredits（获取最新积分，等上面所有接口全部完成后调用）
-    log("正在调用 GetAvailableCredits...");
-    await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
-      try {
-        const resp = await fetch("https://api.manus.im/user.v1.UserService/GetAvailableCredits", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
-          body: JSON.stringify({}),
-        });
-        await resp.text(); // 必须读完响应体，确保监听器在 resolve 前已触发
-      } catch {}
-    }, { tkn, cid }).catch(() => {});
-    log(`GetAvailableCredits 已调用，积分=${capturedUserData.totalCredits ?? "未获取"}`);
-    await checkForbidden();
-
-    // 1f. GetPersonalInvitationCodes（获取该账号自身的邀请码）
+    // 1e. GetPersonalInvitationCodes（获取该账号自身的邀请码）
     log("正在调用 GetPersonalInvitationCodes...");
-    await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
+    {
+      const r = await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
+        try {
+          const resp = await fetch("https://api.manus.im/user.v1.UserService/GetPersonalInvitationCodes", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
+            body: JSON.stringify({}),
+          });
+          const text = await resp.text();
+          return { status: resp.status, body: text };
+        } catch (e: any) { return { status: 0, body: e.message }; }
+      }, { tkn, cid }).catch(() => ({ status: 0, body: "" }));
+      await checkForbidden("GetPersonalInvitationCodes", r.status);
       try {
-        const resp = await fetch("https://api.manus.im/user.v1.UserService/GetPersonalInvitationCodes", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
-          body: JSON.stringify({}),
-        });
-        await resp.text(); // 必须读完响应体，确保监听器在 resolve 前已触发
+        const json = JSON.parse(r.body);
+        const codes = json.invitationCodes || [];
+        if (codes.length > 0 && codes[0].inviteCode) {
+          capturedUserData.inviteCode = codes[0].inviteCode;
+        }
       } catch {}
-    }, { tkn, cid }).catch(() => {});
-    log(`GetPersonalInvitationCodes 已调用，邀请码=${capturedUserData.inviteCode ?? "未获取"}`);
-    await checkForbidden();
+      log(`GetPersonalInvitationCodes 已调用，邀请码=${capturedUserData.inviteCode ?? "未获取"}`);
+    }
+
+    // 1f. GetAvailableCredits（最后调用，确保积分反映所有前置操作的结果）
+    log("正在调用 GetAvailableCredits...");
+    {
+      const r = await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
+        try {
+          const resp = await fetch("https://api.manus.im/user.v1.UserService/GetAvailableCredits", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
+            body: JSON.stringify({}),
+          });
+          const text = await resp.text();
+          return { status: resp.status, body: text };
+        } catch (e: any) { return { status: 0, body: e.message }; }
+      }, { tkn, cid }).catch(() => ({ status: 0, body: "" }));
+      await checkForbidden("GetAvailableCredits", r.status);
+      try {
+        const json = JSON.parse(r.body);
+        if (json.totalCredits !== undefined) {
+          capturedUserData.totalCredits = json.totalCredits;
+          capturedUserData.freeCredits = json.freeCredits;
+          capturedUserData.refreshCredits = json.refreshCredits ?? null;
+        }
+      } catch {}
+      log(`GetAvailableCredits 已调用，积分=${capturedUserData.totalCredits ?? "未获取"}`);
+    }
   }
 
   log(`数据采集完成：会员版本=${capturedUserData.membershipVersion}，积分=${capturedUserData.totalCredits}，邀请码=${capturedUserData.inviteCode}`);
