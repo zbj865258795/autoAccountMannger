@@ -422,7 +422,7 @@ export default function Automation() {
           tasks?.map((task) => {
             const sc = statusConfig[task.status as TaskStatus] ?? statusConfig.idle;
             const StatusIcon = sc.icon;
-            const hasProxy = !!(task as any).proxyUrl;
+            const hasProxy = !!(task as any).proxyAccountId || !!(task as any).proxyUrl;
             return (
               <Card key={task.id} className="bg-card border-border/50">
                 <CardContent className="p-4">

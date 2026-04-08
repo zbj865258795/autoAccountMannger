@@ -241,8 +241,18 @@ export function generateRandomFingerprint(region: RegionCode = "us") {
   // ── 4. 语言（根据地区配置）───────────────────────────────────────
   const language = [...regionCfg.languages] as string[];
 
-  // ── 5. 屏幕分辨率 + 窗口大小（固定 1920x1080）───────────────────────────
-  const resolutionInfo = RESOLUTIONS[0]; // 固定使用 1920x1080
+  // ── 5. 屏幕分辨率 + 窗口大小（按真实用户市占率加权随机）─────────────
+  // 市占率参考 StatCounter 2024：1920x1080(~23%), 1366x768(~15%), 1536x864(~10%),
+  // 1440x900(~7%), 1600x900(~4%), 1280x800(~3%), 1280x720(~3%)
+  const resolutionWeights = [23, 15, 7, 10, 3, 4, 3]; // 与 RESOLUTIONS 数组一一对应
+  const totalWeight = resolutionWeights.reduce((a, b) => a + b, 0);
+  let rand = Math.random() * totalWeight;
+  let resIdx = 0;
+  for (let i = 0; i < resolutionWeights.length; i++) {
+    rand -= resolutionWeights[i];
+    if (rand <= 0) { resIdx = i; break; }
+  }
+  const resolutionInfo = RESOLUTIONS[resIdx];
 
   // ── 6. 硬件参数 ──────────────────────────────
   // 文档支持：default, 2, 4, 6, 8, 16

@@ -306,8 +306,8 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     // ── Step 1: 生成密码（邮箱将在 /login 页面加载后再购买，避免浪费）──
     let email = "";       // 将在 handleLoginPage 内部购买后填入
     let codeUrl = "";     // 同上
-    const password = "QingTian@2026";
-    log(`密码已生成（固定密码）`);
+    const password = `QingTian@${String(Math.floor(Math.random() * 1000000)).padStart(6, "0")}`;
+    log(`密码已生成（随机密码）`);
 
     // ── Step 2: 打开邀请链接 ──
     log(`正在打开邀请链接：${inviteUrl}`);
@@ -359,11 +359,17 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
 
     // ── 阶段二：verify-phone 页面 ──
     log("=== 阶段二：手机号 + 短信验证码 ===");
-    const phoneResult = await handleVerifyPhonePage(page, logId, log);
+    const phoneResult = await handleVerifyPhonePage(page, logId, log, userInfoForbiddenRef);
 
     if (phoneResult.result === "app" && phoneResult.phoneInfo) {
       await finishRegistration(page, email, password, phoneResult.phoneInfo, inviteCode, inviterAccountId, capturedToken, capturedUserData, taskId, logId, profileId, detectedExitIp, adspowerConfig, startTime, log, (v) => { isOnAppPage = v; });
       return;
+    }
+
+    if (phoneResult.result === "banned") {
+      // 阶段二封禁（SendPhoneVerificationCode 403）
+      await resetInviteCodeStatus(inviterAccountId);
+      throw new Error("账号注册即封禁（SendPhoneVerificationCode 403）");
     }
 
     if (phoneResult.result === "no-phone") {
@@ -425,13 +431,17 @@ function setupResponseInterception(
     const status = response.status();
 
     // 任意被监听接口返回 403：账号封禁，触发回调
+    // ⚠️ 注意：不能在此 early return，必须继续执行后续的状态更新逻辑。
+    // 原因：handleVerifyPhonePage 内部通过 sendPhoneCodeStatus === -1 判断失败，
+    // 若 403 时直接 return，sendPhoneCodeStatus 永远不会被赋为 -1，
+    // 导致阶段二循环一直等待响应状态，最终陷入死循环（不断清空手机号重新输入）。
     if (status === 403) {
       if (onForbidden) onForbidden();
-      return;
+      // 继续往下执行，让各接口的状态变量也得到正确更新
     }
 
     try {
-      const text = await response.text();
+      const text = await response.text().catch(() => "");
 
       if (matchedApi === "RegisterByEmail") {
         try {
@@ -454,7 +464,7 @@ function setupResponseInterception(
         //   }
       }
 
-      // SendPhoneVerificationCode 失败：重置发送状态，下次循环重新点击发送按钮
+      // SendPhoneVerificationCode 失败（含 403 封禁）：重置发送状态，下次循环重新点击发送按钮
       if (matchedApi === "SendPhoneVerificationCode") {
         if (status < 200 || status >= 300) {
           if (onSendPhoneError) onSendPhoneError();
@@ -1302,8 +1312,9 @@ interface PhoneInfo {
 async function handleVerifyPhonePage(
   page: Page,
   logId: number,
-  log: Logger
-): Promise<{ result: "app" | "timeout" | "no-phone" | "error"; phoneInfo?: PhoneInfo }> {
+  log: Logger,
+  forbiddenRef?: { value: boolean }
+): Promise<{ result: "app" | "timeout" | "no-phone" | "error" | "banned"; phoneInfo?: PhoneInfo }> {
   // 手机号在确认输入框存在后才获取，此处先初始化为 null
   let phoneInfo: PhoneInfo | null = null;
   let acquiredPhoneId: number | null = null;
@@ -1519,7 +1530,12 @@ async function handleVerifyPhonePage(
             await sleep(200);
           }
           if (sendPhoneCodeStatus === -1) {
-            // 响应失败，清空手机号重新输入
+            // 若是 403 封禁（forbiddenRef 已被置为 true），直接终止，不再重试
+            if (forbiddenRef?.value) {
+              log("SendPhoneVerificationCode 返回 403，账号已封禁，终止阶段二", "error");
+              return { result: "banned" };
+            }
+            // 其他失败（如 4xx/5xx），清空手机号重新输入
             log("SendPhoneVerificationCode 响应失败，清空手机号重新输入...", "warn");
             sendPhoneCodeRequestTime = 0;
             sendPhoneCodeStatus = 0;
