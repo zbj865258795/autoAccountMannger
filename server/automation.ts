@@ -129,16 +129,34 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     log(`连接成功，已关闭 AdsPower 起始页并新建空白页面`, "info");
 
     // ── Step -1: 通过浏览器内部检测出口 IP（确保代理已生效，且 IP 与注册用 IP 完全一致）──
+    // 多服务备用：按顺序尝试，任意一个成功即用，避免单点依赖
+    const IP_CHECK_SERVICES = [
+      { url: "https://api4.my-ip.io/ip.txt",      parse: (t: string) => t.trim() },
+      { url: "https://api.ipify.org?format=json",  parse: (t: string) => JSON.parse(t).ip as string },
+      { url: "https://ipinfo.io/json",             parse: (t: string) => (JSON.parse(t).ip as string).split("/")[0] },
+      { url: "https://ipv4.icanhazip.com",         parse: (t: string) => t.trim() },
+    ];
     log("正在通过浏览器检测出口 IP...");
     let detectedExitIp: string | undefined;
     try {
       const ipPage = await context.newPage();
-      await ipPage.goto("https://ipv4.icanhazip.com", { waitUntil: "domcontentloaded", timeout: 20000 });
-      const ipText = (await ipPage.textContent("body") ?? "").trim();
+      for (const svc of IP_CHECK_SERVICES) {
+        try {
+          await ipPage.goto(svc.url, { waitUntil: "domcontentloaded", timeout: 15000 });
+          const bodyText = (await ipPage.textContent("body") ?? "").trim();
+          const ip = svc.parse(bodyText);
+          if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) {
+            detectedExitIp = ip;
+            log(`出口 IP 检测成功（来源：${svc.url})：${detectedExitIp}`, "success");
+            break;
+          }
+        } catch {
+          log(`IP 检测服务不可用：${svc.url}，尝试下一个...`, "warn");
+        }
+      }
       await ipPage.close();
-      if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ipText)) {
-        detectedExitIp = ipText;
-        log(`出口 IP 检测成功：${detectedExitIp}`, "success");
+
+      if (detectedExitIp) {
         // 检查 IP 是否已使用过
         const used = await isIpUsed(detectedExitIp);
         if (used) {
@@ -154,10 +172,10 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
         }
         log(`出口 IP ${detectedExitIp} 未使用，继续注册`, "success");
       } else {
-        log(`无法解析出口 IP（响应内容："${ipText}"），跳过 IP 检查继续注册`, "warn");
+        log("所有 IP 检测服务均不可用，跳过 IP 检查继续注册", "warn");
       }
     } catch (ipErr: any) {
-      log(`出口 IP 检测失败：${ipErr.message}，跳过 IP 检查继续注册`, "warn");
+      log(`出口 IP 检测异常：${ipErr.message}，跳过 IP 检查继续注册`, "warn");
     }
 
     // IP 检测使用单独的 ipPage，已关闭，主 page 始终保持有效
