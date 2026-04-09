@@ -131,9 +131,9 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     // ── Step -1: 通过浏览器内部检测出口 IP（确保代理已生效，且 IP 与注册用 IP 完全一致）──
     // 多服务备用：按顺序尝试，任意一个成功即用，避免单点依赖
     const IP_CHECK_SERVICES = [
-      { url: "https://api4.my-ip.io/ip.txt",      parse: (t: string) => t.trim() },
       { url: "https://api.ipify.org?format=json",  parse: (t: string) => JSON.parse(t).ip as string },
       { url: "https://ipinfo.io/json",             parse: (t: string) => (JSON.parse(t).ip as string).split("/")[0] },
+      { url: "https://api4.my-ip.io/ip.txt",      parse: (t: string) => t.trim() },
       { url: "https://ipv4.icanhazip.com",         parse: (t: string) => t.trim() },
     ];
     log("正在通过浏览器检测出口 IP...");
