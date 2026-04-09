@@ -2116,23 +2116,34 @@ async function redeemPromotion(
   const promotionCode = "techtiff";
   log(`正在兑换推广码：${promotionCode}`);
 
-  const redeemResult = await page.evaluate(async ({ tkn, cid, code }: { tkn: string; cid: string; code: string }) => {
-    try {
-      const resp = await fetch("https://api.manus.im/promotion.v1.PromotionService/RedeemPromotionCodeV2", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "authorization": `Bearer ${tkn}`,
-          "x-client-id": cid,
-        },
-        body: JSON.stringify({ promotionCode: code, deviceId: cid }),
-      });
-      const text = await resp.text();
-      return { ok: resp.ok, status: resp.status, body: text.substring(0, 300) };
-    } catch (e: any) {
-      return { ok: false, status: 0, body: e.message };
+  // RedeemPromotionCodeV2 网络失败时最多重试 3 次，间隔 3s
+  let redeemResult: { ok: boolean; status: number; body: string } | null = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    redeemResult = await page.evaluate(async ({ tkn, cid, code }: { tkn: string; cid: string; code: string }) => {
+      try {
+        const resp = await fetch("https://api.manus.im/promotion.v1.PromotionService/RedeemPromotionCodeV2", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "authorization": `Bearer ${tkn}`,
+            "x-client-id": cid,
+          },
+          body: JSON.stringify({ promotionCode: code, deviceId: cid }),
+        });
+        const text = await resp.text();
+        return { ok: resp.ok, status: resp.status, body: text.substring(0, 300) };
+      } catch (e: any) {
+        return { ok: false, status: 0, body: e.message };
+      }
+    }, { tkn: token, cid: clientId, code: promotionCode });
+
+    if (redeemResult?.status === 0 && attempt < 3) {
+      log(`RedeemPromotionCodeV2 网络失败（第 ${attempt} 次），3s 后重试...`, "warn");
+      await sleep(3000);
+      continue;
     }
-  }, { tkn: token, cid: clientId, code: promotionCode });
+    break;
+  }
 
   // 直接用返回的 status 判断 403
   if (redeemResult?.status === 403) {
