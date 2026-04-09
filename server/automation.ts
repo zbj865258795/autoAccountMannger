@@ -1714,47 +1714,37 @@ async function handleVerifyPhonePage(
         // 响应成功（或 15s 超时，按成功处理）——等待页面跳转到 /app
         log("BindPhoneTrait 响应成功，等待页面跳转到 /app...");
         // 注意：BindPhoneTrait 成功后 Manus 会经过 auth_landing 中转再跳到 /app，
-        // 整个跳转链路（verify-phone → auth_landing → /app）可能需要超过 30s，
-        // 因此这里分两段等待：先等任意 manus.im 页面（排除 verify-phone），再检查是否到 /app
-        try {
-          // 第一段：等待离开 /verify-phone（最多 60s，容忍 auth_landing 中转）
-          await page.waitForURL(
-            (url: URL) => !url.toString().includes("manus.im/verify-phone"),
-            { timeout: 60000 }
-          );
-        } catch (e: any) {
-          // BindPhoneTrait 已成功，注册实际上已完成，如果是浏览器关闭导致的异常，直接返回成功
-          if (e.message?.includes("has been closed") || e.message?.includes("Target closed") || page.isClosed()) {
-            log("BindPhoneTrait 已成功，但浏览器在跳转过程中关闭，视为注册成功", "warn");
-            return { result: "app", phoneInfo };
+        // 整个跳转链路（verify-phone → auth_landing → /app）可能需要较长时间。
+        // 不使用 waitForURL（因为中间导航事件会导致它提前 throw），改用轮询 page.url()
+        const jumpStart = Date.now();
+        const JUMP_TIMEOUT = 60000; // 最多等 60s
+        let jumpedToApp = false;
+        while (Date.now() - jumpStart < JUMP_TIMEOUT) {
+          if (page.isClosed()) {
+            log("等待跳转期间浏览器已关闭，刷新重试...", "warn");
+            break;
           }
-          // 真正的 60s 超时，刷新重试
-          log("BindPhoneTrait 已成功但页面 60s 内未离开 /verify-phone，刷新重试...", "warn");
-          break;
+          try {
+            const curUrl = page.url();
+            if (curUrl.includes("manus.im/app")) {
+              jumpedToApp = true;
+              break;
+            }
+          } catch {
+            // page.url() 异常（浏览器关闭等），退出轮询
+            log("等待跳转期间获取 URL 异常，刷新重试...", "warn");
+            break;
+          }
+          await sleep(1000);
         }
-        // 第二段：已离开 /verify-phone，等待最终落地到 /app（最多 60s，容忍 auth_landing 中转）
-        try {
-          await page.waitForURL(
-            (url: URL) => url.toString().includes("manus.im/app"),
-            { timeout: 60000 }
-          );
+        if (jumpedToApp) {
           log("阶段二完成 → 已进入 /app");
           return { result: "app", phoneInfo };
-        } catch (e: any) {
-          // BindPhoneTrait 已成功，注册实际上已完成，如果是浏览器关闭导致的异常，直接返回成功
-          if (e.message?.includes("has been closed") || e.message?.includes("Target closed") || page.isClosed()) {
-            log("BindPhoneTrait 已成功，但浏览器在跳转过程中关闭，视为注册成功", "warn");
-            return { result: "app", phoneInfo };
-          }
-          // 已离开 /verify-phone 但未到 /app，检查当前 URL
-          const curUrl = page.url();
-          if (curUrl.includes("manus.im/app")) {
-            log("阶段二完成 → 已进入 /app");
-            return { result: "app", phoneInfo };
-          }
-          log(`BindPhoneTrait 已成功但页面未到 /app（当前：${curUrl}），刷新重试...`, "warn");
-          break;
         }
+        if (!jumpedToApp && Date.now() - jumpStart >= JUMP_TIMEOUT) {
+          log("BindPhoneTrait 已成功但页面 60s 内未跳转到 /app，刷新重试...", "warn");
+        }
+        break;
       }
 
       // 如果已点击按钮且超过 3s 仍无 BindPhoneTrait 请求 → 清空短信验证码重新输入
@@ -1822,11 +1812,6 @@ async function handleVerifyPhonePage(
     try {
       await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
     } catch (reloadErr: any) {
-      // 如果 BindPhoneTrait 已经成功过，注册实际上已完成，刷新失败也视为成功
-      if (bindPhoneStatus === 1) {
-        log(`阶段二刷新失败，但 BindPhoneTrait 已成功，视为注册成功`, "warn");
-        return { result: "app", phoneInfo };
-      }
       log(`阶段二刷新失败（代理网络错误）：${reloadErr.message}`, "error");
       return { result: "error" };
     }
