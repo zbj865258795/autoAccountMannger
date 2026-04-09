@@ -1894,6 +1894,7 @@ async function finishRegistration(
         }
         return result;
       }
+      // 理论上不会走到这里（MAX_RETRY 次循环内必然 return），TypeScript 类型收窄需要
       return fn();
     };
 
