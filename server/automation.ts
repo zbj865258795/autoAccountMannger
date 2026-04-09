@@ -1695,13 +1695,36 @@ async function handleVerifyPhonePage(
         }
         // 响应成功（或 15s 超时，按成功处理）——等待页面跳转到 /app
         log("BindPhoneTrait 响应成功，等待页面跳转到 /app...");
+        // 注意：BindPhoneTrait 成功后 Manus 会经过 auth_landing 中转再跳到 /app，
+        // 整个跳转链路（verify-phone → auth_landing → /app）可能需要超过 30s，
+        // 因此这里分两段等待：先等任意 manus.im 页面（排除 verify-phone），再检查是否到 /app
         try {
-          await page.waitForURL((url: URL) => url.toString().includes("manus.im/app"), { timeout: 30000 });
+          // 第一段：等待离开 /verify-phone（最多 60s，容忍 auth_landing 中转）
+          await page.waitForURL(
+            (url: URL) => !url.toString().includes("manus.im/verify-phone"),
+            { timeout: 60000 }
+          );
+        } catch {
+          // 60s 内仍在 /verify-phone，可能是跳转极慢或代理问题，刷新重试
+          log("BindPhoneTrait 已成功但页面 60s 内未离开 /verify-phone，刷新重试...", "warn");
+          break;
+        }
+        // 第二段：已离开 /verify-phone，等待最终落地到 /app（最多 60s，容忍 auth_landing 中转）
+        try {
+          await page.waitForURL(
+            (url: URL) => url.toString().includes("manus.im/app"),
+            { timeout: 60000 }
+          );
           log("阶段二完成 → 已进入 /app");
           return { result: "app", phoneInfo };
         } catch {
-          // BindPhoneTrait 已成功但页面 30s 内未跳转，刷新重试
-          log("BindPhoneTrait 已成功但页面 30s 内未跳转，刷新重试...", "warn");
+          // 已离开 /verify-phone 但未到 /app，检查当前 URL
+          const curUrl = page.url();
+          if (curUrl.includes("manus.im/app")) {
+            log("阶段二完成 → 已进入 /app");
+            return { result: "app", phoneInfo };
+          }
+          log(`BindPhoneTrait 已成功但页面未到 /app（当前：${curUrl}），刷新重试...`, "warn");
           break;
         }
       }
