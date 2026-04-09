@@ -811,6 +811,12 @@ async function handleLoginPage(
     for (let i = 0; i < 300; i++) {
       await sleep(1000);
 
+      // ── 浏览器关闭检测：最高优先级，一旦检测到立即退出循环 ──
+      if (page.isClosed()) {
+        log("阶段一：浏览器/页面已关闭，终止本轮注册", "error");
+        break;
+      }
+
       if (Date.now() - roundStart > PHASE_TIMEOUT) {
         log("阶段一超时，正在刷新重试...", "warn");
         break;
@@ -911,6 +917,7 @@ async function handleLoginPage(
             if (stepStallCount >= 60) { log("邮筱输入框持续干不上，刷新重试...", "warn"); break; }
           }
         } catch (e: any) {
+          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤1：浏览器已关闭，终止本轮`, "error"); break; }
           log(`步骤1（输入邮箱）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
@@ -966,6 +973,7 @@ async function handleLoginPage(
             if (stepStallCount >= 60) { log("邮箱 Continue 按钮持续不可用，刷新重试...", "warn"); break; }
           }
         } catch (e: any) {
+          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤2：浏览器已关闭，终止本轮`, "error"); break; }
           log(`步骤2（邮箱 Continue）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
@@ -985,6 +993,7 @@ async function handleLoginPage(
             if (stepStallCount >= 60) { log("密码输入框持续干不上，刷新重试...", "warn"); break; }
           }
         } catch (e: any) {
+          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤3：浏览器已关闭，终止本轮`, "error"); break; }
           log(`步骤3（输入密码）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
@@ -1083,6 +1092,7 @@ async function handleLoginPage(
             if (stepStallCount >= 60) { log("密码 Continue 按钮持续不可用，刷新重试...", "warn"); break; }
           }
         } catch (e: any) {
+          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤4：浏览器已关闭，终止本轮`, "error"); break; }
           log(`步骤4（密码 Continue）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
@@ -1129,6 +1139,7 @@ async function handleLoginPage(
             if (stepStallCount >= 60) { log("邮筱验证码输入框持续干不上，刷新重试...", "warn"); break; }
           }
         } catch (e: any) {
+          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤5：浏览器已关闭，终止本轮`, "error"); break; }
           log(`步骤5（填入邮箱验证码）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
@@ -1256,6 +1267,7 @@ async function handleLoginPage(
             if (stepStallCount >= 60) { log("验证码确认按钮持续不可用，刷新重试...", "warn"); break; }
           }
         } catch (e: any) {
+          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤6：浏览器已关闭，终止本轮`, "error"); break; }
           log(`步骤6（验证码确认）异常：${e.message}，等待重试...`, "warn");
         }
       }
@@ -1453,6 +1465,12 @@ async function handleVerifyPhonePage(
     for (let i = 0; i < 300; i++) {
       await sleep(1000);
 
+      // ── 浏览器关闭检测：最高优先级，一旦检测到立即退出循环 ──
+      if (page.isClosed()) {
+        log("阶段二：浏览器/页面已关闭，终止本轮注册", "error");
+        break;
+      }
+
       if (Date.now() - roundStart > PHASE_TIMEOUT) {
         log("阶段二超时，正在刷新重试...", "warn");
         break;
@@ -1494,6 +1512,7 @@ async function handleVerifyPhonePage(
             if (stepStallCount >= 20) { log("国家选择卡住，刷新重试...", "warn"); break; }
           }
         } catch (e: any) {
+          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤A：浏览器已关闭，终止本轮`, "error"); break; }
           log(`步骤A（选择国家）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
@@ -1514,6 +1533,7 @@ async function handleVerifyPhonePage(
             if (stepStallCount >= 20) { log("手机号输入框卡住，刷新重试...", "warn"); break; }
           }
         } catch (e: any) {
+          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤B：浏览器已关闭，终止本轮`, "error"); break; }
           log(`步骤B（输入手机号）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
@@ -1614,6 +1634,7 @@ async function handleVerifyPhonePage(
             if (stepStallCount >= 20) { log("发送验证码按钮卡住，刷新重试...", "warn"); break; }
           }
         } catch (e: any) {
+          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤C：浏览器已关闭，终止本轮`, "error"); break; }
           log(`步骤C（Send code）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
@@ -1644,6 +1665,7 @@ async function handleVerifyPhonePage(
             if (stepStallCount >= 20) { log("短信验证码输入框卡住，刷新重试...", "warn"); break; }
           }
         } catch (e: any) {
+          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤D：浏览器已关闭，终止本轮`, "error"); break; }
           log(`步骤D（填入短信验证码）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
@@ -1734,6 +1756,7 @@ async function handleVerifyPhonePage(
           if (stepStallCount >= 20) { log("手机号确认按钮卡住，刷新重试...", "warn"); break; }
         }
       } catch (e: any) {
+        if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤E：浏览器已关闭，终止本轮`, "error"); break; }
         log(`步骤E（短信验证码确认）异常：${e.message}，等待重试...`, "warn");
       }
     }
