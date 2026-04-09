@@ -1878,6 +1878,25 @@ async function finishRegistration(
     const tkn = capturedToken;
     const cid = clientId ?? "";
 
+    // 带重试的 page.evaluate 封装：网络失败（status=0）时最多重试 3 次，间隔 3s
+    const evaluateWithRetry = async <T>(
+      fn: () => Promise<T>,
+      apiName: string
+    ): Promise<T> => {
+      const MAX_RETRY = 3;
+      for (let attempt = 1; attempt <= MAX_RETRY; attempt++) {
+        const result = await fn();
+        const r = result as any;
+        if (r?.status === 0 && attempt < MAX_RETRY) {
+          log(`${apiName} 网络失败（第 ${attempt} 次），${3}s 后重试...`, "warn");
+          await sleep(3000);
+          continue;
+        }
+        return result;
+      }
+      return fn();
+    };
+
     // 封禁检测辅助函数：直接接收接口返回的 status，若为 403 则归还邀请码、标记失败、清理浏览器并抛出异常
     const checkForbidden = async (apiName: string, status: number) => {
       if (status !== 403) return;
@@ -1901,17 +1920,20 @@ async function finishRegistration(
     // 1b. CheckInvitationCode（验证邀请码）——传入邀请链接中的邀请码
     log(`正在调用 CheckInvitationCode（code=${referrerCode}）...`);
     {
-      const r = await page.evaluate(async ({ tkn, cid, code }: { tkn: string; cid: string; code: string }) => {
-        try {
-          const resp = await fetch("https://api.manus.im/user.v1.UserService/CheckInvitationCode", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
-            body: JSON.stringify({ code }),
-          });
-          const text = await resp.text();
-          return { status: resp.status, body: text };
-        } catch (e: any) { return { status: 0, body: e.message }; }
-      }, { tkn, cid, code: referrerCode }).catch(() => ({ status: 0, body: "" }));
+      const r = await evaluateWithRetry(
+        () => page.evaluate(async ({ tkn, cid, code }: { tkn: string; cid: string; code: string }) => {
+          try {
+            const resp = await fetch("https://api.manus.im/user.v1.UserService/CheckInvitationCode", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
+              body: JSON.stringify({ code }),
+            });
+            const text = await resp.text();
+            return { status: resp.status, body: text };
+          } catch (e: any) { return { status: 0, body: e.message }; }
+        }, { tkn, cid, code: referrerCode }).catch(() => ({ status: 0, body: "" })),
+        "CheckInvitationCode"
+      );
       log(`CheckInvitationCode 已调用（status=${r.status}）`);
       await checkForbidden("CheckInvitationCode", r.status);
     }
@@ -1919,17 +1941,20 @@ async function finishRegistration(
     // 1c. UserInfo（获取会员版本）
     log("正在调用 UserInfo...");
     {
-      const r = await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
-        try {
-          const resp = await fetch("https://api.manus.im/user.v1.UserService/UserInfo", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
-            body: JSON.stringify({}),
-          });
-          const text = await resp.text();
-          return { status: resp.status, body: text };
-        } catch (e: any) { return { status: 0, body: e.message }; }
-      }, { tkn, cid }).catch(() => ({ status: 0, body: "" }));
+      const r = await evaluateWithRetry(
+        () => page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
+          try {
+            const resp = await fetch("https://api.manus.im/user.v1.UserService/UserInfo", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
+              body: JSON.stringify({}),
+            });
+            const text = await resp.text();
+            return { status: resp.status, body: text };
+          } catch (e: any) { return { status: 0, body: e.message }; }
+        }, { tkn, cid }).catch(() => ({ status: 0, body: "" })),
+        "UserInfo"
+      );
       await checkForbidden("UserInfo", r.status);
       try {
         const json = JSON.parse(r.body);
@@ -1948,17 +1973,20 @@ async function finishRegistration(
     // 1e. GetPersonalInvitationCodes（获取该账号自身的邀请码）
     log("正在调用 GetPersonalInvitationCodes...");
     {
-      const r = await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
-        try {
-          const resp = await fetch("https://api.manus.im/user.v1.UserService/GetPersonalInvitationCodes", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
-            body: JSON.stringify({}),
-          });
-          const text = await resp.text();
-          return { status: resp.status, body: text };
-        } catch (e: any) { return { status: 0, body: e.message }; }
-      }, { tkn, cid }).catch(() => ({ status: 0, body: "" }));
+      const r = await evaluateWithRetry(
+        () => page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
+          try {
+            const resp = await fetch("https://api.manus.im/user.v1.UserService/GetPersonalInvitationCodes", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
+              body: JSON.stringify({}),
+            });
+            const text = await resp.text();
+            return { status: resp.status, body: text };
+          } catch (e: any) { return { status: 0, body: e.message }; }
+        }, { tkn, cid }).catch(() => ({ status: 0, body: "" })),
+        "GetPersonalInvitationCodes"
+      );
       await checkForbidden("GetPersonalInvitationCodes", r.status);
       try {
         const json = JSON.parse(r.body);
@@ -1973,17 +2001,20 @@ async function finishRegistration(
     // 1f. GetAvailableCredits（最后调用，确保积分反映所有前置操作的结果）
     log("正在调用 GetAvailableCredits...");
     {
-      const r = await page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
-        try {
-          const resp = await fetch("https://api.manus.im/user.v1.UserService/GetAvailableCredits", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
-            body: JSON.stringify({}),
-          });
-          const text = await resp.text();
-          return { status: resp.status, body: text };
-        } catch (e: any) { return { status: 0, body: e.message }; }
-      }, { tkn, cid }).catch(() => ({ status: 0, body: "" }));
+      const r = await evaluateWithRetry(
+        () => page.evaluate(async ({ tkn, cid }: { tkn: string; cid: string }) => {
+          try {
+            const resp = await fetch("https://api.manus.im/user.v1.UserService/GetAvailableCredits", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "authorization": `Bearer ${tkn}`, "x-client-id": cid },
+              body: JSON.stringify({}),
+            });
+            const text = await resp.text();
+            return { status: resp.status, body: text };
+          } catch (e: any) { return { status: 0, body: e.message }; }
+        }, { tkn, cid }).catch(() => ({ status: 0, body: "" })),
+        "GetAvailableCredits"
+      );
       await checkForbidden("GetAvailableCredits", r.status);
       try {
         const json = JSON.parse(r.body);
