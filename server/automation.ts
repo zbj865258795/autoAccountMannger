@@ -96,6 +96,11 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
   const startTime = Date.now();
   const log = makeLogger(taskId, profileId, logId);
 
+  // ── 全局超时兜底（240 秒）──
+  // 防止任何未捕获的死循环导致任务永远不结束
+  const GLOBAL_TIMEOUT_MS = 240_000;
+  let globalTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+
   let browser: Browser | null = null;
   let inviterAccountId: number | null = null;
   let inviteCode: string | null = null;
@@ -112,6 +117,17 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
   };
 
   try {
+    // ── 启动全局超时计时器 ──
+    const globalTimeoutPromise = new Promise<never>((_, reject) => {
+      globalTimeoutTimer = setTimeout(() => {
+        reject(new Error(`全局超时（${GLOBAL_TIMEOUT_MS / 1000}s），任务强制终止，可能存在未捕获的死循环`));
+      }, GLOBAL_TIMEOUT_MS);
+    });
+
+    // 将整个注册流程包装为 Promise.race，与全局超时竞争
+    await Promise.race([
+      (async () => {
+
     // ── 连接 AdsPower 浏览器 ──
     log("正在通过 CDP 连接 AdsPower 浏览器...");
     browser = await chromium.connectOverCDP(wsEndpoint, { timeout: 30000 });
@@ -380,7 +396,16 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     await resetInviteCodeStatus(inviterAccountId);
     throw new Error(`阶段二异常结束: ${phoneResult.result}`);
 
+      })(),  // async IIFE 结束
+      globalTimeoutPromise,
+    ]);  // Promise.race 结束
+
+    // 正常完成（finishRegistration 成功），清理超时计时器
+    if (globalTimeoutTimer) clearTimeout(globalTimeoutTimer);
+
   } catch (error: unknown) {
+    // 失败/超时路径，也清理超时计时器
+    if (globalTimeoutTimer) clearTimeout(globalTimeoutTimer);
     const msg = error instanceof Error ? error.message : String(error);
     log(`注册失败：${msg}`, "error");
 

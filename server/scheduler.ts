@@ -23,6 +23,7 @@ import {
   parseProxyUrl,
   getProxyAccountById,
   releasePhoneIfNeeded,
+  getPhoneStats,
 } from "./db";
 import {
   closeAdsPowerBrowser,
@@ -362,14 +363,22 @@ async function _executeTask(taskId: number): Promise<void> {
     // 2. 检查是否有未使用的邀请码
     const unusedCount = await getUnusedInviteCodeCount();
     if (unusedCount === 0) {
-      console.log(`[调度器] 任务 ${taskId}: 暂无可用邀请码`);
-      await updateAutomationTask(taskId, { lastExecutedAt: new Date() });
+      console.log(`[调度器] 任务 ${taskId}: 暂无可用邀请码，停止任务`);
+      await stopScheduler(taskId);
       return;
     }
 
-    console.log(`[调度器] 任务 ${taskId}: 开始创建新的注册任务`);
+    // 3. 检查是否有可用的手机号
+    const phoneStats = await getPhoneStats();
+    if (phoneStats.unused === 0) {
+      console.log(`[调度器] 任务 ${taskId}: 暂无可用手机号（未使用: 0，使用中: ${phoneStats.inUse}，已使用: ${phoneStats.used}），停止任务`);
+      await stopScheduler(taskId);
+      return;
+    }
 
-    // 3. 创建单个浏览器并启动注册（IP 检测已移入浏览器内部执行，确保代理已生效且 IP 一致）
+    console.log(`[调度器] 任务 ${taskId}: 资源检查通过（邀请码: ${unusedCount} 个，手机号: ${phoneStats.unused} 个），开始创建新的注册任务`);
+
+    // 4. 创建单个浏览器并启动注册（IP 检测已移入浏览器内部执行，确保代理已生效且 IP 一致）
     await createOneBrowser(taskId, task, adspowerConfig);
     await updateAutomationTask(taskId, { lastExecutedAt: new Date() });
 
