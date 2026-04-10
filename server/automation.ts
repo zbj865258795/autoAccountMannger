@@ -44,6 +44,16 @@ export class InviteCodeFailedError extends Error {
   }
 }
 
+/**
+ * 邮箱购买余额不足错误：由 handleLoginPage 抛出，由 scheduler.ts 捕获后停止任务
+ */
+export class InsufficientBalanceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InsufficientBalanceError";
+  }
+}
+
 // ─── 常量 ─────────────────────────────────────────────────────────────────────────────────
 
 const BUY_EMAIL_API =
@@ -142,7 +152,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
       const ipPage = await context.newPage();
       for (const svc of IP_CHECK_SERVICES) {
         try {
-          await ipPage.goto(svc.url, { waitUntil: "domcontentloaded", timeout: 15000 });
+          await ipPage.goto(svc.url, { waitUntil: "domcontentloaded", timeout: 10000 });
           const bodyText = (await ipPage.textContent("body") ?? "").trim();
           const ip = svc.parse(bodyText);
           if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) {
@@ -181,12 +191,27 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     // IP 检测使用单独的 ipPage，已关闭，主 page 始终保持有效
     // 确认 page 仍然有效，否则新建
     if (page.isClosed()) {
-      page = await context.newPage();
-      log("IP 检测后主页面已关闭，已新建空白页面", "info");
+      // 如果 context 也已关闭，直接返回，不再继续
+      try {
+        page = await context.newPage();
+        log("IP 检测后主页面已关闭，已新建空白页面", "info");
+      } catch (newPageErr: any) {
+        log(`IP 检测后无法新建页面（浏览器已关闭）：${newPageErr.message}，终止本轮注册`, "error");
+        await updateTaskLog(logId, {
+          status: "failed",
+          errorMessage: "IP 检测后浏览器已关闭，无法继续注册",
+          durationMs: Date.now() - startTime,
+          completedAt: new Date(),
+        });
+        await cleanupBrowser(browser, adspowerConfig, profileId);
+        return;
+      }
     }
 
     // ── 设置资源拦截（节省代理流量）──
     // 屏蔽图片、字体、广告追踪等不必要资源，保留 JS/CSS/Cloudflare 必要资源
+    // 如果浏览器已关闭，跳过 context.route（避免抛出异常导致卡死）
+    if (browser.isConnected()) {
     await context.route("**/*", (route) => {
       const req = route.request();
       const resourceType = req.resourceType();
@@ -282,6 +307,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
       }
       route.continue();
     });
+    } // end if (browser.isConnected())
 
     // ── 设置网络响应拦截（替代 chrome.debugger）──
     // 封禁标志位：任意被监听接口返回 403 则置为 true
@@ -349,7 +375,13 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
       codeUrl = result.codeUrl;
       return result;
     };
-    const loginResult = await handleLoginPage(page, password, inviteUrl, log, buyEmailFn, userInfoForbiddenRef);
+    const loginResult = await handleLoginPage(page, logId, password, inviteUrl, log, buyEmailFn, userInfoForbiddenRef);
+
+    if (loginResult === "insufficient-balance") {
+      // 邮箱购买余额不足，停止整个任务
+      await resetInviteCodeStatus(inviterAccountId);
+      throw new InsufficientBalanceError("邮箱购买余额不足，任务已停止");
+    }
 
     if (loginResult === "banned") {
       // 账号注册即封禁，单独记录失败原因
@@ -569,17 +601,21 @@ async function humanBrowse(page: Page): Promise<void> {
 
 async function handleLoginPage(
   page: Page,
+  logId: number,
   password: string,
   inviteUrl: string,
   log: Logger,
   buyEmailFn: () => Promise<{ email: string; codeUrl: string }>,
   userInfoForbiddenRef: { value: boolean }  // 共享引用，检测 UserInfo 403 封禁
-): Promise<"verify-phone" | "app" | "timeout" | "error" | "banned" | "invite-code-lost"> {
+): Promise<"verify-phone" | "app" | "timeout" | "error" | "banned" | "invite-code-lost" | "insufficient-balance"> {
+  // 心跳函数：刷新 task_log.startedAt，让浏览器监控的保护窗口期从最后一次活跃时间开始计算
+  const heartbeat = () => updateTaskLog(logId, { startedAt: new Date() }).catch(() => {});
   const PHASE_TIMEOUT = 180000;
   const MAX_REFRESHES = 3;
   const MAX_CHECK_REGION_FAILS = 3; // CheckInvitationCodeRemains 超时最多重试 3 次
   let refreshCount = 0;
   let checkRegionFailCount = 0; // CheckInvitationCodeRemains 超时计数器
+  let browserClosed1 = false;   // 标志位：浏览器已关闭，外层刷新逻辑直接 return error
 
   // email 和 codeUrl 将在页面稳定后购买获取
   let email = "";
@@ -795,7 +831,13 @@ async function handleLoginPage(
         log(`邮箱购买成功：${email}`, "success");
       } catch (buyErr: any) {
         emailBuyRetryCount++;
-        log(`邮箱购买失败（第 ${emailBuyRetryCount} 次）：${buyErr.message}，等待重试...`, "error");
+        const buyErrMsg: string = buyErr.message ?? "";
+        log(`邮箱购买失败（第 ${emailBuyRetryCount} 次）：${buyErrMsg}，等待重试...`, "error");
+        // 余额不足：直接停止任务，无需重试
+        if (buyErrMsg.includes("余额不足")) {
+          log(`邮箱购买余额不足，停止任务`, "error");
+          return "insufficient-balance";
+        }
         if (emailBuyRetryCount > 3) {
           log(`邮箱购买失败已超过 3 次，放弃`, "error");
           return "error";
@@ -929,13 +971,14 @@ async function handleLoginPage(
           if (ok) {
             emailFilled = true;
             stepStallCount = 0;
-            log(`邮箱已填写：${email}`, "success");
+            log(`邮筱已填写：${email}`, "success");
+            heartbeat(); // 心跳：邮筱已填写
           } else {
             stepStallCount++;
             if (stepStallCount >= 60) { log("邮筱输入框持续干不上，刷新重试...", "warn"); break; }
           }
         } catch (e: any) {
-          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤1：浏览器已关闭，终止本轮`, "error"); break; }
+          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤1：浏览器已关闭，终止本轮`, "error"); browserClosed1 = true; break; }
           log(`步骤1（输入邮箱）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
@@ -991,7 +1034,7 @@ async function handleLoginPage(
             if (stepStallCount >= 60) { log("邮箱 Continue 按钮持续不可用，刷新重试...", "warn"); break; }
           }
         } catch (e: any) {
-          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤2：浏览器已关闭，终止本轮`, "error"); break; }
+          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤2：浏览器已关闭，终止本轮`, "error"); browserClosed1 = true; break; }
           log(`步骤2（邮箱 Continue）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
@@ -1006,12 +1049,13 @@ async function handleLoginPage(
             pwdFilled = true;
             stepStallCount = 0;
             log("密码已填写", "success");
+            heartbeat(); // 心跳：密码已填写
           } else {
             stepStallCount++;
             if (stepStallCount >= 60) { log("密码输入框持续干不上，刷新重试...", "warn"); break; }
           }
         } catch (e: any) {
-          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤3：浏览器已关闭，终止本轮`, "error"); break; }
+          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤3：浏览器已关闭，终止本轮`, "error"); browserClosed1 = true; break; }
           log(`步骤3（输入密码）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
@@ -1110,7 +1154,7 @@ async function handleLoginPage(
             if (stepStallCount >= 60) { log("密码 Continue 按钮持续不可用，刷新重试...", "warn"); break; }
           }
         } catch (e: any) {
-          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤4：浏览器已关闭，终止本轮`, "error"); break; }
+          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤4：浏览器已关闭，终止本轮`, "error"); browserClosed1 = true; break; }
           log(`步骤4（密码 Continue）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
@@ -1142,7 +1186,8 @@ async function handleLoginPage(
               if (ok) {
                 verifyCodeFilled = true;
                 stepStallCount = 0;
-                log(`邮箱验证码已填入：${verifyCode}`);
+                log(`邮筱验证码已填入：${verifyCode}`);
+                heartbeat(); // 心跳：邮筱验证码已填入
                 await sleep(800);
               }
             } else if (verifyCodeDone && verifyCode === null) {
@@ -1157,7 +1202,7 @@ async function handleLoginPage(
             if (stepStallCount >= 60) { log("邮筱验证码输入框持续干不上，刷新重试...", "warn"); break; }
           }
         } catch (e: any) {
-          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤5：浏览器已关闭，终止本轮`, "error"); break; }
+          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤5：浏览器已关闭，终止本轮`, "error"); browserClosed1 = true; break; }
           log(`步骤5（填入邮箱验证码）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
@@ -1285,13 +1330,17 @@ async function handleLoginPage(
             if (stepStallCount >= 60) { log("验证码确认按钮持续不可用，刷新重试...", "warn"); break; }
           }
         } catch (e: any) {
-          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤6：浏览器已关闭，终止本轮`, "error"); break; }
+          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤6：浏览器已关闭，终止本轮`, "error"); browserClosed1 = true; break; }
           log(`步骤6（验证码确认）异常：${e.message}，等待重试...`, "warn");
         }
       }
     }
 
     // 内层循环退出，刷新当前页面重试
+    // 如果是因为浏览器关闭退出的，直接返回 error，不再尝试 goto
+    if (browserClosed1) {
+      return "error";
+    }
     // 刷新前先获取当前完整 URL（包含路径参数、query string 等），
     // 然后用 page.goto(当前 URL) 重新加载，确保所有参数完整保留。
     refreshCount++;
@@ -1305,7 +1354,12 @@ async function handleLoginPage(
     try {
       await page.goto(currentUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
     } catch (reloadErr: any) {
-      log(`阶段一刷新失败（代理网络错误）：${reloadErr.message}`, "error");
+      const reloadErrMsg1: string = reloadErr.message ?? "";
+      if (reloadErrMsg1.includes("has been closed") || reloadErrMsg1.includes("Target closed") || reloadErrMsg1.includes("Target page")) {
+        log(`阶段一：浏览器/页面已关闭，终止本轮注册`, "error");
+      } else {
+        log(`阶段一刷新失败（代理网络错误）：${reloadErrMsg1}`, "error");
+      }
       return "error";
     }
     // 刷新后等待网络空闲，确保页面完全就绪
@@ -1353,9 +1407,13 @@ async function handleVerifyPhonePage(
   let refreshCount = 0;
   const PHASE_TIMEOUT = 180000;
 
+  // 心跳函数：刷新 task_log.startedAt，让浏览器监控的保护窗口期从最后一次活跃时间开始计算
+  const heartbeat2 = () => updateTaskLog(logId, { startedAt: new Date() }).catch(() => {});
+
   let smsCodeFetching = false;
   let smsCode: string | null = null;
   let phoneMarkedUsed = false; // 提升到外层，超时时可读取
+  let browserClosed = false;   // 标志位：浏览器已关闭，外层刷新逻辑直接 return error
 
   // ── API 请求发出时间戳（用于判断按鈕点击是否生效）──
   let sendPhoneCodeRequestTime = 0; // SendPhoneVerificationCode 请求发出时间
@@ -1409,6 +1467,23 @@ async function handleVerifyPhonePage(
     } catch {
       const curUrl = page.url();
       log(`阶段二：等待 /verify-phone URL 超时，当前 URL：${curUrl}，继续尝试...`, "warn");
+      // 刷新后页面跳回了 /login（携带邀请码参数），说明 session 丢失或页面重置
+      // 此时直接 goto 到 /verify-phone 无意义，需要判断是否需要重新走阶段一
+      // 但如果 BindPhoneTrait 已成功（bindPhoneStatus === 1），说明手机号已绑定，
+      // 只是页面跳转异常，此时尝试 goto /app 直接进入
+      if (bindPhoneStatus === 1 && curUrl.includes("manus.im/login")) {
+        log("BindPhoneTrait 已成功但跳回了 /login，尝试直接导航到 /app...", "warn");
+        try {
+          await page.goto("https://manus.im/app", { waitUntil: "domcontentloaded", timeout: 30000 });
+          const appUrl = page.url();
+          if (appUrl.includes("manus.im/app")) {
+            log("成功导航到 /app，阶段二完成！");
+            return { result: "app", phoneInfo: phoneInfo ?? undefined };
+          }
+        } catch (e: any) {
+          log(`直接导航 /app 失败：${e.message}`, "warn");
+        }
+      }
     }
     // URL 已稳定，现在安全地等待 DOM 加载
     try {
@@ -1486,6 +1561,7 @@ async function handleVerifyPhonePage(
       // ── 浏览器关闭检测：最高优先级，一旦检测到立即退出循环 ──
       if (page.isClosed()) {
         log("阶段二：浏览器/页面已关闭，终止本轮注册", "error");
+        browserClosed = true;
         break;
       }
 
@@ -1509,8 +1585,28 @@ async function handleVerifyPhonePage(
         return { result: "app", phoneInfo };
       }
 
-      // 不在预期页面（不是 /verify-phone）→ 等待跳转或刷新
+      // 不在预期页面（不是 /verify-phone）→ 判断是否是 /login 跳回场景
       if (!currentUrl2.includes("manus.im/verify-phone")) {
+        // 如果 BindPhoneTrait 已成功且当前在 /login，说明手机号已绑定但页面跳转异常
+        // 直接导航到 /app，不要继续在错误页面上循环
+        if (bindPhoneStatus === 1 && currentUrl2.includes("manus.im/login")) {
+          log("BindPhoneTrait 已成功但当前在 /login，尝试直接导航到 /app...", "warn");
+          try {
+            await page.goto("https://manus.im/app", { waitUntil: "domcontentloaded", timeout: 30000 });
+            const appUrl = page.url();
+            if (appUrl.includes("manus.im/app")) {
+              log("成功导航到 /app，阶段二完成！");
+              return { result: "app", phoneInfo };
+            }
+          } catch (e: any) {
+            if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) {
+              log("导航 /app 时浏览器已关闭", "error");
+              browserClosed = true;
+              break;
+            }
+            log(`直接导航 /app 失败：${e.message}，继续等待...`, "warn");
+          }
+        }
         log(`当前不在 /verify-phone 页面（URL: ${currentUrl2}），等待页面跳转...`, "warn");
         await sleep(2000);
         continue;
@@ -1530,7 +1626,7 @@ async function handleVerifyPhonePage(
             if (stepStallCount >= 20) { log("国家选择卡住，刷新重试...", "warn"); break; }
           }
         } catch (e: any) {
-          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤A：浏览器已关闭，终止本轮`, "error"); break; }
+          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤A：浏览器已关闭，终止本轮`, "error"); browserClosed = true; break; }
           log(`步骤A（选择国家）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
@@ -1545,13 +1641,14 @@ async function handleVerifyPhonePage(
             phoneFilled = true;
             stepStallCount = 0;
             log(`手机号已填写：${phoneInfo.phoneNumber}`);
+            heartbeat2(); // 心跳：手机号已填写
             await sleep(800);
           } else {
             stepStallCount++;
             if (stepStallCount >= 20) { log("手机号输入框卡住，刷新重试...", "warn"); break; }
           }
         } catch (e: any) {
-          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤B：浏览器已关闭，终止本轮`, "error"); break; }
+          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤B：浏览器已关闭，终止本轮`, "error"); browserClosed = true; break; }
           log(`步骤B（输入手机号）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
@@ -1596,6 +1693,7 @@ async function handleVerifyPhonePage(
               smsCode = code;
               if (code) {
                 log(`短信验证码已就绪：${code}`);
+                heartbeat2(); // 心跳：短信验证码已就绪
                 if (!phoneMarkedUsed) {
                   await markPhoneUsedById(phoneInfo!.backendPhoneId).catch(() => {});
                   phoneMarkedUsed = true;
@@ -1652,7 +1750,7 @@ async function handleVerifyPhonePage(
             if (stepStallCount >= 20) { log("发送验证码按钮卡住，刷新重试...", "warn"); break; }
           }
         } catch (e: any) {
-          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤C：浏览器已关闭，终止本轮`, "error"); break; }
+          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤C：浏览器已关闭，终止本轮`, "error"); browserClosed = true; break; }
           log(`步骤C（Send code）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
@@ -1683,7 +1781,7 @@ async function handleVerifyPhonePage(
             if (stepStallCount >= 20) { log("短信验证码输入框卡住，刷新重试...", "warn"); break; }
           }
         } catch (e: any) {
-          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤D：浏览器已关闭，终止本轮`, "error"); break; }
+          if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤D：浏览器已关闭，终止本轮`, "error"); browserClosed = true; break; }
           log(`步骤D（填入短信验证码）异常：${e.message}，等待重试...`, "warn");
         }
         continue;
@@ -1721,7 +1819,8 @@ async function handleVerifyPhonePage(
         let jumpedToApp = false;
         while (Date.now() - jumpStart < JUMP_TIMEOUT) {
           if (page.isClosed()) {
-            log("等待跳转期间浏览器已关闭，刷新重试...", "warn");
+            log("等待跳转期间浏览器已关闭，终止本轮注册", "error");
+            browserClosed = true;
             break;
           }
           try {
@@ -1731,8 +1830,9 @@ async function handleVerifyPhonePage(
               break;
             }
           } catch {
-            // page.url() 异常（浏览器关闭等），退出轮询
-            log("等待跳转期间获取 URL 异常，刷新重试...", "warn");
+            // page.url() 异常（浏览器关闭等），设置标志位终止
+            log("等待跳转期间获取 URL 异常（浏览器已关闭），终止本轮注册", "error");
+            browserClosed = true;
             break;
           }
           await sleep(1000);
@@ -1796,13 +1896,17 @@ async function handleVerifyPhonePage(
           stepStallCount++;
           if (stepStallCount >= 20) { log("手机号确认按钮卡住，刷新重试...", "warn"); break; }
         }
-      } catch (e: any) {
-        if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤E：浏览器已关闭，终止本轮`, "error"); break; }
+        } catch (e: any) {
+        if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤E：浏览器已关闭，终止本轮`, "error"); browserClosed = true; break; }
         log(`步骤E（短信验证码确认）异常：${e.message}，等待重试...`, "warn");
       }
     }
 
     // 内层循环退出，刷新重试
+    // 如果是因为浏览器关闭退出的，直接返回 error，不再尝试 reload
+    if (browserClosed) {
+      return { result: "error" };
+    }
     refreshCount++;
     if (refreshCount > MAX_REFRESHES) {
       log(`阶段二已刷新 ${MAX_REFRESHES} 次仍未完成，放弃`, "error");
@@ -1812,7 +1916,12 @@ async function handleVerifyPhonePage(
     try {
       await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
     } catch (reloadErr: any) {
-      log(`阶段二刷新失败（代理网络错误）：${reloadErr.message}`, "error");
+      const reloadErrMsg: string = reloadErr.message ?? "";
+      if (reloadErrMsg.includes("has been closed") || reloadErrMsg.includes("Target closed") || reloadErrMsg.includes("Target page")) {
+        log(`阶段二：浏览器/页面已关闭，终止本轮注册`, "error");
+      } else {
+        log(`阶段二刷新失败（代理网络错误）：${reloadErrMsg}`, "error");
+      }
       return { result: "error" };
     }
     // 刷新后等待网络空闲，确保页面完全就绪

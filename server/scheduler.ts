@@ -33,7 +33,7 @@ import {
   stopAndDeleteAdsPowerBrowser,
 } from "./adspower";
 import { ADSPOWER_CONFIG } from "./config";
-import { runRegistration, InviteCodeFailedError } from "./automation";
+import { runRegistration, InviteCodeFailedError, InsufficientBalanceError } from "./automation";
 
 // ─── 全局調度器狀態 ───────────────────────────────────────────────────────────
 
@@ -88,7 +88,11 @@ async function checkBrowserStatus(): Promise<void> {
     const activeBrowsers = await getActiveBrowsers(apiUrl);
     const activeIds = new Set(activeBrowsers.map((b) => b.browserId));
 
-    const BROWSER_STARTUP_GRACE_MS = 3 * 60 * 1000; // 3 分钟保护窗口期
+    // 保护窗口期说明：
+    // 一次完整的注册流程包括：阶段一（邮筱输入+密码+邮筱验证码）+ 阶段二（手机号+短信验证码），
+    // 加上网络延迟、页面加载、第三方验证等，实际耗时常超过 5 分钟。
+    // 将保护窗口期设为 8 分钟，避免监控在注册进行中误判浏览器不活跃而强制关闭。
+    const BROWSER_STARTUP_GRACE_MS = 8 * 60 * 1000; // 8 分钟保护窗口期（原 3 分钟，因完整注册流程常超过 5 分钟）
 
     for (const log of logs) {
       const browserId = log.adspowerBrowserId;
@@ -100,8 +104,9 @@ async function checkBrowserStatus(): Promise<void> {
       }
 
       if (!activeIds.has(browserId)) {
-        const durationMs = log.startedAt
-          ? Date.now() - new Date(log.startedAt).getTime()
+        // 用 createdAt 计算真实耗时（startedAt 可能被心跳更新，不再代表启动时间）
+        const durationMs = log.createdAt
+          ? Date.now() - new Date(log.createdAt).getTime()
           : undefined;
 
         console.log(`[浏览器监控] 浏览器 ${browserId}（日志 #${log.id}）已不活跃 → 标记为失败`);
@@ -275,8 +280,9 @@ export async function handlePluginError(
 
   const taskId = log.taskId!;
   const logId = log.id;
-  const durationMs = log.startedAt
-    ? Date.now() - new Date(log.startedAt).getTime()
+  // 用 createdAt 计算真实耗时（startedAt 可能被心跳更新，不再代表启动时间）
+  const durationMs = log.createdAt
+    ? Date.now() - new Date(log.createdAt).getTime()
     : undefined;
 
   await updateTaskLog(logId, {
@@ -526,6 +532,13 @@ async function createOneBrowser(
       // 邀请码验证失败：停止当前任务，不再继续下一次
       if (e instanceof InviteCodeFailedError) {
         console.error(`[调度器] 任务 ${taskId}: 邀请码验证失败，主动停止所有任务: ${e.message}`);
+        await stopScheduler(taskId);
+        return;
+      }
+
+      // 邮箱购买余额不足：停止当前任务，不再继续下一次
+      if (e instanceof InsufficientBalanceError) {
+        console.error(`[调度器] 任务 ${taskId}: 邮箱购买余额不足，主动停止任务: ${e.message}`);
         await stopScheduler(taskId);
         return;
       }
