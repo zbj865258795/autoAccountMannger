@@ -5,6 +5,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -25,6 +27,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  CalendarIcon,
   ChevronLeft,
   ChevronRight,
   ClipboardCopy,
@@ -36,6 +39,8 @@ import {
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
+import { format } from "date-fns";
+import { zhCN } from "date-fns/locale";
 
 type InviteStatus = "unused" | "in_progress" | "used";
 
@@ -84,6 +89,268 @@ function CopyCell({
   );
 }
 
+// ─── 导出弹窗组件 ─────────────────────────────────────────────────────────────
+
+function ExportDialog({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  const utils = trpc.useUtils();
+
+  // 选中的日期（Date 对象）
+  const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
+  // 日历弹出状态
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  // 导出数量输入
+  const [exportCount, setExportCount] = useState<number>(1);
+
+  // 将 Date 转为 YYYY-MM-DD 字符串
+  const selectedDateStr = selectedDate ? format(selectedDate, "yyyy-MM-dd") : undefined;
+
+  // 1. 弹窗打开时获取日期范围
+  const { data: dateRangeData, isLoading: dateRangeLoading } =
+    trpc.export.dateRange.useQuery(undefined, {
+      enabled: open,
+      refetchOnWindowFocus: false,
+    });
+
+  const minDateStr = dateRangeData?.minDate ?? null;
+  const maxDateStr = dateRangeData?.maxDate ?? null;
+
+  // 将字符串日期转为 Date 对象（用于 Calendar 的 disabled 限制）
+  const minDate = minDateStr ? new Date(minDateStr + "T00:00:00") : undefined;
+  const maxDate = maxDateStr ? new Date(maxDateStr + "T00:00:00") : undefined;
+
+  // 2. 选择日期后查询该日期可导出数量
+  const { data: countByDateData, isLoading: countByDateLoading } =
+    trpc.export.countByDate.useQuery(
+      { date: selectedDateStr! },
+      {
+        enabled: open && !!selectedDateStr,
+        refetchOnWindowFocus: false,
+      }
+    );
+
+  const countByDate = countByDateData?.count ?? 0;
+
+  // 当 countByDate 变化时，将 exportCount 重置为 1（防止超出新日期的上限）
+  const prevCountRef = useMemo(() => ({ value: countByDate }), []);
+  if (prevCountRef.value !== countByDate) {
+    prevCountRef.value = countByDate;
+    // 重置为 1 或 countByDate（取较小值）
+    if (exportCount > countByDate && countByDate > 0) {
+      setExportCount(countByDate);
+    } else if (countByDate > 0 && exportCount < 1) {
+      setExportCount(1);
+    }
+  }
+
+  // 3. 执行导出
+  const exportMutation = trpc.export.doExportByDate.useMutation({
+    onSuccess: (result) => {
+      toast.success(
+        `成功导出 ${result.exported} 个账号，批次号：${result.batchId}`
+      );
+      utils.accounts.list.invalidate();
+      utils.dashboard.stats.invalidate();
+      utils.export.dateRange.invalidate();
+      handleClose();
+    },
+    onError: (err) => {
+      toast.error(`导出失败：${err.message}`);
+    },
+  });
+
+  const handleClose = () => {
+    if (exportMutation.isPending) return;
+    setSelectedDate(undefined);
+    setExportCount(1);
+    setCalendarOpen(false);
+    onClose();
+  };
+
+  const handleDoExport = () => {
+    if (!selectedDateStr) return;
+    const n = Math.min(exportCount, countByDate);
+    if (n <= 0) return;
+    exportMutation.mutate({ date: selectedDateStr, count: n });
+  };
+
+  if (!open) return null;
+
+  const isExporting = exportMutation.isPending;
+  const canExport =
+    !!selectedDateStr &&
+    !countByDateLoading &&
+    countByDate > 0 &&
+    exportCount >= 1 &&
+    exportCount <= countByDate &&
+    !isExporting;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      {/* 遮罩层：不允许点击关闭 */}
+      <div className="absolute inset-0 bg-black/60" />
+
+      <div className="relative z-10 w-full max-w-md rounded-xl bg-card border border-border/60 shadow-2xl p-6 space-y-5">
+        {/* 标题 */}
+        <div>
+          <h2 className="text-base font-semibold text-foreground">导出账号</h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            按注册日期导出满足条件的账号（已被邀请注册 + 自己邀请码已被使用），按注册时间升序先进先出。
+          </p>
+        </div>
+
+        {/* 日期选择 */}
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-foreground">选择注册日期</label>
+
+          {dateRangeLoading ? (
+            <div className="h-9 rounded-md bg-muted/50 border border-border/60 flex items-center px-3">
+              <span className="text-xs text-muted-foreground">正在获取日期范围…</span>
+            </div>
+          ) : !minDateStr ? (
+            <div className="h-9 rounded-md bg-muted/50 border border-border/60 flex items-center px-3">
+              <span className="text-xs text-muted-foreground">暂无可导出账号</span>
+            </div>
+          ) : (
+            <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
+              <PopoverTrigger asChild>
+                <button
+                  disabled={isExporting}
+                  className="w-full h-9 rounded-md border border-border/60 bg-muted/50 px-3 text-sm text-left flex items-center gap-2 hover:bg-muted/70 transition-colors disabled:opacity-50"
+                >
+                  <CalendarIcon className="w-4 h-4 text-muted-foreground shrink-0" />
+                  {selectedDate ? (
+                    <span className="text-foreground">
+                      {format(selectedDate, "yyyy 年 MM 月 dd 日", { locale: zhCN })}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">请选择日期</span>
+                  )}
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0 z-[60]" align="start">
+                <Calendar
+                  mode="single"
+                  selected={selectedDate}
+                  onSelect={(date) => {
+                    setSelectedDate(date);
+                    setExportCount(1);
+                    setCalendarOpen(false);
+                  }}
+                  disabled={(date) => {
+                    if (minDate && date < minDate) return true;
+                    if (maxDate && date > maxDate) return true;
+                    return false;
+                  }}
+                  defaultMonth={maxDate ?? minDate}
+                  locale={zhCN}
+                  captionLayout="dropdown"
+                />
+              </PopoverContent>
+            </Popover>
+          )}
+
+          {/* 日期范围提示 */}
+          {!dateRangeLoading && minDateStr && maxDateStr && (
+            <p className="text-xs text-muted-foreground">
+              可选范围：{minDateStr} ~ {maxDateStr}
+            </p>
+          )}
+        </div>
+
+        {/* 该日期可导出数量 */}
+        {selectedDateStr && (
+          <div className="rounded-lg bg-muted/40 border border-border/40 px-4 py-3 flex items-center justify-between">
+            <span className="text-sm text-muted-foreground">
+              {selectedDateStr} 可导出账号
+            </span>
+            {countByDateLoading ? (
+              <span className="text-sm text-muted-foreground">查询中…</span>
+            ) : (
+              <span
+                className={`text-lg font-bold ${
+                  countByDate > 0 ? "text-emerald-400" : "text-muted-foreground"
+                }`}
+              >
+                {countByDate} 个
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* 导出数量输入框（仅在选择日期且有可导出数量时显示） */}
+        {selectedDateStr && !countByDateLoading && countByDate > 0 && (
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-foreground">导出数量</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                max={countByDate}
+                value={exportCount}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  if (!isNaN(v)) {
+                    setExportCount(Math.max(1, Math.min(v, countByDate)));
+                  }
+                }}
+                disabled={isExporting}
+                className="w-28 h-9 rounded-md border border-border/60 bg-muted/50 px-3 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+              />
+              <span className="text-xs text-muted-foreground">
+                最多 {countByDate} 个
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* 无可导出账号提示 */}
+        {selectedDateStr && !countByDateLoading && countByDate === 0 && (
+          <div className="rounded-lg bg-yellow-500/10 border border-yellow-500/20 px-4 py-3">
+            <p className="text-xs text-yellow-400">该日期暂无满足导出条件的账号</p>
+          </div>
+        )}
+
+        {/* 警告 */}
+        {selectedDateStr && !countByDateLoading && countByDate > 0 && (
+          <p className="text-xs text-destructive">
+            ⚠️ 导出后这些账号将从账号列表移除，记录到「导出记录」模块。此操作不可撤销。
+          </p>
+        )}
+
+        {/* 底部按钮 */}
+        <div className="flex justify-end gap-2 pt-1">
+          <button
+            onClick={handleClose}
+            disabled={isExporting}
+            className="px-4 py-2 text-sm rounded-md border border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/50 disabled:opacity-50 transition-colors"
+          >
+            取消
+          </button>
+          <button
+            onClick={handleDoExport}
+            disabled={!canExport}
+            className="px-4 py-2 text-sm rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+          >
+            {isExporting
+              ? "导出中…"
+              : canExport
+              ? `确认导出 ${Math.min(exportCount, countByDate)} 个`
+              : "确认导出"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── 主页面 ───────────────────────────────────────────────────────────────────
+
 export default function Accounts() {
   const [, setLocation] = useLocation();
   const [search, setSearch] = useState("");
@@ -96,9 +363,8 @@ export default function Accounts() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   // 批量删除确认弹窗
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
-  // 独立导出弹窗
+  // 导出弹窗
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
-  const [exportCount, setExportCount] = useState(10);
 
   const utils = trpc.useUtils();
 
@@ -149,37 +415,9 @@ export default function Accounts() {
     },
   });
 
-  // 实时查询可导出总数（弹窗打开时触发）
-  const { data: exportableData, isLoading: exportableLoading } = trpc.export.exportableCount.useQuery(
-    undefined,
-    { enabled: exportDialogOpen, refetchOnWindowFocus: false }
-  );
-  const exportableTotal = exportableData?.count ?? 0;
-
-  const exportMutation = trpc.export.doExport.useMutation({
-    onSuccess: (result) => {
-      toast.success(`成功导出 ${result.exported} 个账号，批次号：${result.batchId}`);
-      setExportDialogOpen(false);
-      setExportCount(10);
-      utils.accounts.list.invalidate();
-      utils.dashboard.stats.invalidate();
-      utils.export.exportableCount.invalidate();
-    },
-    onError: (err) => {
-      toast.error(`导出失败：${err.message}`);
-    },
-  });
-
   const items = data?.items ?? [];
   const totalPages = Math.ceil((data?.total ?? 0) / pageSize);
   const total = data?.total ?? 0;
-
-  // 执行导出
-  const handleDoExport = () => {
-    const n = Math.min(exportCount, exportableTotal);
-    if (n <= 0) return;
-    exportMutation.mutate({ count: n });
-  };
 
   // 当前页所有 id
   const currentPageIds = useMemo(() => items.map((a) => a.id), [items]);
@@ -194,14 +432,12 @@ export default function Accounts() {
 
   const handleSelectAll = () => {
     if (allSelected) {
-      // 取消当前页全选
       setSelectedIds((prev) => {
         const next = new Set(prev);
         currentPageIds.forEach((id) => next.delete(id));
         return next;
       });
     } else {
-      // 全选当前页
       setSelectedIds((prev) => {
         const next = new Set(prev);
         currentPageIds.forEach((id) => next.add(id));
@@ -251,7 +487,6 @@ export default function Accounts() {
       .filter((a) => selectedIds.has(a.id))
       .map((a) => a.id);
     if (ids.length === 0) return;
-    // 逐条删除（后端 delete 接口接受单个 id）
     Promise.all(ids.map((id) => bulkDeleteMutation.mutateAsync({ id }))).catch(
       () => {}
     );
@@ -301,7 +536,7 @@ export default function Accounts() {
             size="sm"
             variant="outline"
             className="border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10"
-            onClick={() => { setExportCount(10); setExportDialogOpen(true); }}
+            onClick={() => setExportDialogOpen(true)}
           >
             <Download className="w-4 h-4 mr-2" />
             导出账号
@@ -742,67 +977,11 @@ export default function Accounts() {
         </CardContent>
       </Card>
 
-      {/* 独立导出弹窗 */}
-      {exportDialogOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/60" onClick={() => !exportMutation.isPending && setExportDialogOpen(false)} />
-          <div className="relative z-10 w-full max-w-md rounded-xl bg-card border border-border/60 shadow-2xl p-6 space-y-5">
-            <div>
-              <h2 className="text-base font-semibold text-foreground">导出账号</h2>
-              <p className="text-xs text-muted-foreground mt-1">按数量导出满足条件的账号（已被邀请注册 + 自己邀请码已被使用），按注册时间升序先进先出。</p>
-            </div>
-
-            <div className="rounded-lg bg-muted/40 border border-border/40 px-4 py-3 flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">当前可导出账号</span>
-              {exportableLoading ? (
-                <span className="text-sm text-muted-foreground">查询中…</span>
-              ) : (
-                <span className="text-lg font-bold text-emerald-400">{exportableTotal} 个</span>
-              )}
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">导出数量</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={1}
-                  max={exportableTotal || 1}
-                  value={exportCount}
-                  onChange={(e) => {
-                    const v = parseInt(e.target.value, 10);
-                    if (!isNaN(v)) setExportCount(Math.max(1, Math.min(v, exportableTotal || 1)));
-                  }}
-                  disabled={exportableLoading || exportableTotal === 0}
-                  className="w-28 h-9 rounded-md border border-border/60 bg-muted/50 px-3 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
-                />
-                <span className="text-xs text-muted-foreground">最多 {exportableTotal} 个</span>
-              </div>
-            </div>
-
-            <p className="text-xs text-destructive">
-              ⚠️ 导出后这些账号将从账号列表移除，记录到「导出记录」模块。此操作不可撤销。
-            </p>
-
-            <div className="flex justify-end gap-2 pt-1">
-              <button
-                onClick={() => setExportDialogOpen(false)}
-                disabled={exportMutation.isPending}
-                className="px-4 py-2 text-sm rounded-md border border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/50 disabled:opacity-50 transition-colors"
-              >
-                取消
-              </button>
-              <button
-                onClick={handleDoExport}
-                disabled={exportableLoading || exportableTotal === 0 || exportMutation.isPending}
-                className="px-4 py-2 text-sm rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 transition-colors"
-              >
-                {exportMutation.isPending ? "导出中…" : `确认导出 ${Math.min(exportCount, exportableTotal)} 个`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* 导出弹窗 */}
+      <ExportDialog
+        open={exportDialogOpen}
+        onClose={() => setExportDialogOpen(false)}
+      />
     </div>
   );
 }

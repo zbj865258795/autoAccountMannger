@@ -1346,3 +1346,112 @@ export async function getRecentStepLogs(limit = 200) {
     .orderBy(desc(taskStepLogs.createdAt))
     .limit(limit);
 }
+
+// ─── 按日期导出相关 ──────────────────────────────────────────────────────────
+
+/**
+ * 获取可导出账号的 registeredAt 日期范围（最早日期 ~ 最晚日期）
+ * 用于前端日期选择器的可选范围限制
+ */
+export async function getExportableDateRange(): Promise<{ minDate: string | null; maxDate: string | null }> {
+  const db = await getDb();
+  if (!db) return { minDate: null, maxDate: null };
+
+  const baseWhere = and(
+    eq(accounts.inviteStatus, "used"),
+    sql`${accounts.referrerCode} IS NOT NULL AND ${accounts.referrerCode} != ''`,
+    sql`${accounts.registeredAt} IS NOT NULL`
+  );
+
+  const result = await db
+    .select({
+      minDate: sql<string>`DATE_FORMAT(MIN(${accounts.registeredAt}), '%Y-%m-%d')`,
+      maxDate: sql<string>`DATE_FORMAT(MAX(${accounts.registeredAt}), '%Y-%m-%d')`,
+    })
+    .from(accounts)
+    .where(baseWhere);
+
+  return {
+    minDate: result[0]?.minDate ?? null,
+    maxDate: result[0]?.maxDate ?? null,
+  };
+}
+
+/**
+ * 查询指定日期（YYYY-MM-DD）内满足导出条件的账号数量
+ */
+export async function getExportableCountByDate(date: string): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+
+  const result = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(accounts)
+    .where(
+      and(
+        eq(accounts.inviteStatus, "used"),
+        sql`${accounts.referrerCode} IS NOT NULL AND ${accounts.referrerCode} != ''`,
+        sql`DATE(${accounts.registeredAt}) = ${date}`
+      )
+    );
+
+  return Number(result[0]?.count ?? 0);
+}
+
+/**
+ * 按日期执行导出：取指定日期内满足条件的前 N 条账号（按 registeredAt 升序）
+ *   1. 将账号完整信息写入 export_logs 表
+ *   2. 从 accounts 表物理删除这些账号（事务保证原子性）
+ */
+export async function exportAccountsByDate(
+  date: string,
+  count: number
+): Promise<{ batchId: string; exported: number }> {
+  if (count <= 0) return { batchId: "", exported: 0 };
+
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const rows = await db
+    .select()
+    .from(accounts)
+    .where(
+      and(
+        eq(accounts.inviteStatus, "used"),
+        sql`${accounts.referrerCode} IS NOT NULL AND ${accounts.referrerCode} != ''`,
+        sql`DATE(${accounts.registeredAt}) = ${date}`
+      )
+    )
+    .orderBy(asc(accounts.registeredAt))
+    .limit(count);
+
+  if (rows.length === 0) return { batchId: "", exported: 0 };
+
+  const batchId = generateExportBatchId();
+  const exportedAt = new Date();
+
+  const logRows: InsertExportLog[] = rows.map((row) => ({
+    exportBatchId: batchId,
+    email: row.email,
+    password: row.password,
+    token: row.token ?? undefined,
+    userId: row.userId ?? undefined,
+    displayname: row.displayname ?? undefined,
+    phone: row.phone ?? undefined,
+    membershipVersion: row.membershipVersion ?? undefined,
+    totalCredits: row.totalCredits ?? 0,
+    inviteCode: row.inviteCode ?? undefined,
+    referrerCode: row.referrerCode ?? undefined,
+    registeredAt: row.registeredAt ?? undefined,
+    exportedAt,
+  }));
+
+  const exportedIds = rows.map((r) => r.id);
+
+  await db.transaction(async (tx) => {
+    await tx.insert(exportLogs).values(logRows);
+    await tx.delete(accounts).where(inArray(accounts.id, exportedIds));
+  });
+
+  return { batchId, exported: rows.length };
+}

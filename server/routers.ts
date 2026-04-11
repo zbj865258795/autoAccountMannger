@@ -33,6 +33,9 @@ import {
   getExportBatches,
   getExportBatchDetail,
   getExportableCount,
+  getExportableDateRange,
+  getExportableCountByDate,
+  exportAccountsByDate,
   getUsedIpPool,
   getUsedIpCount,
   clearUsedIpPool,
@@ -430,6 +433,40 @@ const exportRouter = router({
           code: "BAD_REQUEST",
           message: "导出失败，请重试",
         });
+      }
+      return { ...result, available };
+    }),
+
+  // 获取可导出账号的 registeredAt 日期范围（用于日期选择器限制）
+  dateRange: publicProcedure.query(async () => {
+    return getExportableDateRange();
+  }),
+
+  // 查询指定日期内可导出账号数量
+  countByDate: publicProcedure
+    .input(z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "日期格式应为 YYYY-MM-DD") }))
+    .query(async ({ input }) => {
+      return { count: await getExportableCountByDate(input.date) };
+    }),
+
+  // 按日期执行导出
+  doExportByDate: publicProcedure
+    .input(z.object({
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "日期格式应为 YYYY-MM-DD"),
+      count: z.number().int().min(1, "至少导出 1 个").max(10000, "单次最多导出 10000 个"),
+    }))
+    .mutation(async ({ input }) => {
+      const available = await getExportableCountByDate(input.date);
+      if (available === 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `${input.date} 当天没有满足导出条件的账号`,
+        });
+      }
+      const actualCount = Math.min(input.count, available);
+      const result = await exportAccountsByDate(input.date, actualCount);
+      if (result.exported === 0) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "导出失败，请重试" });
       }
       return { ...result, available };
     }),
