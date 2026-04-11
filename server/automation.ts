@@ -901,42 +901,57 @@ async function handleLoginPage(
         return "app";
       }
       if (currentUrl1.includes("manus.im/auth_landing")) {
-        log("检测到 auth_landing 中转页，等待 UserInfo 响应和最终跳转...");
-        await sleep(5000);
-        if (userInfoForbiddenRef.value) {
-          log("账号注册即封禁（UserInfo 403），本次注册失败", "error");
-          return "banned";
-        }
-        try {
-          await page.waitForURL((url: URL) => url.toString().includes("manus.im/") && !url.toString().includes("auth_landing"), { timeout: 55000 });
-          const landingUrl = page.url();
+        // auth_landing 是注册成功后的中转页，刷新即可触发重定向到 /verify-phone 或 /app
+        // 最多尝试 3 次（首次等待 + 2 次刷新重试）
+        const AUTH_LANDING_MAX_RETRIES = 2;
+        let authLandingResolved = false;
+        for (let authRetry = 0; authRetry <= AUTH_LANDING_MAX_RETRIES; authRetry++) {
+          if (authRetry === 0) {
+            log("检测到 auth_landing 中转页，等待 UserInfo 响应和最终跳转...");
+          } else {
+            log(`auth_landing 第 ${authRetry} 次刷新重试，重新加载中转页...`, "warn");
+            try {
+              await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
+            } catch (reloadErr: any) {
+              const msg: string = reloadErr.message ?? "";
+              if (msg.includes("has been closed") || msg.includes("Target closed") || msg.includes("Target page")) {
+                log("auth_landing 刷新失败：浏览器已关闭", "error");
+                browserClosed1 = true;
+                break;
+              }
+              log(`auth_landing 刷新失败：${msg}`, "error");
+              return "error";
+            }
+          }
+          await sleep(5000);
           if (userInfoForbiddenRef.value) {
             log("账号注册即封禁（UserInfo 403），本次注册失败", "error");
             return "banned";
           }
-          if (landingUrl.includes("manus.im/verify-phone")) return "verify-phone";
-          if (landingUrl.includes("manus.im/app")) return "app";
-          // 跳转到了非预期页面（既不是 verify-phone 也不是 app），
-          // 让 for 循环下一轮重新检测 URL
-          log(`auth_landing 跳转到非预期页面：${landingUrl}，继续检测...`, "warn");
-        } catch {
-          // auth_landing 55s 内未跳转到任何其他页面
-          // 主动导航回邀请链接重新开始，避免外层刷新时 goto(auth_landing) 导致死循环
-          log("auth_landing 跳转超时，主动导航回邀请链接重新开始...", "warn");
-          checkInvitationCodeRemainsOk = false;
           try {
-            await page.goto(inviteUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
-          } catch (navErr: any) {
-            const navErrMsg: string = navErr.message ?? "";
-            if (navErrMsg.includes("has been closed") || navErrMsg.includes("Target closed") || navErrMsg.includes("Target page")) {
-              log("auth_landing 恢复导航失败：浏览器已关闭", "error");
-              browserClosed1 = true;
-              break;
+            await page.waitForURL(
+              (url: URL) => url.toString().includes("manus.im/") && !url.toString().includes("auth_landing"),
+              { timeout: 55000 }
+            );
+            const landingUrl = page.url();
+            if (userInfoForbiddenRef.value) {
+              log("账号注册即封禁（UserInfo 403），本次注册失败", "error");
+              return "banned";
             }
-            log(`auth_landing 恢复导航失败：${navErrMsg}`, "error");
-            return "error";
+            if (landingUrl.includes("manus.im/verify-phone")) return "verify-phone";
+            if (landingUrl.includes("manus.im/app")) return "app";
+            // 跳转到非预期页面，让外层 for 循环重新检测
+            log(`auth_landing 跳转到非预期页面：${landingUrl}，继续检测...`, "warn");
+            authLandingResolved = true;
+            break;
+          } catch {
+            log(`auth_landing 第 ${authRetry + 1} 次等待跳转超时`, "warn");
           }
-          try { await page.waitForLoadState("networkidle", { timeout: 20000 }); } catch { /* 容错 */ }
+        }
+        if (browserClosed1) break;
+        if (!authLandingResolved && page.url().includes("auth_landing")) {
+          log(`auth_landing 刷新 ${AUTH_LANDING_MAX_RETRIES} 次后仍未跳转，本次注册失败`, "error");
+          return "timeout";
         }
         continue;
       }
