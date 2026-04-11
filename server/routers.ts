@@ -36,6 +36,7 @@ import {
   getExportableDateRange,
   getExportableCountByDate,
   exportAccountsByDate,
+  type ExportedAccountRow,
   getUsedIpPool,
   getUsedIpCount,
   clearUsedIpPool,
@@ -434,7 +435,12 @@ const exportRouter = router({
           message: "导出失败，请重试",
         });
       }
-      return { ...result, available };
+      // 将 rows 中的 Date 对象序列化为 ISO 字符串，方便前端处理
+      const serializedRows = result.rows.map((r) => ({
+        ...r,
+        registeredAt: r.registeredAt ? r.registeredAt.toISOString() : null,
+      }));
+      return { ...result, available, rows: serializedRows };
     }),
 
   // 获取可导出账号的 registeredAt 日期范围（用于日期选择器限制）

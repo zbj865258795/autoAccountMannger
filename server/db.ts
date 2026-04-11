@@ -1403,11 +1403,23 @@ export async function getExportableCountByDate(date: string): Promise<number> {
  *   1. 将账号完整信息写入 export_logs 表
  *   2. 从 accounts 表物理删除这些账号（事务保证原子性）
  */
+export interface ExportedAccountRow {
+  email: string;
+  password: string;
+  phone: string | null;
+  token: string | null;
+  inviteCode: string | null;
+  membershipVersion: string | null;
+  totalCredits: number;
+  registeredAt: Date | null;
+  batchId: string;
+}
+
 export async function exportAccountsByDate(
   date: string,
   count: number
-): Promise<{ batchId: string; exported: number }> {
-  if (count <= 0) return { batchId: "", exported: 0 };
+): Promise<{ batchId: string; exported: number; rows: ExportedAccountRow[] }> {
+  if (count <= 0) return { batchId: "", exported: 0, rows: [] };
 
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -1447,11 +1459,22 @@ export async function exportAccountsByDate(
   }));
 
   const exportedIds = rows.map((r) => r.id);
-
   await db.transaction(async (tx) => {
     await tx.insert(exportLogs).values(logRows);
     await tx.delete(accounts).where(inArray(accounts.id, exportedIds));
   });
 
-  return { batchId, exported: rows.length };
+  const exportedRows: ExportedAccountRow[] = rows.map((r) => ({
+    email: r.email,
+    password: r.password,
+    phone: r.phone ?? null,
+    token: r.token ?? null,
+    inviteCode: r.inviteCode ?? null,
+    membershipVersion: r.membershipVersion ?? null,
+    totalCredits: r.totalCredits ?? 0,
+    registeredAt: r.registeredAt ?? null,
+    batchId,
+  }));
+
+  return { batchId, exported: rows.length, rows: exportedRows };
 }

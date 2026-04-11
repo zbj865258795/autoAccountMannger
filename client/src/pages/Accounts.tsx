@@ -41,6 +41,7 @@ import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { zhCN } from "date-fns/locale";
+import * as XLSX from "xlsx";
 
 type InviteStatus = "unused" | "in_progress" | "used";
 
@@ -148,12 +149,68 @@ function ExportDialog({
     }
   }
 
+  // 导出模式：'credentials'=账号密码 | 'excel'=Excel全字段
+  const [exportMode, setExportMode] = useState<'credentials' | 'excel'>('credentials');
+
+  // 生成并下载 Excel 文件
+  const downloadExcel = (rows: Array<{
+    email: string;
+    password: string;
+    phone: string | null;
+    token: string | null;
+    inviteCode: string | null;
+    membershipVersion: string | null;
+    totalCredits: number;
+    registeredAt: string | null;
+    batchId: string;
+  }>) => {
+    const headers = [
+      "email", "password", "phone", "token",
+      "inviteCode", "membershipVersion", "totalCredits",
+      "registeredAt", "batchId",
+    ];
+    const sheetData = [
+      headers,
+      ...rows.map((r) => [
+        r.email,
+        r.password,
+        r.phone ?? "",
+        r.token ?? "",
+        r.inviteCode ?? "",
+        r.membershipVersion ?? "",
+        r.totalCredits,
+        r.registeredAt
+          ? new Date(r.registeredAt).toLocaleString("zh-CN")
+          : "",
+        r.batchId,
+      ]),
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(sheetData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "账号");
+    // 文件名：取第一条 registeredAt 日期
+    const firstDate = rows[0]?.registeredAt
+      ? new Date(rows[0].registeredAt).toLocaleDateString("zh-CN", {
+          year: "numeric", month: "2-digit", day: "2-digit",
+        }).replace(/\//g, "-")
+      : selectedDateStr ?? "export";
+    XLSX.writeFile(wb, `账号_${firstDate}.xlsx`);
+  };
+
   // 3. 执行导出
   const exportMutation = trpc.export.doExportByDate.useMutation({
     onSuccess: (result) => {
-      toast.success(
-        `成功导出 ${result.exported} 个账号，批次号：${result.batchId}`
-      );
+      if (exportMode === 'excel') {
+        downloadExcel(result.rows);
+        toast.success(`成功导出 ${result.exported} 个账号 Excel，批次号：${result.batchId}`);
+      } else {
+        // 复制账号密码到剪贴板
+        const text = result.rows
+          .map((r) => `${r.email}----${r.password}`)
+          .join("\n");
+        navigator.clipboard.writeText(text);
+        toast.success(`成功导出 ${result.exported} 个账号，已复制账号密码到剪贴板，批次号：${result.batchId}`);
+      }
       utils.accounts.list.invalidate();
       utils.dashboard.stats.invalidate();
       utils.export.dateRange.invalidate();
@@ -172,10 +229,11 @@ function ExportDialog({
     onClose();
   };
 
-  const handleDoExport = () => {
+  const handleDoExport = (mode: 'credentials' | 'excel') => {
     if (!selectedDateStr) return;
     const n = Math.min(exportCount, countByDate);
     if (n <= 0) return;
+    setExportMode(mode);
     exportMutation.mutate({ date: selectedDateStr, count: n });
   };
 
@@ -324,7 +382,7 @@ function ExportDialog({
         )}
 
         {/* 底部按钮 */}
-        <div className="flex justify-end gap-2 pt-1">
+        <div className="flex justify-between items-center gap-2 pt-1">
           <button
             onClick={handleClose}
             disabled={isExporting}
@@ -332,17 +390,32 @@ function ExportDialog({
           >
             取消
           </button>
-          <button
-            onClick={handleDoExport}
-            disabled={!canExport}
-            className="px-4 py-2 text-sm rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 transition-colors"
-          >
-            {isExporting
-              ? "导出中…"
-              : canExport
-              ? `确认导出 ${Math.min(exportCount, countByDate)} 个`
-              : "确认导出"}
-          </button>
+          <div className="flex gap-2">
+            {/* 导出账号密码（复制到剪贴板） */}
+            <button
+              onClick={() => handleDoExport('credentials')}
+              disabled={!canExport}
+              className="px-4 py-2 text-sm rounded-md border border-emerald-500/60 text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-50 transition-colors"
+            >
+              {isExporting && exportMode === 'credentials'
+                ? "导出中…"
+                : canExport
+                ? `复制账号密码 (${Math.min(exportCount, countByDate)})`
+                : "复制账号密码"}
+            </button>
+            {/* 导出 Excel */}
+            <button
+              onClick={() => handleDoExport('excel')}
+              disabled={!canExport}
+              className="px-4 py-2 text-sm rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+            >
+              {isExporting && exportMode === 'excel'
+                ? "生成中…"
+                : canExport
+                ? `导出 Excel (${Math.min(exportCount, countByDate)})`
+                : "导出 Excel"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
