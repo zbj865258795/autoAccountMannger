@@ -8,8 +8,8 @@ export const ADSPOWER_CONFIG = {
   apiUrl: "http://127.0.0.1:50325",
 
   /** AdsPower API Key（开启安全校验时必须，CLI 模式必须） */
-  apiKey: "1dd5aa65da0c22934e189faa672ed1240063f1d06082b6d7",
-  // apiKey: "c2fe9351eefbbacceedeeb432ae9d18a008967f0ed8ede94",
+  // apiKey: "1dd5aa65da0c22934e189faa672ed1240063f1d06082b6d7",
+  apiKey: "c2fe9351eefbbacceedeeb432ae9d18a008967f0ed8ede94",
 
   /** 创建浏览器后等待启动的超时时间（毫秒） */
   browserStartTimeoutMs: 30_000,
