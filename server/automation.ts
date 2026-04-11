@@ -916,8 +916,27 @@ async function handleLoginPage(
           }
           if (landingUrl.includes("manus.im/verify-phone")) return "verify-phone";
           if (landingUrl.includes("manus.im/app")) return "app";
+          // 跳转到了非预期页面（既不是 verify-phone 也不是 app），
+          // 让 for 循环下一轮重新检测 URL
+          log(`auth_landing 跳转到非预期页面：${landingUrl}，继续检测...`, "warn");
         } catch {
-          log("auth_landing 跳转超时", "warn");
+          // auth_landing 55s 内未跳转到任何其他页面
+          // 主动导航回邀请链接重新开始，避免外层刷新时 goto(auth_landing) 导致死循环
+          log("auth_landing 跳转超时，主动导航回邀请链接重新开始...", "warn");
+          checkInvitationCodeRemainsOk = false;
+          try {
+            await page.goto(inviteUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+          } catch (navErr: any) {
+            const navErrMsg: string = navErr.message ?? "";
+            if (navErrMsg.includes("has been closed") || navErrMsg.includes("Target closed") || navErrMsg.includes("Target page")) {
+              log("auth_landing 恢复导航失败：浏览器已关闭", "error");
+              browserClosed1 = true;
+              break;
+            }
+            log(`auth_landing 恢复导航失败：${navErrMsg}`, "error");
+            return "error";
+          }
+          try { await page.waitForLoadState("networkidle", { timeout: 20000 }); } catch { /* 容错 */ }
         }
         continue;
       }
