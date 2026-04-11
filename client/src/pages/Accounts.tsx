@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -149,7 +149,9 @@ function ExportDialog({
     }
   }
 
-  // 导出模式：'credentials'=账号密码 | 'excel'=Excel全字段
+  // 导出模式：用 ref 存储，避免 onSuccess 回调读到旧的 state
+  const exportModeRef = useRef<'credentials' | 'excel'>('credentials');
+  // 用于按钮文字显示的 state（仅用于 UI 渲染）
   const [exportMode, setExportMode] = useState<'credentials' | 'excel'>('credentials');
 
   // 生成并下载 Excel 文件
@@ -200,13 +202,13 @@ function ExportDialog({
   // 3. 执行导出
   const exportMutation = trpc.export.doExportByDate.useMutation({
     onSuccess: (result) => {
-      if (exportMode === 'excel') {
+      if (exportModeRef.current === 'excel') {
         downloadExcel(result.rows);
         toast.success(`成功导出 ${result.exported} 个账号 Excel，批次号：${result.batchId}`);
       } else {
         // 复制账号密码到剪贴板
         const text = result.rows
-          .map((r) => `${r.email}----${r.password}`)
+          .map((r: { email: string; password: string }) => `${r.email}----${r.password}`)
           .join("\n");
         navigator.clipboard.writeText(text);
         toast.success(`成功导出 ${result.exported} 个账号，已复制账号密码到剪贴板，批次号：${result.batchId}`);
@@ -233,7 +235,8 @@ function ExportDialog({
     if (!selectedDateStr) return;
     const n = Math.min(exportCount, countByDate);
     if (n <= 0) return;
-    setExportMode(mode);
+    exportModeRef.current = mode; // 同步设置，onSuccess 可安全读取
+    setExportMode(mode);          // 同步更新 UI 按钮文字
     exportMutation.mutate({ date: selectedDateStr, count: n });
   };
 

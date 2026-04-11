@@ -435,14 +435,8 @@ const exportRouter = router({
           message: "导出失败，请重试",
         });
       }
-      // 将 rows 中的 Date 对象序列化为 ISO 字符串，方便前端处理
-      const serializedRows = result.rows.map((r) => ({
-        ...r,
-        registeredAt: r.registeredAt ? r.registeredAt.toISOString() : null,
-      }));
-      return { ...result, available, rows: serializedRows };
+      return { batchId: result.batchId, exported: result.exported, available };
     }),
-
   // 获取可导出账号的 registeredAt 日期范围（用于日期选择器限制）
   dateRange: publicProcedure.query(async () => {
     return getExportableDateRange();
@@ -474,9 +468,13 @@ const exportRouter = router({
       if (result.exported === 0) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "导出失败，请重试" });
       }
-      return { ...result, available };
+      // 将 rows 中的 Date 对象序列化为 ISO 字符串，方便前端处理
+      const serializedRows = result.rows.map((r) => ({
+        ...r,
+        registeredAt: r.registeredAt ? r.registeredAt.toISOString() : null,
+      }));
+      return { batchId: result.batchId, exported: result.exported, available, rows: serializedRows };
     }),
-
   // 查询导出批次列表
   listBatches: publicProcedure
     .input(z.object({

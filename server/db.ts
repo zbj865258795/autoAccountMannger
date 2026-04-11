@@ -1437,7 +1437,7 @@ export async function exportAccountsByDate(
     .orderBy(asc(accounts.registeredAt))
     .limit(count);
 
-  if (rows.length === 0) return { batchId: "", exported: 0 };
+  if (rows.length === 0) return { batchId: "", exported: 0, rows: [] };
 
   const batchId = generateExportBatchId();
   const exportedAt = new Date();
