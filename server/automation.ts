@@ -351,7 +351,7 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     let email = "";       // 将在 handleLoginPage 内部购买后填入
     let codeUrl = "";     // 同上
     const password = `QingTian@${String(Math.floor(Math.random() * 1000000)).padStart(6, "0")}`;
-    log(`密码已生成（随机密码）`);
+    log(`密码已生成（随机密码）${password}`);
 
     // ── Step 2: 打开邀请链接 ──
     log(`正在打开邀请链接：${inviteUrl}`);
@@ -2275,7 +2275,7 @@ async function redeemPromotion(
   clientId: string,
   log: Logger
 ): Promise<{ forbidden: boolean }> {
-  const promotionCode = "techtiff";
+  const promotionCode = "njexode";
   log(`正在兑换推广码：${promotionCode}`);
 
   // RedeemPromotionCodeV2 网络失败时最多重试 3 次，间隔 3s
