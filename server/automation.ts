@@ -309,6 +309,45 @@ export async function runRegistration(params: RegistrationParams): Promise<void>
     });
     } // end if (browser.isConnected())
 
+    // ── 将 findActionButton 注入到页面全局，供所有 page.evaluate 使用 ──
+    // 这里将函数以字符串形式注入，确保在浏览器沙筱中可用
+    await page.addInitScript(() => {
+      (window as any).findActionButton = function(labelText: string): HTMLButtonElement | null {
+        const isVisible = (el: HTMLButtonElement): boolean => {
+          if (el.offsetParent === null) return false;
+          const rect = el.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        };
+        const textMatches = (el: HTMLButtonElement, text: string): boolean => {
+          const btnText = (el.textContent ?? "").trim().toLowerCase();
+          return btnText === text.toLowerCase();
+        };
+        const allButtons = Array.from(document.querySelectorAll("button")) as HTMLButtonElement[];
+        const visibleButtons = allButtons.filter(isVisible);
+        // 策略1：class 含 Button-black（当前版本）
+        const byNewClass = visibleButtons.find((b) => b.className.includes("Button-black"));
+        if (byNewClass) return byNewClass;
+        // 策略2：class 含 Button-primary-black（旧版本）
+        const byOldClass = visibleButtons.find((b) => b.className.includes("Button-primary-black"));
+        if (byOldClass) return byOldClass;
+        // 策略3：按钮文字精确匹配（大小写不敏感）
+        const byText = visibleButtons.find((b) => textMatches(b, labelText));
+        if (byText) return byText;
+        // 策略4：页面内唯一可见的 type=submit 按钮
+        const submitBtns = visibleButtons.filter((b) => b.type === "submit");
+        if (submitBtns.length === 1) return submitBtns[0];
+        // 策略5：表单内唯一可见按钮（底层兼容）
+        const forms = Array.from(document.querySelectorAll("form"));
+        for (const form of forms) {
+          const formBtns = Array.from(form.querySelectorAll("button")).filter(
+            (b) => isVisible(b as HTMLButtonElement)
+          ) as HTMLButtonElement[];
+          if (formBtns.length === 1) return formBtns[0];
+        }
+        return null;
+      };
+    });
+
     // ── 设置网络响应拦截（替代 chrome.debugger）──
     // 封禁标志位：任意被监听接口返回 403 则置为 true
     const userInfoForbiddenRef = { value: false };  // 对象引用，可在回调和 handleLoginPage/finishRegistration 之间共享
@@ -1032,13 +1071,25 @@ async function handleLoginPage(
         }
 
         try {
-          await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
+          await simulateMouseMove(page, 'button[class*="Button-black"], button[class*="Button-primary-black"]');
           const btnState = await page.evaluate(() => {
+            // 内联 findActionButton
+            const _fab = (label: string): HTMLButtonElement | null => {
+              const vis = (el: HTMLButtonElement) => el.offsetParent !== null && el.getBoundingClientRect().width > 0;
+              const all = Array.from(document.querySelectorAll("button")) as HTMLButtonElement[];
+              const vb = all.filter(vis);
+              return vb.find(b => b.className.includes("Button-black"))
+                ?? vb.find(b => b.className.includes("Button-primary-black"))
+                ?? vb.find(b => (b.textContent ?? "").trim().toLowerCase() === label.toLowerCase())
+                ?? (vb.filter(b => b.type === "submit").length === 1 ? vb.filter(b => b.type === "submit")[0] : null)
+                ?? (() => { for (const f of Array.from(document.querySelectorAll("form"))) { const fb = Array.from(f.querySelectorAll("button")).filter(b => vis(b as HTMLButtonElement)) as HTMLButtonElement[]; if (fb.length === 1) return fb[0]; } return null; })()
+                ?? null;
+            };
             const pwdEl = document.querySelector('input[name="password"][type="password"]') as HTMLElement | null;
             const inEmailStep = !pwdEl || pwdEl.classList.contains("hidden") || pwdEl.offsetParent === null;
             if (!inEmailStep) return "already-passed";
-            const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
-            if (!btn || btn.offsetParent === null) return "no-button";
+            const btn = _fab("Continue");
+            if (!btn) return "no-button";
             if (btn.disabled) return "disabled";
             return "clickable";
           });
@@ -1058,8 +1109,13 @@ async function handleLoginPage(
             if (emailBtnRetryCount % 10 === 0) log(`等待第三方验证完成（已等 ${emailBtnRetryCount}s）...`, "warn");
           } else if (btnState === "clickable") {
             await page.evaluate(async () => {
-              const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
-              if (btn) { await new Promise((r) => setTimeout(r, 800)); btn.click(); }
+              const vis = (el: HTMLButtonElement) => el.offsetParent !== null && el.getBoundingClientRect().width > 0;
+              const vb = (Array.from(document.querySelectorAll("button")) as HTMLButtonElement[]).filter(vis);
+              const btn = vb.find(b => b.className.includes("Button-black"))
+                ?? vb.find(b => b.className.includes("Button-primary-black"))
+                ?? vb.find(b => (b.textContent ?? "").trim().toLowerCase() === "continue")
+                ?? null;
+              if (btn && !btn.disabled) { await new Promise((r) => setTimeout(r, 800)); btn.click(); }
             });
             emailBtnClickTime = Date.now();
             log("邮箱 Continue 按钮已点击，等待 SendEmailVerifyCodeWithCaptcha 请求...", "success");
@@ -1154,13 +1210,22 @@ async function handleLoginPage(
         }
 
         try {
-          await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
+          await simulateMouseMove(page, 'button[class*="Button-black"], button[class*="Button-primary-black"]');
           const pwdBtnState = await page.evaluate(() => {
+            const vis = (el: HTMLButtonElement) => el.offsetParent !== null && el.getBoundingClientRect().width > 0;
+            const vb = (Array.from(document.querySelectorAll("button")) as HTMLButtonElement[]).filter(vis);
+            const _fab = (label: string): HTMLButtonElement | null =>
+              vb.find(b => b.className.includes("Button-black"))
+              ?? vb.find(b => b.className.includes("Button-primary-black"))
+              ?? vb.find(b => (b.textContent ?? "").trim().toLowerCase() === label.toLowerCase())
+              ?? (vb.filter(b => b.type === "submit").length === 1 ? vb.filter(b => b.type === "submit")[0] : null)
+              ?? (() => { for (const f of Array.from(document.querySelectorAll("form"))) { const fb = Array.from(f.querySelectorAll("button")).filter(b => vis(b as HTMLButtonElement)) as HTMLButtonElement[]; if (fb.length === 1) return fb[0]; } return null; })()
+              ?? null;
             const pwdEl = document.querySelector('input[name="password"][type="password"]') as HTMLElement | null;
             const inPwdStep = pwdEl && !pwdEl.classList.contains("hidden") && pwdEl.offsetParent !== null;
             if (!inPwdStep) return "not-in-pwd-step";
-            const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
-            if (!btn || btn.offsetParent === null) return "no-button";
+            const btn = _fab("Continue");
+            if (!btn) return "no-button";
             if (btn.disabled) return "disabled";
             return "clickable";
           });
@@ -1178,8 +1243,13 @@ async function handleLoginPage(
             if (pwdBtnRetryCount % 5 === 0) log(`密码按钮持续 disabled，等待中（第 ${pwdBtnRetryCount}s）...`, "warn");
           } else if (pwdBtnState === "clickable") {
             await page.evaluate(async () => {
-              const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
-              if (btn) { await new Promise((r) => setTimeout(r, 800)); btn.click(); }
+              const vis = (el: HTMLButtonElement) => el.offsetParent !== null && el.getBoundingClientRect().width > 0;
+              const vb = (Array.from(document.querySelectorAll("button")) as HTMLButtonElement[]).filter(vis);
+              const btn = vb.find(b => b.className.includes("Button-black"))
+                ?? vb.find(b => b.className.includes("Button-primary-black"))
+                ?? vb.find(b => (b.textContent ?? "").trim().toLowerCase() === "continue")
+                ?? null;
+              if (btn && !btn.disabled) { await new Promise((r) => setTimeout(r, 800)); btn.click(); }
             });
             pwdBtnClickTime = Date.now();
             log("密码 Continue 按钮已点击，等待 SendEmailVerifyCodeWithCaptcha 请求（3s 内无请求将清空重输）...", "success");
@@ -1332,12 +1402,21 @@ async function handleLoginPage(
         }
 
         try {
-          await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
+          await simulateMouseMove(page, 'button[class*="Button-black"], button[class*="Button-primary-black"]');
           const verifyBtnState = await page.evaluate(() => {
+            const vis = (el: HTMLButtonElement) => el.offsetParent !== null && el.getBoundingClientRect().width > 0;
+            const vb = (Array.from(document.querySelectorAll("button")) as HTMLButtonElement[]).filter(vis);
+            const _fab = (label: string): HTMLButtonElement | null =>
+              vb.find(b => b.className.includes("Button-black"))
+              ?? vb.find(b => b.className.includes("Button-primary-black"))
+              ?? vb.find(b => (b.textContent ?? "").trim().toLowerCase() === label.toLowerCase())
+              ?? (vb.filter(b => b.type === "submit").length === 1 ? vb.filter(b => b.type === "submit")[0] : null)
+              ?? (() => { for (const f of Array.from(document.querySelectorAll("form"))) { const fb = Array.from(f.querySelectorAll("button")).filter(b => vis(b as HTMLButtonElement)) as HTMLButtonElement[]; if (fb.length === 1) return fb[0]; } return null; })()
+              ?? null;
             const codeEl = document.querySelector('input#verifyCode[name="verifyCode"]') as HTMLInputElement | null;
             if (!codeEl || !codeEl.value.trim()) return "no-code";
-            const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
-            if (!btn || btn.offsetParent === null) return "no-button";
+            const btn = _fab("Verify");
+            if (!btn) return "no-button";
             if (btn.disabled) return "disabled";
             return "clickable";
           });
@@ -1354,8 +1433,13 @@ async function handleLoginPage(
             if (verifyBtnRetryCount % 5 === 0) log(`验证码按钮持续 disabled，等待中（第 ${verifyBtnRetryCount}s）...`, "warn");
           } else if (verifyBtnState === "clickable") {
             await page.evaluate(async () => {
-              const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
-              if (btn) { await new Promise((r) => setTimeout(r, 800)); btn.click(); }
+              const vis = (el: HTMLButtonElement) => el.offsetParent !== null && el.getBoundingClientRect().width > 0;
+              const vb = (Array.from(document.querySelectorAll("button")) as HTMLButtonElement[]).filter(vis);
+              const btn = vb.find(b => b.className.includes("Button-black"))
+                ?? vb.find(b => b.className.includes("Button-primary-black"))
+                ?? vb.find(b => (b.textContent ?? "").trim().toLowerCase() === "verify")
+                ?? null;
+              if (btn && !btn.disabled) { await new Promise((r) => setTimeout(r, 800)); btn.click(); }
             });
             verifyBtnClickTime = Date.now();
             log("验证码确认按钮已点击，等待 RegisterByEmail 请求（3s 内无请求将清空重输）...", "success");
@@ -1758,10 +1842,19 @@ async function handleVerifyPhonePage(
         }
 
         try {
-          await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
+          await simulateMouseMove(page, 'button[class*="Button-black"], button[class*="Button-primary-black"]');
           const phoneBtnState = await page.evaluate(() => {
-            const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
-            if (!btn || btn.offsetParent === null) return "no-button";
+            const vis = (el: HTMLButtonElement) => el.offsetParent !== null && el.getBoundingClientRect().width > 0;
+            const vb = (Array.from(document.querySelectorAll("button")) as HTMLButtonElement[]).filter(vis);
+            const _fab = (label: string): HTMLButtonElement | null =>
+              vb.find(b => b.className.includes("Button-black"))
+              ?? vb.find(b => b.className.includes("Button-primary-black"))
+              ?? vb.find(b => (b.textContent ?? "").trim().toLowerCase() === label.toLowerCase())
+              ?? (vb.filter(b => b.type === "submit").length === 1 ? vb.filter(b => b.type === "submit")[0] : null)
+              ?? (() => { for (const f of Array.from(document.querySelectorAll("form"))) { const fb = Array.from(f.querySelectorAll("button")).filter(b => vis(b as HTMLButtonElement)) as HTMLButtonElement[]; if (fb.length === 1) return fb[0]; } return null; })()
+              ?? null;
+            const btn = _fab("Send code");
+            if (!btn) return "no-button";
             if (btn.disabled) return "disabled";
             return "clickable";
           });
@@ -1774,8 +1867,13 @@ async function handleVerifyPhonePage(
             if (phoneBtnRetryCount % 5 === 0) log(`Send code 按钮持续 disabled，等待中（第 ${phoneBtnRetryCount}s）...`, "warn");
           } else if (phoneBtnState === "clickable") {
             await page.evaluate(async () => {
-              const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
-              if (btn) { await new Promise((r) => setTimeout(r, 500)); btn.click(); }
+              const vis = (el: HTMLButtonElement) => el.offsetParent !== null && el.getBoundingClientRect().width > 0;
+              const vb = (Array.from(document.querySelectorAll("button")) as HTMLButtonElement[]).filter(vis);
+              const btn = vb.find(b => b.className.includes("Button-black"))
+                ?? vb.find(b => b.className.includes("Button-primary-black"))
+                ?? vb.find(b => (b.textContent ?? "").trim().toLowerCase() === "send code")
+                ?? null;
+              if (btn && !btn.disabled) { await new Promise((r) => setTimeout(r, 500)); btn.click(); }
             });
             phoneBtnClickTime = Date.now();
             log("Send code 按钮已点击，等待 SendPhoneVerificationCode 请求（3s 内无请求将清空重输）...", "success");
@@ -1898,13 +1996,22 @@ async function handleVerifyPhonePage(
         continue;
       }
 
-      try {
-        await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
+        try {
+        await simulateMouseMove(page, 'button[class*="Button-black"], button[class*="Button-primary-black"]');
         const smsBtnState = await page.evaluate(() => {
+          const vis = (el: HTMLButtonElement) => el.offsetParent !== null && el.getBoundingClientRect().width > 0;
+          const vb = (Array.from(document.querySelectorAll("button")) as HTMLButtonElement[]).filter(vis);
+          const _fab = (label: string): HTMLButtonElement | null =>
+            vb.find(b => b.className.includes("Button-black"))
+            ?? vb.find(b => b.className.includes("Button-primary-black"))
+            ?? vb.find(b => (b.textContent ?? "").trim().toLowerCase() === label.toLowerCase())
+            ?? (vb.filter(b => b.type === "submit").length === 1 ? vb.filter(b => b.type === "submit")[0] : null)
+            ?? (() => { for (const f of Array.from(document.querySelectorAll("form"))) { const fb = Array.from(f.querySelectorAll("button")).filter(b => vis(b as HTMLButtonElement)) as HTMLButtonElement[]; if (fb.length === 1) return fb[0]; } return null; })()
+            ?? null;
           const codeEl = document.querySelector("input#phone-code") as HTMLInputElement | null;
           if (!codeEl || !codeEl.value.trim()) return "no-code";
-          const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
-          if (!btn || btn.offsetParent === null) return "no-button";
+          const btn = _fab("Verify code");
+          if (!btn) return "no-button";
           if (btn.disabled) return "disabled";
           return "clickable";
         });
@@ -1921,8 +2028,13 @@ async function handleVerifyPhonePage(
           if (smsBtnRetryCount % 5 === 0) log(`短信验证码按钮持续 disabled，等待中（第 ${smsBtnRetryCount}s）...`, "warn");
         } else if (smsBtnState === "clickable") {
           await page.evaluate(async () => {
-            const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
-            if (btn) { await new Promise((r) => setTimeout(r, 500)); btn.click(); }
+            const vis = (el: HTMLButtonElement) => el.offsetParent !== null && el.getBoundingClientRect().width > 0;
+            const vb = (Array.from(document.querySelectorAll("button")) as HTMLButtonElement[]).filter(vis);
+            const btn = vb.find(b => b.className.includes("Button-black"))
+              ?? vb.find(b => b.className.includes("Button-primary-black"))
+              ?? vb.find(b => (b.textContent ?? "").trim().toLowerCase() === "verify code")
+              ?? null;
+            if (btn && !btn.disabled) { await new Promise((r) => setTimeout(r, 500)); btn.click(); }
           });
           smsBtnClickTime = Date.now();
           log("短信验证码确认按钮已点击，等待 BindPhoneTrait 请求（3s 内无请求将清空重输）...", "success");
@@ -1932,7 +2044,7 @@ async function handleVerifyPhonePage(
         }
         } catch (e: any) {
         if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤E：浏览器已关闭，终止本轮`, "error"); browserClosed = true; break; }
-        log(`步骤E（短信验证码确认）异常：${e.message}，等待重试...`, "warn");
+        log(`步骤E（短信验证码确认）异常：${e.message}`, "warn");
       }
     }
 
@@ -2445,6 +2557,65 @@ async function fetchUserDataByToken(token: string, log: Logger): Promise<{
   }
 
   return result;
+}
+
+// ─── 多维度按钮查找工具 ──────────────────────────────────────────────────────
+
+/**
+ * 在页面内查找目标操作按钮，采用多维度 fallback 策略，防止因改版导致按钮找不到。
+ * 查找优先级：
+ *   1. class 含 Button-black（当前版本特征）
+ *   2. class 含 Button-primary-black（旧版本特征）
+ *   3. 按钮文字精确匹配（大小写不敏感）
+ *   4. 页面内唯一可见的 submit 类型按钮
+ *   5. 表单内唯一可见按钮
+ *
+ * @param labelText 目标按钮的预期文字（如 "Continue", "Verify", "Send code", "Verify code"）
+ * @returns 找到的按钮元素，未找到则返回 null
+ */
+function findActionButton(labelText: string): HTMLButtonElement | null {
+  // 辅助：判断按钮是否可见（offsetParent !== null 且 getBoundingClientRect 有宽高）
+  const isVisible = (el: HTMLButtonElement): boolean => {
+    if (el.offsetParent === null) return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  };
+
+  // 辅助：按钮文字是否匹配（大小写不敏感，去除首尾空白）
+  const textMatches = (el: HTMLButtonElement, text: string): boolean => {
+    const btnText = (el.textContent ?? "").trim().toLowerCase();
+    return btnText === text.toLowerCase();
+  };
+
+  const allButtons = Array.from(document.querySelectorAll("button")) as HTMLButtonElement[];
+  const visibleButtons = allButtons.filter(isVisible);
+
+  // 策略1：class 含 Button-black（当前版本）
+  const byNewClass = visibleButtons.find((b) => b.className.includes("Button-black"));
+  if (byNewClass) return byNewClass;
+
+  // 策略2：class 含 Button-primary-black（旧版本）
+  const byOldClass = visibleButtons.find((b) => b.className.includes("Button-primary-black"));
+  if (byOldClass) return byOldClass;
+
+  // 策略3：按钮文字精确匹配（大小写不敏感）
+  const byText = visibleButtons.find((b) => textMatches(b, labelText));
+  if (byText) return byText;
+
+  // 策略4：页面内唯一可见的 type=submit 按钮
+  const submitBtns = visibleButtons.filter((b) => b.type === "submit");
+  if (submitBtns.length === 1) return submitBtns[0];
+
+  // 策略5：表单内唯一可见按钮（兜底）
+  const forms = Array.from(document.querySelectorAll("form"));
+  for (const form of forms) {
+    const formBtns = Array.from(form.querySelectorAll("button")).filter(
+      (b) => isVisible(b as HTMLButtonElement)
+    ) as HTMLButtonElement[];
+    if (formBtns.length === 1) return formBtns[0];
+  }
+
+  return null;
 }
 
 /** 模拟鼠标移动（与插件的 simulateMouseMove 完全对齐） */
