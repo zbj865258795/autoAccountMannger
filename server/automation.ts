@@ -698,7 +698,91 @@ async function handleLoginPage(
   // 首次进入循环前先重置标志位（之后每次刷新页面前才重置，不在循环顶部重置）
   checkInvitationCodeRemainsOk = false;
 
+  // 统一处理阶段一中的跨页跳转，避免页面已进入 verify-phone / app，
+  // 但 handleLoginPage 仍继续执行 /login 的等待与刷新逻辑。
+  const resolveStageOneTransition = async (): Promise<"stay" | "verify-phone" | "app" | "timeout" | "error" | "banned"> => {
+    const currentUrl = page.url();
+
+    if (currentUrl === "about:blank" || currentUrl === "") {
+      return "stay";
+    }
+
+    if (currentUrl.includes("manus.im/verify-phone")) {
+      log("检测到页面已跳转到 /verify-phone，阶段一完成");
+      return "verify-phone";
+    }
+
+    if (currentUrl.includes("manus.im/app")) {
+      log("检测到页面已跳转到 /app，阶段一完成");
+      return "app";
+    }
+
+    if (!currentUrl.includes("manus.im/auth_landing")) {
+      return "stay";
+    }
+
+    const AUTH_LANDING_MAX_RETRIES = 2;
+    let authLandingResolved = false;
+    for (let authRetry = 0; authRetry <= AUTH_LANDING_MAX_RETRIES; authRetry++) {
+      if (authRetry === 0) {
+        log("检测到 auth_landing 中转页，等待 UserInfo 响应和最终跳转...");
+      } else {
+        log(`auth_landing 第 ${authRetry} 次刷新重试，重新加载中转页...`, "warn");
+        try {
+          await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
+        } catch (reloadErr: any) {
+          const msg: string = reloadErr.message ?? "";
+          if (msg.includes("has been closed") || msg.includes("Target closed") || msg.includes("Target page")) {
+            log("auth_landing 刷新失败：浏览器已关闭", "error");
+            browserClosed1 = true;
+            return "error";
+          }
+          log(`auth_landing 刷新失败：${msg}`, "error");
+          return "error";
+        }
+      }
+      await sleep(5000);
+      if (userInfoForbiddenRef.value) {
+        log("账号注册即封禁（UserInfo 403），本次注册失败", "error");
+        return "banned";
+      }
+      try {
+        await page.waitForURL(
+          (url: URL) => url.toString().includes("manus.im/") && !url.toString().includes("auth_landing"),
+          { timeout: 55000 }
+        );
+        const landingUrl = page.url();
+        if (userInfoForbiddenRef.value) {
+          log("账号注册即封禁（UserInfo 403），本次注册失败", "error");
+          return "banned";
+        }
+        if (landingUrl.includes("manus.im/verify-phone")) return "verify-phone";
+        if (landingUrl.includes("manus.im/app")) return "app";
+        log(`auth_landing 跳转到非预期页面：${landingUrl}，继续检测...`, "warn");
+        authLandingResolved = true;
+        break;
+      } catch {
+        log(`auth_landing 第 ${authRetry + 1} 次等待跳转超时`, "warn");
+      }
+    }
+
+    if (browserClosed1) {
+      return "error";
+    }
+    if (!authLandingResolved && page.url().includes("auth_landing")) {
+      log(`auth_landing 刷新 ${AUTH_LANDING_MAX_RETRIES} 次后仍未跳转，本次注册失败`, "error");
+      return "timeout";
+    }
+
+    return "stay";
+  };
+
   while (refreshCount <= MAX_REFRESHES) {
+
+    const roundEntryTransition = await resolveStageOneTransition();
+    if (roundEntryTransition !== "stay") {
+      return roundEntryTransition;
+    }
 
     // ── 等待顺序至关重要：先等 URL 稳定，再等 DOM 加载 ──
     // /invitation/xxx 会通过 JS 重定向到 /login，这个重定向发生在 domcontentloaded 之后
@@ -726,6 +810,11 @@ async function handleLoginPage(
       await page.waitForLoadState("networkidle", { timeout: 20000 });
     } catch { /* 网络慢时容错 */ }
     await sleep(1500);
+
+    const postLoadTransition = await resolveStageOneTransition();
+    if (postLoadTransition !== "stay") {
+      return postLoadTransition;
+    }
     // 每轮开始清除上一轮遗留的 API 错误状态和响应状态（防止旧状态干扰当前轮）
     lastApiError = null;
     sendEmailCodeRequestTime = 0;
@@ -891,69 +980,10 @@ async function handleLoginPage(
         continue;
       }
 
-      // 已跳转到下一阶段页面 → 提前返回成功
-      if (currentUrl1.includes("manus.im/verify-phone")) {
-        log("检测到页面已跳转到 /verify-phone，阶段一完成");
-        return "verify-phone";
-      }
-      if (currentUrl1.includes("manus.im/app")) {
-        log("检测到页面已跳转到 /app，阶段一完成");
-        return "app";
-      }
-      if (currentUrl1.includes("manus.im/auth_landing")) {
-        // auth_landing 是注册成功后的中转页，刷新即可触发重定向到 /verify-phone 或 /app
-        // 最多尝试 3 次（首次等待 + 2 次刷新重试）
-        const AUTH_LANDING_MAX_RETRIES = 2;
-        let authLandingResolved = false;
-        for (let authRetry = 0; authRetry <= AUTH_LANDING_MAX_RETRIES; authRetry++) {
-          if (authRetry === 0) {
-            log("检测到 auth_landing 中转页，等待 UserInfo 响应和最终跳转...");
-          } else {
-            log(`auth_landing 第 ${authRetry} 次刷新重试，重新加载中转页...`, "warn");
-            try {
-              await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
-            } catch (reloadErr: any) {
-              const msg: string = reloadErr.message ?? "";
-              if (msg.includes("has been closed") || msg.includes("Target closed") || msg.includes("Target page")) {
-                log("auth_landing 刷新失败：浏览器已关闭", "error");
-                browserClosed1 = true;
-                break;
-              }
-              log(`auth_landing 刷新失败：${msg}`, "error");
-              return "error";
-            }
-          }
-          await sleep(5000);
-          if (userInfoForbiddenRef.value) {
-            log("账号注册即封禁（UserInfo 403），本次注册失败", "error");
-            return "banned";
-          }
-          try {
-            await page.waitForURL(
-              (url: URL) => url.toString().includes("manus.im/") && !url.toString().includes("auth_landing"),
-              { timeout: 55000 }
-            );
-            const landingUrl = page.url();
-            if (userInfoForbiddenRef.value) {
-              log("账号注册即封禁（UserInfo 403），本次注册失败", "error");
-              return "banned";
-            }
-            if (landingUrl.includes("manus.im/verify-phone")) return "verify-phone";
-            if (landingUrl.includes("manus.im/app")) return "app";
-            // 跳转到非预期页面，让外层 for 循环重新检测
-            log(`auth_landing 跳转到非预期页面：${landingUrl}，继续检测...`, "warn");
-            authLandingResolved = true;
-            break;
-          } catch {
-            log(`auth_landing 第 ${authRetry + 1} 次等待跳转超时`, "warn");
-          }
-        }
-        if (browserClosed1) break;
-        if (!authLandingResolved && page.url().includes("auth_landing")) {
-          log(`auth_landing 刷新 ${AUTH_LANDING_MAX_RETRIES} 次后仍未跳转，本次注册失败`, "error");
-          return "timeout";
-        }
-        continue;
+      // 已跳转到下一阶段页面或中转页 → 统一交给阶段切换处理器
+      const stepTransition = await resolveStageOneTransition();
+      if (stepTransition !== "stay") {
+        return stepTransition;
       }
 
       // 不在预期页面（既不是 /login 也不是 /register）→ 等待跳转或刷新
@@ -1032,16 +1062,11 @@ async function handleLoginPage(
         }
 
         try {
-          await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
-          const btnState = await page.evaluate(() => {
+          const inEmailStep = await page.evaluate(() => {
             const pwdEl = document.querySelector('input[name="password"][type="password"]') as HTMLElement | null;
-            const inEmailStep = !pwdEl || pwdEl.classList.contains("hidden") || pwdEl.offsetParent === null;
-            if (!inEmailStep) return "already-passed";
-            const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
-            if (!btn || btn.offsetParent === null) return "no-button";
-            if (btn.disabled) return "disabled";
-            return "clickable";
+            return !pwdEl || pwdEl.classList.contains("hidden") || pwdEl.offsetParent === null;
           });
+          const btnState = !inEmailStep ? "already-passed" : await getActionButtonState(page, ['input#email', 'input[type="email"]']);
 
           if (btnState === "already-passed") {
             emailContinueClicked = true;
@@ -1057,12 +1082,14 @@ async function handleLoginPage(
             }
             if (emailBtnRetryCount % 10 === 0) log(`等待第三方验证完成（已等 ${emailBtnRetryCount}s）...`, "warn");
           } else if (btnState === "clickable") {
-            await page.evaluate(async () => {
-              const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
-              if (btn) { await new Promise((r) => setTimeout(r, 800)); btn.click(); }
-            });
-            emailBtnClickTime = Date.now();
-            log("邮箱 Continue 按钮已点击，等待 SendEmailVerifyCodeWithCaptcha 请求...", "success");
+            const clicked = await clickActionButton(page, ['input#email', 'input[type="email"]']);
+            if (clicked) {
+              emailBtnClickTime = Date.now();
+              log("邮箱 Continue 按钮已点击，等待 SendEmailVerifyCodeWithCaptcha 请求...", "success");
+            } else {
+              stepStallCount++;
+              if (stepStallCount >= 60) { log("邮箱 Continue 按钮点击失败，刷新重试...", "warn"); break; }
+            }
           } else {
             stepStallCount++;
             if (stepStallCount >= 60) { log("邮箱 Continue 按钮持续不可用，刷新重试...", "warn"); break; }
@@ -1154,16 +1181,11 @@ async function handleLoginPage(
         }
 
         try {
-          await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
-          const pwdBtnState = await page.evaluate(() => {
+          const inPwdStep = await page.evaluate(() => {
             const pwdEl = document.querySelector('input[name="password"][type="password"]') as HTMLElement | null;
-            const inPwdStep = pwdEl && !pwdEl.classList.contains("hidden") && pwdEl.offsetParent !== null;
-            if (!inPwdStep) return "not-in-pwd-step";
-            const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
-            if (!btn || btn.offsetParent === null) return "no-button";
-            if (btn.disabled) return "disabled";
-            return "clickable";
+            return !!(pwdEl && !pwdEl.classList.contains("hidden") && pwdEl.offsetParent !== null);
           });
+          const pwdBtnState = !inPwdStep ? "not-in-pwd-step" : await getActionButtonState(page, ['input[name="password"][type="password"]']);
 
           if (pwdBtnState === "not-in-pwd-step") {
             pwdContinueClicked = true;
@@ -1177,12 +1199,14 @@ async function handleLoginPage(
             }
             if (pwdBtnRetryCount % 5 === 0) log(`密码按钮持续 disabled，等待中（第 ${pwdBtnRetryCount}s）...`, "warn");
           } else if (pwdBtnState === "clickable") {
-            await page.evaluate(async () => {
-              const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
-              if (btn) { await new Promise((r) => setTimeout(r, 800)); btn.click(); }
-            });
-            pwdBtnClickTime = Date.now();
-            log("密码 Continue 按钮已点击，等待 SendEmailVerifyCodeWithCaptcha 请求（3s 内无请求将清空重输）...", "success");
+            const clicked = await clickActionButton(page, ['input[name="password"][type="password"]']);
+            if (clicked) {
+              pwdBtnClickTime = Date.now();
+              log("密码 Continue 按钮已点击，等待 SendEmailVerifyCodeWithCaptcha 请求（3s 内无请求将清空重输）...", "success");
+            } else {
+              stepStallCount++;
+              if (stepStallCount >= 60) { log("密码 Continue 按钮点击失败，刷新重试...", "warn"); break; }
+            }
           } else {
             stepStallCount++;
             if (stepStallCount >= 60) { log("密码 Continue 按钮持续不可用，刷新重试...", "warn"); break; }
@@ -1307,6 +1331,10 @@ async function handleLoginPage(
             log(`跳转到未知目标页面：${navUrl}`, "warn");
             break;
           } catch {
+            const delayedTransition = await resolveStageOneTransition();
+            if (delayedTransition !== "stay") {
+              return delayedTransition;
+            }
             // RegisterByEmail 已成功响应但页面 30s 内未跳转，验证码已消耗，刷新重试
             log("RegisterByEmail 已成功但页面 30s 内未跳转（验证码已消耗），刷新重试...", "warn");
             break;
@@ -1332,15 +1360,11 @@ async function handleLoginPage(
         }
 
         try {
-          await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
-          const verifyBtnState = await page.evaluate(() => {
+          const codeElFilled = await page.evaluate(() => {
             const codeEl = document.querySelector('input#verifyCode[name="verifyCode"]') as HTMLInputElement | null;
-            if (!codeEl || !codeEl.value.trim()) return "no-code";
-            const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
-            if (!btn || btn.offsetParent === null) return "no-button";
-            if (btn.disabled) return "disabled";
-            return "clickable";
+            return !!(codeEl && codeEl.value.trim());
           });
+          const verifyBtnState = !codeElFilled ? "no-code" : await getActionButtonState(page, ['input#verifyCode[name="verifyCode"]', 'input#verifyCode']);
 
           if (verifyBtnState === "no-code") {
             verifyCodeFilled = false;
@@ -1353,12 +1377,14 @@ async function handleLoginPage(
             }
             if (verifyBtnRetryCount % 5 === 0) log(`验证码按钮持续 disabled，等待中（第 ${verifyBtnRetryCount}s）...`, "warn");
           } else if (verifyBtnState === "clickable") {
-            await page.evaluate(async () => {
-              const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
-              if (btn) { await new Promise((r) => setTimeout(r, 800)); btn.click(); }
-            });
-            verifyBtnClickTime = Date.now();
-            log("验证码确认按钮已点击，等待 RegisterByEmail 请求（3s 内无请求将清空重输）...", "success");
+            const clicked = await clickActionButton(page, ['input#verifyCode[name="verifyCode"]', 'input#verifyCode']);
+            if (clicked) {
+              verifyBtnClickTime = Date.now();
+              log("验证码确认按钮已点击，等待 RegisterByEmail 请求（3s 内无请求将清空重输）...", "success");
+            } else {
+              stepStallCount++;
+              if (stepStallCount >= 60) { log("验证码确认按钮点击失败，刷新重试...", "warn"); break; }
+            }
           } else {
             stepStallCount++;
             if (stepStallCount >= 60) { log("验证码确认按钮持续不可用，刷新重试...", "warn"); break; }
@@ -1758,13 +1784,11 @@ async function handleVerifyPhonePage(
         }
 
         try {
-          await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
           const phoneBtnState = await page.evaluate(() => {
-            const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
-            if (!btn || btn.offsetParent === null) return "no-button";
-            if (btn.disabled) return "disabled";
-            return "clickable";
-          });
+            const phoneEl = document.querySelector("input#phone") as HTMLInputElement | null;
+            if (!phoneEl || !phoneEl.value.trim()) return "no-phone";
+            return null;
+          }) ?? await getActionButtonState(page, ['input#phone', 'input#phone[type="tel"]']);
 
           if (phoneBtnState === "disabled") {
             phoneBtnRetryCount++;
@@ -1773,12 +1797,14 @@ async function handleVerifyPhonePage(
             }
             if (phoneBtnRetryCount % 5 === 0) log(`Send code 按钮持续 disabled，等待中（第 ${phoneBtnRetryCount}s）...`, "warn");
           } else if (phoneBtnState === "clickable") {
-            await page.evaluate(async () => {
-              const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
-              if (btn) { await new Promise((r) => setTimeout(r, 500)); btn.click(); }
-            });
-            phoneBtnClickTime = Date.now();
-            log("Send code 按钮已点击，等待 SendPhoneVerificationCode 请求（3s 内无请求将清空重输）...", "success");
+            const clicked = await clickActionButton(page, ['input#phone', 'input#phone[type="tel"]']);
+            if (clicked) {
+              phoneBtnClickTime = Date.now();
+              log("Send code 按钮已点击，等待 SendPhoneVerificationCode 请求（3s 内无请求将清空重输）...", "success");
+            } else {
+              stepStallCount++;
+              if (stepStallCount >= 20) { log("发送验证码按钮点击失败，刷新重试...", "warn"); break; }
+            }
           } else {
             stepStallCount++;
             if (stepStallCount >= 20) { log("发送验证码按钮卡住，刷新重试...", "warn"); break; }
@@ -1899,15 +1925,11 @@ async function handleVerifyPhonePage(
       }
 
       try {
-        await simulateMouseMove(page, 'button[class*="Button-primary-black"]');
         const smsBtnState = await page.evaluate(() => {
           const codeEl = document.querySelector("input#phone-code") as HTMLInputElement | null;
           if (!codeEl || !codeEl.value.trim()) return "no-code";
-          const btn = document.querySelector('button[class*="Button-primary-black"]') as HTMLButtonElement | null;
-          if (!btn || btn.offsetParent === null) return "no-button";
-          if (btn.disabled) return "disabled";
-          return "clickable";
-        });
+          return null;
+        }) ?? await getActionButtonState(page, ['input#phone-code', 'input[name="phoneCode"]']);
 
         if (smsBtnState === "no-code") {
           smsCodeFilled = false;
@@ -1920,17 +1942,19 @@ async function handleVerifyPhonePage(
           }
           if (smsBtnRetryCount % 5 === 0) log(`短信验证码按钮持续 disabled，等待中（第 ${smsBtnRetryCount}s）...`, "warn");
         } else if (smsBtnState === "clickable") {
-          await page.evaluate(async () => {
-            const btn = document.querySelector('button[class*="Button-primary-black"]:not([disabled])') as HTMLButtonElement | null;
-            if (btn) { await new Promise((r) => setTimeout(r, 500)); btn.click(); }
-          });
-          smsBtnClickTime = Date.now();
-          log("短信验证码确认按钮已点击，等待 BindPhoneTrait 请求（3s 内无请求将清空重输）...", "success");
+          const clicked = await clickActionButton(page, ['input#phone-code', 'input[name="phoneCode"]']);
+          if (clicked) {
+            smsBtnClickTime = Date.now();
+            log("短信验证码确认按钮已点击，等待 BindPhoneTrait 请求（3s 内无请求将清空重输）...", "success");
+          } else {
+            stepStallCount++;
+            if (stepStallCount >= 20) { log("手机号确认按钮点击失败，刷新重试...", "warn"); break; }
+          }
         } else {
           stepStallCount++;
           if (stepStallCount >= 20) { log("手机号确认按钮卡住，刷新重试...", "warn"); break; }
         }
-        } catch (e: any) {
+      } catch (e: any) {
         if (e.message?.includes("has been closed") || e.message?.includes("Target closed")) { log(`步骤E：浏览器已关闭，终止本轮`, "error"); browserClosed = true; break; }
         log(`步骤E（短信验证码确认）异常：${e.message}，等待重试...`, "warn");
       }
@@ -2445,6 +2469,120 @@ async function fetchUserDataByToken(token: string, log: Logger): Promise<{
   }
 
   return result;
+}
+
+function normalizeButtonText(text: string | null | undefined): string {
+  return (text ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/** 查找当前步骤中真正可见的主操作按钮，避免依赖已失效的旧 class 名 */
+async function getActionButtonState(page: Page, anchorSelectors: string[]): Promise<"clickable" | "disabled" | "no-button"> {
+  return await page.evaluate((selectors: string[]) => {
+    const isVisible = (el: HTMLElement | null) => {
+      if (!el || el.offsetParent === null) return false;
+      const style = window.getComputedStyle(el);
+      return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
+    };
+
+    const anchor = selectors
+      .map((sel) => document.querySelector(sel) as HTMLElement | null)
+      .find((el) => isVisible(el)) ?? null;
+
+    const buttons = Array.from(document.querySelectorAll("button"))
+      .filter((btn): btn is HTMLButtonElement => btn instanceof HTMLButtonElement)
+      .filter((btn) => isVisible(btn));
+
+    const pickNearestButton = () => {
+      if (buttons.length === 0) return null;
+      if (!anchor) return buttons.length === 1 ? buttons[0] : null;
+
+      const anchorRect = anchor.getBoundingClientRect();
+      const candidates = buttons
+        .map((btn) => {
+          const rect = btn.getBoundingClientRect();
+          const verticalDelta = rect.top - anchorRect.bottom;
+          const horizontalDelta = Math.abs((rect.left + rect.width / 2) - (anchorRect.left + anchorRect.width / 2));
+          const areaScore = rect.width * rect.height;
+          return { btn, rect, verticalDelta, horizontalDelta, areaScore };
+        })
+        .filter((item) => item.verticalDelta >= -24)
+        .sort((a, b) => {
+          if (a.verticalDelta !== b.verticalDelta) return a.verticalDelta - b.verticalDelta;
+          if (a.horizontalDelta !== b.horizontalDelta) return a.horizontalDelta - b.horizontalDelta;
+          return b.areaScore - a.areaScore;
+        });
+
+      return candidates[0]?.btn ?? null;
+    };
+
+    const btn = pickNearestButton();
+    if (!btn) return "no-button";
+    if (btn.disabled || btn.matches(":disabled") || btn.getAttribute("aria-disabled") === "true") return "disabled";
+    return "clickable";
+  }, anchorSelectors);
+}
+
+/** 点击当前步骤中的主操作按钮，基于相关输入框就近定位，兼容多语言与新旧样式实现 */
+async function clickActionButton(page: Page, anchorSelectors: string[]): Promise<boolean> {
+  return await page.evaluate(async (selectors: string[]) => {
+    const isVisible = (el: HTMLElement | null) => {
+      if (!el || el.offsetParent === null) return false;
+      const style = window.getComputedStyle(el);
+      return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
+    };
+
+    const anchor = selectors
+      .map((sel) => document.querySelector(sel) as HTMLElement | null)
+      .find((el) => isVisible(el)) ?? null;
+
+    const buttons = Array.from(document.querySelectorAll("button"))
+      .filter((btn): btn is HTMLButtonElement => btn instanceof HTMLButtonElement)
+      .filter((btn) => isVisible(btn));
+
+    const pickNearestButton = () => {
+      if (buttons.length === 0) return null;
+      if (!anchor) return buttons.length === 1 ? buttons[0] : null;
+
+      const anchorRect = anchor.getBoundingClientRect();
+      const candidates = buttons
+        .map((btn) => {
+          const rect = btn.getBoundingClientRect();
+          const verticalDelta = rect.top - anchorRect.bottom;
+          const horizontalDelta = Math.abs((rect.left + rect.width / 2) - (anchorRect.left + anchorRect.width / 2));
+          const areaScore = rect.width * rect.height;
+          return { btn, rect, verticalDelta, horizontalDelta, areaScore };
+        })
+        .filter((item) => item.verticalDelta >= -24)
+        .sort((a, b) => {
+          if (a.verticalDelta !== b.verticalDelta) return a.verticalDelta - b.verticalDelta;
+          if (a.horizontalDelta !== b.horizontalDelta) return a.horizontalDelta - b.horizontalDelta;
+          return b.areaScore - a.areaScore;
+        });
+
+      return candidates[0]?.btn ?? null;
+    };
+
+    const btn = pickNearestButton();
+    if (!btn || btn.disabled || btn.matches(":disabled") || btn.getAttribute("aria-disabled") === "true") return false;
+
+    btn.scrollIntoView({ block: "center", inline: "center" });
+    const rect = btn.getBoundingClientRect();
+    const x = Math.round(rect.left + rect.width / 2);
+    const y = Math.round(rect.top + rect.height / 2);
+    const mouseInit = { bubbles: true, cancelable: true, clientX: x, clientY: y };
+
+    btn.dispatchEvent(new MouseEvent("mousemove", mouseInit));
+    btn.dispatchEvent(new MouseEvent("mouseover", mouseInit));
+    btn.dispatchEvent(new MouseEvent("mouseenter", mouseInit));
+    await new Promise((r) => setTimeout(r, 120));
+    btn.focus();
+    btn.dispatchEvent(new MouseEvent("mousedown", mouseInit));
+    await new Promise((r) => setTimeout(r, 80));
+    btn.dispatchEvent(new MouseEvent("mouseup", mouseInit));
+    btn.dispatchEvent(new MouseEvent("click", mouseInit));
+    btn.click();
+    return true;
+  }, anchorSelectors);
 }
 
 /** 模拟鼠标移动（与插件的 simulateMouseMove 完全对齐） */
