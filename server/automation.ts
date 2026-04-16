@@ -2478,46 +2478,49 @@ function normalizeButtonText(text: string | null | undefined): string {
 /** 查找当前步骤中真正可见的主操作按钮，避免依赖已失效的旧 class 名 */
 async function getActionButtonState(page: Page, anchorSelectors: string[]): Promise<"clickable" | "disabled" | "no-button"> {
   return await page.evaluate((selectors: string[]) => {
-    const isVisible = (el: HTMLElement | null) => {
-      if (!el || el.offsetParent === null) return false;
+    let anchor: HTMLElement | null = null;
+    for (const sel of selectors) {
+      const el = document.querySelector(sel) as HTMLElement | null;
+      if (!el || el.offsetParent === null) continue;
       const style = window.getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") continue;
+      anchor = el;
+      break;
+    }
+
+    const buttons = Array.from(document.querySelectorAll("button")).filter((btn): btn is HTMLButtonElement => {
+      if (!(btn instanceof HTMLButtonElement)) return false;
+      if (btn.offsetParent === null) return false;
+      const style = window.getComputedStyle(btn);
       return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
-    };
+    });
 
-    const anchor = selectors
-      .map((sel) => document.querySelector(sel) as HTMLElement | null)
-      .find((el) => isVisible(el)) ?? null;
-
-    const buttons = Array.from(document.querySelectorAll("button"))
-      .filter((btn): btn is HTMLButtonElement => btn instanceof HTMLButtonElement)
-      .filter((btn) => isVisible(btn));
-
-    const pickNearestButton = () => {
-      if (buttons.length === 0) return null;
-      if (!anchor) return buttons.length === 1 ? buttons[0] : null;
-
+    let target: HTMLButtonElement | null = null;
+    if (!anchor) {
+      if (buttons.length === 1) target = buttons[0];
+    } else {
       const anchorRect = anchor.getBoundingClientRect();
-      const candidates = buttons
-        .map((btn) => {
-          const rect = btn.getBoundingClientRect();
-          const verticalDelta = rect.top - anchorRect.bottom;
-          const horizontalDelta = Math.abs((rect.left + rect.width / 2) - (anchorRect.left + anchorRect.width / 2));
-          const areaScore = rect.width * rect.height;
-          return { btn, rect, verticalDelta, horizontalDelta, areaScore };
-        })
-        .filter((item) => item.verticalDelta >= -24)
-        .sort((a, b) => {
-          if (a.verticalDelta !== b.verticalDelta) return a.verticalDelta - b.verticalDelta;
-          if (a.horizontalDelta !== b.horizontalDelta) return a.horizontalDelta - b.horizontalDelta;
-          return b.areaScore - a.areaScore;
-        });
+      let bestVertical = Number.POSITIVE_INFINITY;
+      let bestHorizontal = Number.POSITIVE_INFINITY;
+      let bestArea = -1;
+      for (const btn of buttons) {
+        const rect = btn.getBoundingClientRect();
+        const verticalDelta = rect.top - anchorRect.bottom;
+        if (verticalDelta < -24) continue;
+        const horizontalDelta = Math.abs((rect.left + rect.width / 2) - (anchorRect.left + anchorRect.width / 2));
+        const area = rect.width * rect.height;
+        const isBetter = verticalDelta < bestVertical || (verticalDelta === bestVertical && (horizontalDelta < bestHorizontal || (horizontalDelta === bestHorizontal && area > bestArea)));
+        if (isBetter) {
+          target = btn;
+          bestVertical = verticalDelta;
+          bestHorizontal = horizontalDelta;
+          bestArea = area;
+        }
+      }
+    }
 
-      return candidates[0]?.btn ?? null;
-    };
-
-    const btn = pickNearestButton();
-    if (!btn) return "no-button";
-    if (btn.disabled || btn.matches(":disabled") || btn.getAttribute("aria-disabled") === "true") return "disabled";
+    if (!target) return "no-button";
+    if (target.disabled || target.matches(":disabled") || target.getAttribute("aria-disabled") === "true") return "disabled";
     return "clickable";
   }, anchorSelectors);
 }
@@ -2525,62 +2528,65 @@ async function getActionButtonState(page: Page, anchorSelectors: string[]): Prom
 /** 点击当前步骤中的主操作按钮，基于相关输入框就近定位，兼容多语言与新旧样式实现 */
 async function clickActionButton(page: Page, anchorSelectors: string[]): Promise<boolean> {
   return await page.evaluate(async (selectors: string[]) => {
-    const isVisible = (el: HTMLElement | null) => {
-      if (!el || el.offsetParent === null) return false;
+    let anchor: HTMLElement | null = null;
+    for (const sel of selectors) {
+      const el = document.querySelector(sel) as HTMLElement | null;
+      if (!el || el.offsetParent === null) continue;
       const style = window.getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") continue;
+      anchor = el;
+      break;
+    }
+
+    const buttons = Array.from(document.querySelectorAll("button")).filter((btn): btn is HTMLButtonElement => {
+      if (!(btn instanceof HTMLButtonElement)) return false;
+      if (btn.offsetParent === null) return false;
+      const style = window.getComputedStyle(btn);
       return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
-    };
+    });
 
-    const anchor = selectors
-      .map((sel) => document.querySelector(sel) as HTMLElement | null)
-      .find((el) => isVisible(el)) ?? null;
-
-    const buttons = Array.from(document.querySelectorAll("button"))
-      .filter((btn): btn is HTMLButtonElement => btn instanceof HTMLButtonElement)
-      .filter((btn) => isVisible(btn));
-
-    const pickNearestButton = () => {
-      if (buttons.length === 0) return null;
-      if (!anchor) return buttons.length === 1 ? buttons[0] : null;
-
+    let target: HTMLButtonElement | null = null;
+    if (!anchor) {
+      if (buttons.length === 1) target = buttons[0];
+    } else {
       const anchorRect = anchor.getBoundingClientRect();
-      const candidates = buttons
-        .map((btn) => {
-          const rect = btn.getBoundingClientRect();
-          const verticalDelta = rect.top - anchorRect.bottom;
-          const horizontalDelta = Math.abs((rect.left + rect.width / 2) - (anchorRect.left + anchorRect.width / 2));
-          const areaScore = rect.width * rect.height;
-          return { btn, rect, verticalDelta, horizontalDelta, areaScore };
-        })
-        .filter((item) => item.verticalDelta >= -24)
-        .sort((a, b) => {
-          if (a.verticalDelta !== b.verticalDelta) return a.verticalDelta - b.verticalDelta;
-          if (a.horizontalDelta !== b.horizontalDelta) return a.horizontalDelta - b.horizontalDelta;
-          return b.areaScore - a.areaScore;
-        });
+      let bestVertical = Number.POSITIVE_INFINITY;
+      let bestHorizontal = Number.POSITIVE_INFINITY;
+      let bestArea = -1;
+      for (const btn of buttons) {
+        const rect = btn.getBoundingClientRect();
+        const verticalDelta = rect.top - anchorRect.bottom;
+        if (verticalDelta < -24) continue;
+        const horizontalDelta = Math.abs((rect.left + rect.width / 2) - (anchorRect.left + anchorRect.width / 2));
+        const area = rect.width * rect.height;
+        const isBetter = verticalDelta < bestVertical || (verticalDelta === bestVertical && (horizontalDelta < bestHorizontal || (horizontalDelta === bestHorizontal && area > bestArea)));
+        if (isBetter) {
+          target = btn;
+          bestVertical = verticalDelta;
+          bestHorizontal = horizontalDelta;
+          bestArea = area;
+        }
+      }
+    }
 
-      return candidates[0]?.btn ?? null;
-    };
+    if (!target || target.disabled || target.matches(":disabled") || target.getAttribute("aria-disabled") === "true") return false;
 
-    const btn = pickNearestButton();
-    if (!btn || btn.disabled || btn.matches(":disabled") || btn.getAttribute("aria-disabled") === "true") return false;
-
-    btn.scrollIntoView({ block: "center", inline: "center" });
-    const rect = btn.getBoundingClientRect();
+    target.scrollIntoView({ block: "center", inline: "center" });
+    const rect = target.getBoundingClientRect();
     const x = Math.round(rect.left + rect.width / 2);
     const y = Math.round(rect.top + rect.height / 2);
     const mouseInit = { bubbles: true, cancelable: true, clientX: x, clientY: y };
 
-    btn.dispatchEvent(new MouseEvent("mousemove", mouseInit));
-    btn.dispatchEvent(new MouseEvent("mouseover", mouseInit));
-    btn.dispatchEvent(new MouseEvent("mouseenter", mouseInit));
+    target.dispatchEvent(new MouseEvent("mousemove", mouseInit));
+    target.dispatchEvent(new MouseEvent("mouseover", mouseInit));
+    target.dispatchEvent(new MouseEvent("mouseenter", mouseInit));
     await new Promise((r) => setTimeout(r, 120));
-    btn.focus();
-    btn.dispatchEvent(new MouseEvent("mousedown", mouseInit));
+    target.focus();
+    target.dispatchEvent(new MouseEvent("mousedown", mouseInit));
     await new Promise((r) => setTimeout(r, 80));
-    btn.dispatchEvent(new MouseEvent("mouseup", mouseInit));
-    btn.dispatchEvent(new MouseEvent("click", mouseInit));
-    btn.click();
+    target.dispatchEvent(new MouseEvent("mouseup", mouseInit));
+    target.dispatchEvent(new MouseEvent("click", mouseInit));
+    target.click();
     return true;
   }, anchorSelectors);
 }
