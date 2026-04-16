@@ -476,7 +476,7 @@ export async function updateTaskLog(id: number, data: Partial<InsertTaskLog>) {
 // ─── Phone Numbers ───────────────────────────────────────────────────────────────────────────────
 
 /**
- * 批量导入手机号（支持“手机号|接码URL”格式）
+ * 批量导入手机号（支持“手机号|接码URL”或“手机号----接码URL”格式）
  * 重复的手机号会被跳过（不报错）
  */
 export async function bulkImportPhoneNumbers(
@@ -493,15 +493,18 @@ export async function bulkImportPhoneNumbers(
     const line = rawLine.trim();
     if (!line) continue;
 
-    // 支持用 | 或空格分隔
-    const separatorIdx = line.indexOf("|");
-    if (separatorIdx === -1) {
-      errors.push(`格式错误（缺少 | 分隔符）: ${line}`);
+    // 兼容两种分隔格式：手机号|接码URL 或 手机号----接码URL
+    const pipeIdx = line.indexOf("|");
+    const dashIdx = line.indexOf("----");
+    const separator = pipeIdx !== -1 ? "|" : dashIdx !== -1 ? "----" : null;
+    const separatorIdx = pipeIdx !== -1 ? pipeIdx : dashIdx;
+    if (!separator || separatorIdx === -1) {
+      errors.push(`格式错误（缺少 | 或 ---- 分隔符）: ${line}`);
       continue;
     }
 
     const phone = line.slice(0, separatorIdx).trim();
-    const smsUrl = line.slice(separatorIdx + 1).trim();
+    const smsUrl = line.slice(separatorIdx + separator.length).trim();
 
     if (!phone || !smsUrl) {
       errors.push(`手机号或接码URL为空: ${line}`);

@@ -711,7 +711,16 @@ async function handleLoginPage(
     // 3. 不使用 waitForFunction(document.readyState)，因为它本质是 evaluate 轮询
     try {
       await page.waitForURL(
-        (u: URL) => u.toString().includes("manus.im/login") || u.toString().includes("manus.im/register"),
+        (u: URL) => {
+          const url = u.toString();
+          return (
+            url.includes("manus.im/login") ||
+            url.includes("manus.im/register") ||
+            url.includes("manus.im/verify-phone") ||
+            url.includes("manus.im/app") ||
+            url.includes("manus.im/auth_landing")
+          );
+        },
         { timeout: 60000 }
       );
     } catch {
@@ -726,6 +735,45 @@ async function handleLoginPage(
       await page.waitForLoadState("networkidle", { timeout: 20000 });
     } catch { /* 网络慢时容错 */ }
     await sleep(1500);
+    // 外层循环顶部兜底：如果页面已经不在阶段一登录页，就先按真实阶段处理，
+    // 不要继续等待 CheckInvitationCodeRemains，否则会把阶段二页面误判成阶段一异常。
+    {
+      const urlAfterLoad = page.url();
+      if (urlAfterLoad.includes("manus.im/verify-phone")) {
+        log("阶段一外层循环检测到已进入 /verify-phone，直接返回成功");
+        return "verify-phone";
+      }
+      if (urlAfterLoad.includes("manus.im/app")) {
+        log("阶段一外层循环检测到已进入 /app，直接返回成功");
+        return "app";
+      }
+      if (urlAfterLoad.includes("manus.im/auth_landing")) {
+        log("阶段一外层循环检测到 auth_landing，先等待最终跳转...");
+        await sleep(5000);
+        if (userInfoForbiddenRef.value) {
+          log("账号注册即封禁（UserInfo 403），本次注册失败", "error");
+          return "banned";
+        }
+        try {
+          await page.waitForURL(
+            (url: URL) => {
+              const s = url.toString();
+              return s.includes("manus.im/") && !s.includes("auth_landing");
+            },
+            { timeout: 55000 }
+          );
+        } catch { /* 超时容错 */ }
+        const finalUrl = page.url();
+        if (userInfoForbiddenRef.value) {
+          log("账号注册即封禁（UserInfo 403），本次注册失败", "error");
+          return "banned";
+        }
+        if (finalUrl.includes("manus.im/verify-phone")) return "verify-phone";
+        if (finalUrl.includes("manus.im/app")) return "app";
+        log(`auth_landing 后仍停留在未知页面：${finalUrl}`, "warn");
+      }
+    }
+
     // 每轮开始清除上一轮遗留的 API 错误状态和响应状态（防止旧状态干扰当前轮）
     lastApiError = null;
     sendEmailCodeRequestTime = 0;
@@ -1295,8 +1343,43 @@ async function handleLoginPage(
             log(`跳转到未知目标页面：${navUrl}`, "warn");
             break;
           } catch {
-            // RegisterByEmail 已成功响应但页面 30s 内未跳转，验证码已消耗，刷新重试
-            log("RegisterByEmail 已成功但页面 30s 内未跳转（验证码已消耗），刷新重试...", "warn");
+            // 超时后不要直接刷新，先按当前 URL 做一次最终判定。
+            const currentAfterWait = page.url();
+            if (currentAfterWait.includes("manus.im/verify-phone")) {
+              log("RegisterByEmail 成功后虽等待跳转超时，但当前已到 /verify-phone");
+              return "verify-phone";
+            }
+            if (currentAfterWait.includes("manus.im/app")) {
+              log("RegisterByEmail 成功后虽等待跳转超时，但当前已到 /app");
+              return "app";
+            }
+            if (currentAfterWait.includes("manus.im/auth_landing")) {
+              log("RegisterByEmail 成功后当前停留在 auth_landing，继续等待最终跳转...", "warn");
+              await sleep(5000);
+              if (userInfoForbiddenRef.value) {
+                log("账号注册即封禁（UserInfo 403），本次注册失败", "error");
+                return "banned";
+              }
+              try {
+                await page.waitForURL(
+                  (url: URL) => {
+                    const s = url.toString();
+                    return s.includes("manus.im/") && !s.includes("auth_landing");
+                  },
+                  { timeout: 55000 }
+                );
+              } catch { /* 超时容错 */ }
+              const finalUrl = page.url();
+              if (userInfoForbiddenRef.value) {
+                log("账号注册即封禁（UserInfo 403），本次注册失败", "error");
+                return "banned";
+              }
+              if (finalUrl.includes("manus.im/verify-phone")) return "verify-phone";
+              if (finalUrl.includes("manus.im/app")) return "app";
+              log(`auth_landing 后跳转到未知页面：${finalUrl}`, "warn");
+            }
+            // RegisterByEmail 已成功响应但页面仍未完成有效跳转，验证码已消耗，刷新重试
+            log("RegisterByEmail 已成功但页面未完成有效跳转（验证码已消耗），刷新重试...", "warn");
             break;
           }
           continue;

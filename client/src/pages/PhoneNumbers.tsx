@@ -141,7 +141,7 @@ export default function PhoneNumbers() {
           <div>
             <h1 className="text-xl font-semibold text-foreground">手机号管理</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              管理注册用手机号，格式：手机号|接码URL
+              管理注册用手机号，格式：手机号|接码URL 或 手机号----接码URL
             </p>
           </div>
           <Dialog open={importOpen} onOpenChange={setImportOpen}>
@@ -158,11 +158,11 @@ export default function PhoneNumbers() {
               <div className="flex flex-col gap-4 overflow-y-auto flex-1 min-h-0 pr-1">
                 <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
                   <p className="font-medium mb-1">格式说明：</p>
-                  <p>每行一条，格式为 <code className="bg-background px-1 rounded">手机号|接码URL</code></p>
+                  <p>每行一条，格式为 <code className="bg-background px-1 rounded">手机号|接码URL</code> 或 <code className="bg-background px-1 rounded">手机号----接码URL</code></p>
                   <p className="mt-1 text-xs">示例：</p>
                   <pre className="text-xs mt-1 bg-background p-2 rounded">
 {`+12232263007|https://sms-555.com/cacgadbjbbcccf6mmg3tv4frasfup3bn
-+17699335914|https://sms-555.com/xxxxxxxxxxxxx`}
++17699335914----https://sms-555.com/xxxxxxxxxxxxx`}
                   </pre>
                 </div>
                 <Textarea
