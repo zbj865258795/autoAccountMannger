@@ -627,11 +627,18 @@ async function handleLoginPage(
   // 监听 request（不是 response），这样可以在请求发出的第一时间就知道按鈕点击已生效
   let sendEmailCodeRequestTime = 0;   // SendEmailVerifyCodeWithCaptcha 请求发出时间
   let registerByEmailRequestTime = 0; // RegisterByEmail 请求发出时间
+  let getUserPlatformsRequestTime = 0; // GetUserPlatforms 请求发出时间
   // 响应状态：0=未响应 1=成功(2xx) -1=失败(4xx/5xx) -2=403封禁
   let sendEmailCodeStatus = 0;   // SendEmailVerifyCodeWithCaptcha 响应状态
   let registerByEmailStatus = 0; // RegisterByEmail 响应状态
+  let getUserPlatformsStatus = 0; // GetUserPlatforms 响应状态
   page.on("request", (request) => {
     const url = request.url();
+    if (url.includes("GetUserPlatforms")) {
+      getUserPlatformsRequestTime = Date.now();
+      getUserPlatformsStatus = 0;
+      log("[请求监听] GetUserPlatforms 已发出，等待响应...");
+    }
     if (url.includes("SendEmailVerifyCodeWithCaptcha")) {
       sendEmailCodeRequestTime = Date.now();
       sendEmailCodeStatus = 0;
@@ -646,6 +653,15 @@ async function handleLoginPage(
   page.on("response", (response) => {
     const url = response.url();
     const status = response.status();
+    if (url.includes("GetUserPlatforms")) {
+      if (status >= 200 && status < 300) {
+        getUserPlatformsStatus = 1;
+        log(`[GetUserPlatforms] 响应成功 (${status})`);
+      } else {
+        getUserPlatformsStatus = -1;
+        log(`[GetUserPlatforms] 响应失败 (${status})，等待页面后续重试结果`, "warn");
+      }
+    }
     if (url.includes("SendEmailVerifyCodeWithCaptcha")) {
       if (status >= 200 && status < 300) {
         sendEmailCodeStatus = 1;
@@ -817,6 +833,8 @@ async function handleLoginPage(
     }
     // 每轮开始清除上一轮遗留的 API 错误状态和响应状态（防止旧状态干扰当前轮）
     lastApiError = null;
+    getUserPlatformsRequestTime = 0;
+    getUserPlatformsStatus = 0;
     sendEmailCodeRequestTime = 0;
     sendEmailCodeStatus = 0;
     registerByEmailRequestTime = 0;
@@ -997,12 +1015,50 @@ async function handleLoginPage(
       const _err1 = lastApiError as ApiError | null;
       if (_err1 && (Date.now() - _err1.time) < 5000) {
         lastApiError = null;
-        log(`[API错误] ${_err1.api} 返回 ${_err1.status}，等待 3 秒后重试...`, "warn");
+
         if (_err1.api === "GetUserPlatforms") {
-          // 插件逻辑：GetUserPlatforms 失败时同时重置 emailFilled 和 emailContinueClicked
+          // 实测：邮箱 Continue 后可能会连续发两次 GetUserPlatforms，第一次失败、第二次成功。
+          // 因此这里不能一看到第一次失败就立刻回滚邮箱步骤，否则页面已进入密码阶段时会被误判为失败。
+          const passwordVisibleNow = await page.evaluate(() => {
+            const pwdEl = document.querySelector('input[name="password"][type="password"]') as HTMLElement | null;
+            return !!pwdEl && !pwdEl.classList.contains("hidden") && pwdEl.offsetParent !== null;
+          }).catch(() => false);
+
+          if (getUserPlatformsStatus === 1 || passwordVisibleNow) {
+            log("[API错误] GetUserPlatforms 曾失败，但后续已成功或页面已进入密码阶段，忽略旧错误", "warn");
+            continue;
+          }
+
+          const needGraceWait = getUserPlatformsRequestTime > 0 && (Date.now() - getUserPlatformsRequestTime) < 2500;
+          if (needGraceWait) {
+            log("[API错误] GetUserPlatforms 首次失败，等待后续重试结果...", "warn");
+            const graceStart = Date.now();
+            while (Date.now() - graceStart < 2500) {
+              if (getUserPlatformsStatus === 1) break;
+              await sleep(200);
+            }
+          }
+
+          const passwordVisibleAfterGrace = await page.evaluate(() => {
+            const pwdEl = document.querySelector('input[name="password"][type="password"]') as HTMLElement | null;
+            return !!pwdEl && !pwdEl.classList.contains("hidden") && pwdEl.offsetParent !== null;
+          }).catch(() => false);
+
+          if (getUserPlatformsStatus === 1 || passwordVisibleAfterGrace) {
+            log("[API错误] GetUserPlatforms 后续已恢复成功，继续执行密码阶段", "success");
+            continue;
+          }
+
+          log(`[API错误] ${_err1.api} 返回 ${_err1.status}，确认未恢复，等待 3 秒后回滚邮箱步骤...`, "warn");
           emailFilled = false;
           emailContinueClicked = false;
-        } else if (_err1.api === "SendEmailVerifyCodeWithCaptcha") {
+          emailBtnClickTime = 0;
+          await sleep(3000);
+          continue;
+        }
+
+        log(`[API错误] ${_err1.api} 返回 ${_err1.status}，等待 3 秒后重试...`, "warn");
+        if (_err1.api === "SendEmailVerifyCodeWithCaptcha") {
           pwdContinueClicked = false;
         } else if (_err1.api === "RegisterByEmail") {
           verifyConfirmClicked = false;
