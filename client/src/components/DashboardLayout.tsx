@@ -14,11 +14,9 @@ import {
 } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/useMobile";
 import {
-  Activity,
   Bot,
   Download,
   FileText,
-  GitBranch,
   Globe,
   LayoutDashboard,
   PanelLeft,
@@ -26,7 +24,6 @@ import {
   Plus,
   Shield,
   Users,
-  Webhook,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -37,13 +34,11 @@ const menuItems = [
   { icon: Users, label: "账号管理", path: "/accounts" },
   { icon: Plus, label: "导入账号", path: "/import" },
   { icon: Phone, label: "手机号管理", path: "/phones" },
-  { icon: GitBranch, label: "邀请关系", path: "/invitation-tree" },
   { icon: Bot, label: "自动化任务", path: "/automation" },
   { icon: FileText, label: "执行日志", path: "/logs" },
   { icon: Download, label: "导出记录", path: "/exports" },
   { icon: Globe, label: "IP 池管理", path: "/ip-pool" },
   { icon: Shield, label: "代理账号", path: "/proxy-accounts" },
-  { icon: Webhook, label: "API 集成", path: "/api-docs" },
 ];
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
